@@ -55,7 +55,10 @@ URN_FUZZY_MATCH_THRESHOLD   = float(os.getenv("URN_FUZZY_MATCH_THRESHOLD", 0.85)
 # Figma MCP server URL (figma-remote-mcp SSE endpoint)
 MCP_FIGMA_URL = os.getenv("MCP_FIGMA_URL", "http://127.0.0.1:3845/sse")
 
-# ── Midjourney ─────────────────────────────────────────────────────────────────
+# ── Gemini (image generation) ─────────────────────────────────────────────────
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+
+# ── Midjourney (pending MCP — not yet active) ─────────────────────────────────
 MIDJOURNEY_API_TOKEN = os.getenv("MIDJOURNEY_API_TOKEN", "")
 MIDJOURNEY_MCP_URL   = os.getenv(
     "MIDJOURNEY_MCP_URL",
