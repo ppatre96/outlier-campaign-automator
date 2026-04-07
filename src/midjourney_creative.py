@@ -1,9 +1,9 @@
 """
-Gemini Imagen creative generation for Outlier LinkedIn ads.
+Gemini creative generation for Outlier LinkedIn ads.
 
 Pipeline per TG + copy variant:
   1. Build a TG-aware prompt replicating Outlier's lifestyle-photo aesthetic
-  2. Call Gemini Imagen (imagen-3.0-generate-002) to generate the background photo
+  2. Call Gemini 2.5 Flash Image (gemini-2.5-flash-image) to generate the background photo
   3. Composite the ad: gradient overlay + white headline/subheadline + optional bottom strip
   4. Return the final PNG path (ready for LinkedIn upload)
 
@@ -46,49 +46,14 @@ ANGLE_GRADIENTS = {
     "C": (GRADIENT_PINK,   GRADIENT_GREEN),
 }
 
-# ── Imagen prompt templates per TG ────────────────────────────────────────────
-_IMAGEN_SUBJECTS = {
-    "ML_ENGINEER": (
-        "young male software engineer in casual black t-shirt sitting at wooden desk "
-        "with laptop, surrounded by lush green houseplants and filled bookshelves, "
-        "cozy home office, diffused natural window light from left"
-    ),
-    "SOFTWARE_ENGINEER": (
-        "young female developer in casual hoodie working on laptop, "
-        "cozy bedroom desk setup with plants and framed art on walls, "
-        "warm afternoon sunlight, relaxed smile"
-    ),
-    "MEDICAL": (
-        "confident female doctor in light blue scrubs sitting in a sunlit clinic corner "
-        "with potted plants and framed prints on wall, wearing stethoscope, "
-        "relaxed warm expression, looking at camera"
-    ),
-    "DATA_ANALYST": (
-        "young professional woman at desk with open laptop, colorful data visualizations "
-        "on screen, plants and shelves visible behind, bright natural light, "
-        "casual shirt, calm focused expression"
-    ),
-    "LANGUAGE": (
-        "smiling young woman of South Asian descent wearing headphones around neck, "
-        "cozy indoor setting with plants and warm artwork on walls, "
-        "casual clothes, natural soft window light"
-    ),
-    "LEGAL": (
-        "confident professional in smart-casual blazer sitting at a home library desk "
-        "with legal books and laptop, warm bookshelves, natural window light, "
-        "calm and focused expression"
-    ),
-    "GENERAL": (
-        "young professional in casual clothes sitting in a cozy sunlit room with "
-        "houseplants, wooden furniture, and art on walls, "
-        "warm relaxed smile, looking at camera"
-    ),
-}
-
-_ANGLE_MODIFIERS = {
-    "A": "looking directly at camera with quiet confidence, professional energy",
-    "B": "smiling warmly, genuinely happy, comfortable and at ease",
-    "C": "relaxed, leaning slightly back, free and unhurried vibe",
+# ── Expression modifiers per copy angle ───────────────────────────────────────
+# Angle A (Expertise): focused/professional — person is in their element
+# Angle B (Earnings):  warm smile — happy, at ease, socially validated
+# Angle C (Flexibility): genuine laugh — free, relaxed, unhurried
+_ANGLE_EXPRESSIONS = {
+    "A": "focused expression, slight furrowed brow, looking down at work, side profile",
+    "B": "mouth slightly open mid-sentence, warm smile, looking off to the side, three-quarter angle",
+    "C": "genuine laugh, eyes crinkled, looking directly at camera, frontal",
 }
 
 _IMAGEN_STYLE_SUFFIX = (
@@ -98,49 +63,54 @@ _IMAGEN_STYLE_SUFFIX = (
 )
 
 
-def _build_imagen_prompt(tg_category: str, angle: str) -> str:
-    subject  = _IMAGEN_SUBJECTS.get(tg_category, _IMAGEN_SUBJECTS["GENERAL"])
-    modifier = _ANGLE_MODIFIERS.get(angle, _ANGLE_MODIFIERS["A"])
-    return f"{subject}, {modifier}, {_IMAGEN_STYLE_SUFFIX}"
+def _build_imagen_prompt(photo_subject: str, angle: str) -> str:
+    """
+    Build Gemini image prompt from the photo_subject derived by the brief generator.
+    photo_subject is specific to the actual cohort TG — not a generic category.
+    """
+    expression = _ANGLE_EXPRESSIONS.get(angle, _ANGLE_EXPRESSIONS["A"])
+    return (
+        f"a simple environmental portrait of a {photo_subject}, "
+        f"{expression}, "
+        "the room is decorated with plants and nature details, "
+        f"natural light, {_IMAGEN_STYLE_SUFFIX}"
+    )
 
 
 # ── Gemini Imagen API call ────────────────────────────────────────────────────
 
 def _generate_imagen(prompt: str, gemini_api_key: str) -> Image.Image:
     """
-    Call Gemini Imagen 3 (imagen-3.0-generate-002) and return a PIL Image.
-    Uses the REST predict endpoint — no extra SDK needed beyond requests.
+    Call Gemini 2.5 Flash Image (gemini-2.5-flash-image) and return a PIL Image.
+    Uses the generateContent endpoint with IMAGE response modality.
     """
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models"
-        f"/imagen-3.0-generate-002:predict?key={gemini_api_key}"
+        f"/gemini-2.5-flash-image:generateContent?key={gemini_api_key}"
     )
     payload = {
-        "instances": [{"prompt": prompt}],
-        "parameters": {
-            "sampleCount": 1,
-            "aspectRatio": "1:1",
-            "personGeneration": "allow_adult",
-            "safetySetting": "block_only_high",
-        },
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"responseModalities": ["IMAGE", "TEXT"]},
     }
 
     resp = requests.post(url, json=payload, timeout=120)
     if resp.status_code != 200:
         raise RuntimeError(
-            f"Imagen API error {resp.status_code}: {resp.text[:400]}"
+            f"Gemini image API error {resp.status_code}: {resp.text[:400]}"
         )
 
-    data = resp.json()
-    predictions = data.get("predictions", [])
-    if not predictions:
-        raise RuntimeError("Imagen returned no predictions")
+    parts = (
+        resp.json()
+        .get("candidates", [{}])[0]
+        .get("content", {})
+        .get("parts", [])
+    )
+    for part in parts:
+        if "inlineData" in part:
+            b64 = part["inlineData"]["data"]
+            return Image.open(BytesIO(base64.b64decode(b64))).convert("RGBA")
 
-    b64 = predictions[0].get("bytesBase64Encoded")
-    if not b64:
-        raise RuntimeError("Imagen prediction missing bytesBase64Encoded field")
-
-    return Image.open(BytesIO(base64.b64decode(b64))).convert("RGBA")
+    raise RuntimeError("Gemini returned no image in response")
 
 
 # ── Image composition ─────────────────────────────────────────────────────────
@@ -291,18 +261,22 @@ def compose_ad(
 # ── Public entry point ────────────────────────────────────────────────────────
 
 def generate_midjourney_creative(
-    tg_category: str,
     variant: dict,
+    photo_subject: str | None = None,
     gemini_api_key: str | None = None,
-    **_kwargs,  # absorb legacy mj_token / claude_key / mcp_url args silently
+    tg_category: str | None = None,  # kept for backward compat, unused
+    **_kwargs,
 ) -> Path:
     """
-    Full pipeline: Gemini Imagen background photo → composed ad PNG.
+    Full pipeline: Gemini background photo → composed ad PNG.
 
     Args:
-        tg_category:    ML_ENGINEER / SOFTWARE_ENGINEER / MEDICAL /
-                        DATA_ANALYST / LANGUAGE / LEGAL / GENERAL
-        variant:        copy variant dict — keys: angle, headline, subheadline, cta
+        variant:       copy variant dict — keys: angle, headline, subheadline, cta,
+                       and optionally photo_subject (overrides the photo_subject arg)
+        photo_subject: specific scene description derived from cohort data by
+                       ad-creative-brief-generator. Must describe the actual profession,
+                       attire, setting, and geography — NOT a generic category label.
+                       Falls back to variant["photo_subject"] if present.
         gemini_api_key: Gemini API key (falls back to config.GEMINI_API_KEY)
 
     Returns:
@@ -313,11 +287,19 @@ def generate_midjourney_creative(
     headline    = variant.get("headline", "")
     subheadline = variant.get("subheadline", "")
 
+    # photo_subject: prefer explicit arg, then variant field
+    subject = photo_subject or variant.get("photo_subject", "")
+    if not subject:
+        raise RuntimeError(
+            "photo_subject is required — pass the cohort-derived subject description "
+            "from ad-creative-brief-generator, not a TG category label."
+        )
+
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is not set — add it to .env")
 
-    prompt = _build_imagen_prompt(tg_category, angle)
-    log.info("Generating Imagen creative | TG=%s angle=%s", tg_category, angle)
+    prompt = _build_imagen_prompt(subject, angle)
+    log.info("Generating Gemini creative | angle=%s", angle)
     log.debug("Imagen prompt: %s", prompt)
 
     bg_image = _generate_imagen(prompt, api_key)
@@ -341,7 +323,8 @@ def generate_midjourney_creative(
         with_bottom_strip=bool(bottom_text),
     )
 
-    out_path = Path(tempfile.mktemp(suffix=f"_gemini_{tg_category.lower()}_{angle}.png"))
+    safe_label = re.sub(r"[^a-z0-9]", "_", subject[:30].lower())
+    out_path = Path(tempfile.mktemp(suffix=f"_gemini_{safe_label}_{angle}.png"))
     ad_image.save(out_path, "PNG", optimize=True)
     log.info("Gemini creative saved: %s (%d bytes)", out_path, out_path.stat().st_size)
     return out_path
