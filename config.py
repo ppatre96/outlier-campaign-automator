@@ -3,6 +3,7 @@ Central configuration for the Outlier Campaign Agent.
 All runtime secrets come from environment variables or the Config tab in Google Sheets.
 """
 import os
+from datetime import datetime
 
 # ── Google Sheets ─────────────────────────────────────────────────────────────
 TRIGGERS_SHEET_ID = "1yM2bA_gbdki-IKSf14ddyshsKYh2FATEiv1CtdfYDQY"
@@ -28,14 +29,33 @@ SNOWFLAKE_ROLE      = os.getenv("SNOWFLAKE_ROLE", "")
 
 # Date range for screening data (override with env vars or pass at runtime)
 SCREENING_START_DATE = os.getenv("SCREENING_START_DATE", "2024-01-01")
-SCREENING_END_DATE   = os.getenv("SCREENING_END_DATE",   "2025-12-31")
+SCREENING_END_DATE   = os.getenv("SCREENING_END_DATE",   datetime.utcnow().date().isoformat())
 
 # ── LinkedIn ──────────────────────────────────────────────────────────────────
 LINKEDIN_API_BASE      = "https://api.linkedin.com/rest"
 LINKEDIN_VERSION       = "202510"
 LINKEDIN_AD_ACCOUNT_ID = os.getenv("LINKEDIN_AD_ACCOUNT_ID", "510956407")
-LINKEDIN_ORG_ID        = os.getenv("LINKEDIN_ORG_ID", "")        # for image upload owner
-LINKEDIN_DESTINATION   = os.getenv("LINKEDIN_DESTINATION_URL", "https://app.outlier.ai/en/contributors/projects")
+LINKEDIN_ORG_ID           = os.getenv("LINKEDIN_ORG_ID", "")
+LINKEDIN_DESTINATION      = os.getenv("LINKEDIN_DESTINATION_URL", "https://app.outlier.ai/en/contributors/projects")
+LINKEDIN_INMAIL_SENDER_URN = os.getenv("LINKEDIN_INMAIL_SENDER_URN", "")
+# Public profile URN of the LinkedIn member who authorized the OAuth token.
+# Required to create image ad creatives (DSC posts via w_member_social scope).
+# Find at: linkedin.com/in/<id> → the <id> portion, e.g. urn:li:person:AbCdEfGhIj
+LINKEDIN_MEMBER_URN        = os.getenv("LINKEDIN_MEMBER_URN", "")
+# Token — check LINKEDIN_ACCESS_TOKEN first, fall back to LINKEDIN_TOKEN
+LINKEDIN_TOKEN         = (
+    os.getenv("LINKEDIN_ACCESS_TOKEN") or
+    os.getenv("LINKEDIN_TOKEN", "")
+)
+LINKEDIN_REFRESH_TOKEN = os.getenv("LINKEDIN_REFRESH_TOKEN", "")
+# OAuth app credentials — needed to exchange refresh token for a new access token
+LINKEDIN_CLIENT_ID     = os.getenv("LINKEDIN_CLIENT_ID", "")
+LINKEDIN_CLIENT_SECRET = os.getenv("LINKEDIN_CLIENT_SECRET", "")
+
+# ── LiteLLM proxy ─────────────────────────────────────────────────────────────
+LITELLM_BASE_URL = os.getenv("LITELLM_BASE_URL", "https://litellm-proxy.ml-serving-internal.scale.com/v1")
+LITELLM_API_KEY  = os.getenv("LITELLM_API_KEY", "")
+LITELLM_MODEL    = os.getenv("LITELLM_MODEL", "anthropic/claude-sonnet-4-6")
 
 # ── Figma ─────────────────────────────────────────────────────────────────────
 FIGMA_TOKEN = os.getenv("FIGMA_TOKEN", "")
@@ -55,7 +75,19 @@ URN_FUZZY_MATCH_THRESHOLD   = float(os.getenv("URN_FUZZY_MATCH_THRESHOLD", 0.85)
 # Figma MCP server URL (figma-remote-mcp SSE endpoint)
 MCP_FIGMA_URL = os.getenv("MCP_FIGMA_URL", "http://127.0.0.1:3845/sse")
 
+# ── Google Drive ──────────────────────────────────────────────────────────────
+# Set GDRIVE_ENABLED=true in .env once the target folder is a Shared Drive
+# and the service account has been added as Content Manager.
+# Until then creatives are saved locally only.
+GDRIVE_ENABLED   = os.getenv("GDRIVE_ENABLED", "false").lower() == "true"
+GDRIVE_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID", "1TrpyIOq6hS4eGAc0sYUIJom4MAanbnm4")
+
 # ── Gemini (image generation) ─────────────────────────────────────────────────
+# Routed through LiteLLM proxy via /images/generations endpoint.
+# Confirmed working: gemini-2.5-flash-image, imagen-4.0-generate-001,
+#   imagen-4.0-fast-generate-001, gemini-3.1-flash-image-preview
+GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini/gemini-2.5-flash-image")
+# Legacy direct-API key — no longer needed, kept for fallback only
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # ── Midjourney (pending MCP — not yet active) ─────────────────────────────────
@@ -64,6 +96,11 @@ MIDJOURNEY_MCP_URL   = os.getenv(
     "MIDJOURNEY_MCP_URL",
     "https://midjourney.mcp.acedata.cloud/mcp",
 )
+
+# ── Slack ─────────────────────────────────────────────────────────────────────
+SLACK_BOT_TOKEN   = os.getenv("SLACK_BOT_TOKEN", "")
+SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
+SLACK_REPORT_USER = "U095J930UEL"   # pranav.patre@scale.com
 
 # Campaign lifecycle monitor
 CAMPAIGN_UNDERPERFORM_THRESHOLD = float(os.getenv("CAMPAIGN_UNDERPERFORM_THRESHOLD", "0.20"))
