@@ -80,8 +80,8 @@
 **Plans**: 3 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Core pipeline bug fixes (has_mj guard, SCREENING_END_DATE, Stage C bypass, InMail gate, GEMINI_API_KEY check)
-- [ ] 01-02-PLAN.md — Environment config + LinkedIn hardening (INMAIL_SENDER_URN, classify_tg verify, create_image_ad blocker logging)
+- [x] 01-01-PLAN.md — Core pipeline bug fixes (has_mj guard, SCREENING_END_DATE, Stage C bypass, InMail gate, GEMINI_API_KEY check)
+- [x] 01-02-PLAN.md — Environment config + LinkedIn hardening (INMAIL_SENDER_URN, classify_tg verify, create_image_ad blocker logging)
 - [ ] 01-03-PLAN.md — Verification (LinkedIn token refresh test + full dry-run acceptance)
 
 ---
@@ -193,7 +193,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Pipeline Integrity | 0/3 | Planned | - |
+| 1. Pipeline Integrity | 2/3 | In Progress|  |
 | 2. Observability & Storage | 0/? | Not started | - |
 | 3. Campaign Expansion | 0/? | Not started | - |
 
