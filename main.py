@@ -348,6 +348,17 @@ def _process_row(
                 )
                 sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
                 log.info("Attached creative %s to campaign %s", creative_urn, campaign_urn)
+            except RuntimeError as exc:
+                if "LINKEDIN_MEMBER_URN" in str(exc):
+                    log.warning(
+                        "Image ad creative skipped for '%s' — LINKEDIN_MEMBER_URN not set. "
+                        "BLOCKER: Requires r_liteprofile or rw_organization_admin LinkedIn scope "
+                        "to determine OAuth token owner identity. "
+                        "See Phase 1 CONTEXT.md decision D-07.",
+                        cohort.name,
+                    )
+                else:
+                    log.warning("LinkedIn creative attach failed for '%s': %s", cohort.name, exc)
             except Exception as exc:
                 log.warning("LinkedIn creative attach failed for '%s': %s", cohort.name, exc)
         else:
