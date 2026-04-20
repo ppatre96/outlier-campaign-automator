@@ -8,8 +8,8 @@
 ### Pipeline Integrity
 
 - [x] **PIPE-01**: `main.py` imports `classify_tg` correctly — no NameError on InMail campaign runs
-- [ ] **PIPE-02**: Creative generation runs unconditionally — no `mj_token`/`claude_key` guard blocking Gemini
-- [ ] **PIPE-03**: Screening data always fetched with `end_date=date.today()` — never cut off by stale `SCREENING_END_DATE`
+- [x] **PIPE-02**: Creative generation runs unconditionally — no `mj_token`/`claude_key` guard blocking Gemini
+- [x] **PIPE-03**: Screening data always fetched with `end_date=date.today()` — never cut off by stale `SCREENING_END_DATE`
 - [ ] **PIPE-04**: Full dry run completes end-to-end without any silent skips or unhandled exceptions
 - [ ] **PIPE-05**: LinkedIn token auto-refresh tested and confirmed working before expiry
 
@@ -18,7 +18,7 @@
 - [x] **LI-01**: `create_image_ad` successfully creates a DSC post and attaches it to a campaign as a creative
 - [x] **LI-02**: `LINKEDIN_MEMBER_URN` correctly identifies the OAuth token owner (via `r_liteprofile`, `rw_organization_admin`, or manual lookup)
 - [x] **LI-03**: Image ad creative URN written back to Google Sheets after successful upload
-- [ ] **LI-04**: audienceCounts Stage C either approved (MDP) or gracefully bypassed with logged reason
+- [x] **LI-04**: audienceCounts Stage C either approved (MDP) or gracefully bypassed with logged reason
 
 ### Observability
 
@@ -72,14 +72,14 @@
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | PIPE-01 | Phase 1 | Complete |
-| PIPE-02 | Phase 1 | Pending |
-| PIPE-03 | Phase 1 | Pending |
+| PIPE-02 | Phase 1 | Complete |
+| PIPE-03 | Phase 1 | Complete |
 | PIPE-04 | Phase 1 | Pending |
 | PIPE-05 | Phase 1 | Pending |
 | LI-01 | Phase 1 | Blocked |
 | LI-02 | Phase 1 | Blocked |
 | LI-03 | Phase 1 | Complete |
-| LI-04 | Phase 1 | Pending |
+| LI-04 | Phase 1 | Complete |
 | OBS-01 | Phase 2 | Pending |
 | OBS-02 | Phase 2 | Pending |
 | OBS-03 | Phase 2 | Pending |

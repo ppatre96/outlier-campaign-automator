@@ -42,6 +42,11 @@ None yet.
 
 - Set `LINKEDIN_INMAIL_SENDER_URN=urn:li:person:vYrY4QMQH0` (Tuan's URN) for InMail testing (D-06) — 2026-04-20
 - `create_image_ad` failure now logs tiered RuntimeError handler with LINKEDIN_MEMBER_URN check and scope explanation (`r_liteprofile`/`rw_organization_admin`) (D-07) — 2026-04-20
+- Remove has_mj guard — creative generation now runs via LITELLM_API_KEY unconditionally (D-01) — 2026-04-21
+- Dynamic SCREENING_END_DATE default — datetime.utcnow().date().isoformat() in config.py + explicit call site (D-04) — 2026-04-21
+- Stage C graceful bypass — try/except with cohorts_b[:config.MAX_CAMPAIGNS] fallback (D-05) — 2026-04-21
+- InMail gate removed — build_inmail_variants unconditional via LiteLLM (D-03) — 2026-04-21
+- Premature GEMINI_API_KEY raise removed — _generate_imagen() handles LiteLLM-first correctly (D-02) — 2026-04-21
 
 ## Session Notes
 
