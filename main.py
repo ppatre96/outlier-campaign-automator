@@ -11,6 +11,7 @@ import logging
 import os
 import sys
 import tempfile
+from datetime import date
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -27,11 +28,12 @@ from src.linkedin_api import LinkedInClient
 from src.stage_c import stage_c
 from src.figma_creative import (
     FigmaCreativeClient,
-    classify_tg,
     build_copy_variants,
     apply_plugin_logic,
+    classify_tg,
 )
 from src.midjourney_creative import generate_midjourney_creative
+from src.inmail_copy_writer import build_inmail_variants
 from src.campaign_monitor import (
     check_learning_phase,
     get_pass_rates_from_snowflake,
@@ -56,9 +58,15 @@ def run_launch(dry_run: bool = False) -> None:
     sheets    = SheetsClient()
     sheet_cfg = sheets.read_config()
 
-    li_token   = sheet_cfg.get("LINKEDIN_TOKEN") or os.getenv("LINKEDIN_TOKEN", "")
-    claude_key = sheet_cfg.get("CLAUDE_API_KEY") or os.getenv("ANTHROPIC_API_KEY", "")
-    mj_token   = sheet_cfg.get("MIDJOURNEY_API_TOKEN") or os.getenv("MIDJOURNEY_API_TOKEN", "")
+    li_token      = (
+        sheet_cfg.get("LINKEDIN_TOKEN") or
+        os.getenv("LINKEDIN_ACCESS_TOKEN") or
+        os.getenv("LINKEDIN_TOKEN") or
+        config.LINKEDIN_TOKEN
+    )
+    claude_key    = os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY", "")
+    mj_token      = sheet_cfg.get("MIDJOURNEY_API_TOKEN") or os.getenv("MIDJOURNEY_API_TOKEN", "")
+    inmail_sender = sheet_cfg.get("LINKEDIN_INMAIL_SENDER_URN") or os.getenv("LINKEDIN_INMAIL_SENDER_URN", config.LINKEDIN_INMAIL_SENDER_URN)
 
     if not li_token:
         log.error("LINKEDIN_TOKEN not found in Config tab or environment — aborting")
@@ -69,20 +77,24 @@ def run_launch(dry_run: bool = False) -> None:
     snowflake = RedashClient()
 
     pending = sheets.read_pending_rows()
-    if not pending:
-        log.info("No PENDING rows found — nothing to do")
+    retry   = sheets.read_li_retry_rows()
+
+    if not pending and not retry:
+        log.info("No PENDING rows and no retry rows found — nothing to do")
         return
 
-    log.info("Found %d PENDING rows", len(pending))
+    log.info("Found %d PENDING rows, %d retry rows", len(pending), len(retry))
 
     for row in pending:
         flow_id    = row["flow_id"]
         location   = row.get("location", "")
         figma_file = row.get("figma_file", "").strip()
         figma_node = row.get("figma_node", "").strip()
+        ad_type    = row.get("ad_type", "").strip().upper()
 
         log.info("=" * 60)
-        log.info("Processing flow_id=%s location=%s", flow_id, location)
+        log.info("Processing flow_id=%s location=%s ad_type=%s",
+                 flow_id, location, ad_type or "SPONSORED_UPDATE")
 
         config_name = sheet_cfg.get("SCREENING_CONFIG_NAME", "") or flow_id
 
@@ -94,6 +106,8 @@ def run_launch(dry_run: bool = False) -> None:
                 location=location,
                 figma_file=figma_file,
                 figma_node=figma_node,
+                ad_type=ad_type,
+                inmail_sender=inmail_sender,
                 sheets=sheets,
                 snowflake=snowflake,
                 li_client=li_client,
@@ -108,15 +122,35 @@ def run_launch(dry_run: bool = False) -> None:
         except Exception as exc:
             log.exception("Unexpected error for flow %s: %s", flow_id, exc)
 
+    for row in retry:
+        log.info("=" * 60)
+        log.info("Retrying LI campaign for stg_id=%s name=%s", row["stg_id"], row["stg_name"])
+        try:
+            _retry_li_campaign(
+                row=row,
+                inmail_sender=inmail_sender,
+                sheets=sheets,
+                li_client=li_client,
+                urn_res=urn_res,
+                claude_key=claude_key,
+                figma_file=row.get("figma_file", ""),
+                figma_node=row.get("figma_node", ""),
+                mj_token=mj_token,
+                dry_run=dry_run,
+            )
+        except Exception as exc:
+            log.exception("Retry failed for stg_id=%s: %s", row["stg_id"], exc)
+
     log.info("Launch run complete")
 
 
 def _process_row(
     row, flow_id, config_name, location, figma_file, figma_node,
+    ad_type, inmail_sender,
     sheets, snowflake, li_client, urn_res, claude_key, mj_token, dry_run,
 ):
     # 1. Snowflake
-    df_raw = snowflake.fetch_screenings(flow_id, config_name)
+    df_raw = snowflake.fetch_screenings(flow_id, config_name, end_date=date.today().isoformat())
     if df_raw.empty:
         log.warning("No screening data for flow=%s config=%s — skipping", flow_id, config_name)
         return
@@ -146,7 +180,12 @@ def _process_row(
     cohorts_b = stage_b(df_bin, cohorts_a)
 
     # 5+6. URN resolution + Stage C
-    selected = stage_c(cohorts_b, urn_res, li_client)
+    try:
+        selected = stage_c(cohorts_b, urn_res, li_client)
+    except Exception as exc:
+        log.warning("Stage C unavailable (%s) — falling back to Stage B top cohorts", exc)
+        selected = cohorts_b[:config.MAX_CAMPAIGNS]
+
     if not selected:
         log.warning("No cohorts survived Stage C for flow=%s — skipping", flow_id)
         return
@@ -179,9 +218,25 @@ def _process_row(
     else:
         log.info("[dry-run] Would write %d cohorts", len(cohort_sheet_rows))
 
+    # 8. Branch: InMail vs. Image Ad
+    is_inmail = (ad_type == "INMAIL")
+
+    if is_inmail:
+        _process_inmail_campaigns(
+            selected=selected,
+            flow_id=flow_id,
+            location=location,
+            sheets=sheets,
+            li_client=li_client,
+            urn_res=urn_res,
+            claude_key=claude_key,
+            inmail_sender=inmail_sender,
+            dry_run=dry_run,
+        )
+        return
+
     # 8. Generate creatives (Figma clone + Midjourney from-scratch, with fallback)
     has_figma = bool(figma_file and figma_node and claude_key)
-    has_mj    = bool(mj_token and claude_key)
     figma_client = FigmaCreativeClient() if has_figma else None
 
     # One PNG per cohort — rotate variant angle A→B→C across campaigns
@@ -191,20 +246,18 @@ def _process_row(
     for i, cohort in enumerate(selected):
         angle_idx    = i % 3
         angle_label  = ["A", "B", "C"][angle_idx]
-        tg_cat       = classify_tg(cohort.name, cohort.rules)
         variants: list[dict] = []
         png_path: Path | None = None
 
-        # ── Step 8a: generate copy variants (needed for both paths) ──
-        if claude_key:
-            try:
-                layer_map = (
-                    figma_client.get_text_layer_map(figma_file, figma_node)
-                    if has_figma else {}
-                )
-                variants = build_copy_variants(tg_cat, cohort, layer_map, claude_key)
-            except Exception as exc:
-                log.warning("Copy generation failed for '%s': %s", cohort.name, exc)
+        # ── Step 8a: generate copy variants — fully derived from cohort signals ──
+        try:
+            layer_map = (
+                figma_client.get_text_layer_map(figma_file, figma_node)
+                if has_figma else {}
+            )
+            variants = build_copy_variants(cohort, layer_map)
+        except Exception as exc:
+            log.warning("Copy generation failed for '%s': %s", cohort.name, exc)
 
         all_variants_per_cohort.append(variants)
         selected_variant = variants[angle_idx] if angle_idx < len(variants) else {}
@@ -216,8 +269,9 @@ def _process_row(
         # ── Step 8b: Figma clone path ──
         if has_figma and variants:
             try:
+                tg_label = variants[0].get("tg_label", cohort.name) if variants else cohort.name
                 clone_ids = apply_plugin_logic(
-                    figma_file, figma_node, variants, tg_cat, claude_key
+                    figma_file, figma_node, variants, tg_label, claude_key
                 )
                 if clone_ids:
                     selected_id = clone_ids[angle_idx % len(clone_ids)]
@@ -231,13 +285,10 @@ def _process_row(
                 log.warning("Figma creative failed for '%s': %s — will try Midjourney", cohort.name, exc)
 
         # ── Step 8c: Midjourney from-scratch path (primary if no Figma, fallback otherwise) ──
-        if png_path is None and has_mj and selected_variant:
+        if png_path is None and selected_variant:
             try:
                 png_path = generate_midjourney_creative(
-                    tg_category=tg_cat,
                     variant=selected_variant,
-                    mj_token=mj_token,
-                    claude_key=claude_key,
                 )
                 log.info(
                     "MJ creative: cohort %d '%s' → angle %s → %s",
@@ -276,17 +327,216 @@ def _process_row(
             headline  = variant.get("headline") or f"Your {_cohort_headline(cohort)} expertise is in demand."
             subhead   = variant.get("subheadline") or "Earn payment doing remote AI tasks on your schedule."
 
-            image_urn    = li_client.upload_image(png_path)
-            creative_urn = li_client.create_image_ad(
-                campaign_urn=campaign_urn,
-                image_urn=image_urn,
-                headline=headline,
-                description=subhead,
-            )
-            sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
-            log.info("Attached creative %s to campaign %s", creative_urn, campaign_urn)
+            # ── Drive upload (only when GDRIVE_ENABLED=true in .env) ───────────
+            drive_url = None
+            if config.GDRIVE_ENABLED:
+                try:
+                    from src.gdrive import upload_creative
+                    drive_url = upload_creative(png_path)
+                    log.info("Drive upload: %s → %s", png_path.name, drive_url)
+                except Exception as exc:
+                    log.warning("Drive upload failed for '%s': %s", cohort.name, exc)
+
+            # ── LinkedIn image attach (best-effort) ────────────────────────────
+            try:
+                image_urn    = li_client.upload_image(png_path)
+                creative_urn = li_client.create_image_ad(
+                    campaign_urn=campaign_urn,
+                    image_urn=image_urn,
+                    headline=headline,
+                    description=subhead,
+                )
+                sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
+                log.info("Attached creative %s to campaign %s", creative_urn, campaign_urn)
+            except Exception as exc:
+                log.warning("LinkedIn creative attach failed for '%s': %s", cohort.name, exc)
         else:
             log.info("No creative image for cohort '%s' (index %d) — campaign created without creative", cohort.name, i)
+
+
+# ── InMail campaign sub-pipeline ──────────────────────────────────────────────
+
+def _process_inmail_campaigns(
+    selected, flow_id, location,
+    sheets, li_client, urn_res,
+    claude_key, inmail_sender, dry_run,
+) -> None:
+    """
+    InMail (Message Ad) path — no creative generation.
+    For each cohort: generate InMail copy → create InMail campaign → create InMail creative.
+    Angle rotates A→B→C across cohorts (same as image ad path).
+    """
+    if not inmail_sender:
+        log.error(
+            "LINKEDIN_INMAIL_SENDER_URN is not set — required for InMail ads. "
+            "Add it to the Config tab or .env and retry."
+        )
+        return
+
+    group_name = f"Outlier {flow_id} {location} InMail".strip()
+
+    if dry_run:
+        for i, cohort in enumerate(selected):
+            angle_label = ["A", "B", "C"][i % 3]
+            tg_cat = classify_tg(cohort.name, cohort.rules)
+            log.info("[dry-run] InMail cohort %d '%s' tg=%s angle=%s", i, cohort.name, tg_cat, angle_label)
+            variants = build_inmail_variants(tg_cat, cohort, claude_key)
+            v = variants[i % 3]
+            log.info("[dry-run] Subject: %s", v.subject)
+            log.info("[dry-run] Body (first 100): %s…", v.body[:100])
+            log.info("[dry-run] CTA: %s", v.cta_label)
+        return
+
+    group_urn = li_client.create_campaign_group(group_name)
+
+    for i, cohort in enumerate(selected):
+        angle_idx   = i % 3
+        angle_label = ["A", "B", "C"][angle_idx]
+        tg_cat      = classify_tg(cohort.name, cohort.rules)
+
+        # Generate InMail copy for this cohort
+        variants = build_inmail_variants(tg_cat, cohort, claude_key)
+        variant  = variants[angle_idx]
+
+        facet_urns   = urn_res.resolve_cohort_rules(cohort.rules)
+        campaign_urn = li_client.create_inmail_campaign(
+            name=cohort._stg_name,
+            campaign_group_urn=group_urn,
+            facet_urns=facet_urns,
+        )
+        campaign_id = campaign_urn.rsplit(":", 1)[-1]
+        sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
+        log.info("Created InMail campaign %s angle=%s", campaign_urn, angle_label)
+
+        creative_urn = li_client.create_inmail_ad(
+            campaign_urn=campaign_urn,
+            sender_urn=inmail_sender,
+            subject=variant.subject,
+            body=variant.body,
+            cta_label=variant.cta_label,
+        )
+        sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
+        log.info(
+            "InMail creative %s — cohort '%s' angle %s subject: %s",
+            creative_urn, cohort.name, angle_label, variant.subject,
+        )
+
+
+def _retry_li_campaign(
+    row, inmail_sender, sheets, li_client, urn_res,
+    claude_key, figma_file, figma_node, mj_token, dry_run,
+):
+    """
+    Re-attempt LinkedIn campaign + creative creation for a row that already
+    has cohort data (stg_id, stg_name, targeting_criteria) but li_status=Failed/Pending.
+    Skips Snowflake and analysis entirely.
+    """
+    import json as _json
+    from dataclasses import dataclass, field as dc_field
+
+    ad_type  = row.get("ad_type", "").strip().upper()
+    location = row.get("location", "")
+    flow_id  = row["flow_id"]
+
+    # Reconstruct a minimal cohort-like object from sheet data
+    @dataclass
+    class SheetCohort:
+        name: str
+        rules: list
+        lift_pp: float = 0.0
+        _stg_id: str = ""
+        _stg_name: str = ""
+        _facet: str = ""
+        _criteria: str = ""
+
+    criteria_json = row["targeting_criteria"]
+    try:
+        criteria_parsed = _json.loads(criteria_json)
+    except Exception:
+        criteria_parsed = {}
+
+    # Extract rules from targeting criteria for TG classification
+    rules = []
+    for group in criteria_parsed.get("include", []):
+        for item in group.get("criteria", []):
+            facet = item.get("facet", "")
+            for val in item.get("values", []):
+                rules.append((facet.lower(), val))
+
+    cohort = SheetCohort(
+        name=row["stg_name"],
+        rules=rules,
+        _stg_id=row["stg_id"],
+        _stg_name=row["stg_name"],
+        _facet=row["targeting_facet"],
+        _criteria=criteria_json,
+    )
+
+    # Parse facet URNs from targeting criteria
+    facet_urns: dict[str, list[str]] = {}
+    for group in criteria_parsed.get("include", []):
+        for item in group.get("criteria", []):
+            facet_key = item.get("facetUrn", "")
+            if facet_key and item.get("values"):
+                facet_urns.setdefault(facet_key, []).extend(item["values"])
+
+    tg_cat = classify_tg(cohort.name, cohort.rules)
+
+    if ad_type == "INMAIL":
+        if not inmail_sender:
+            log.error("LINKEDIN_INMAIL_SENDER_URN not set — cannot retry InMail for %s", cohort._stg_id)
+            return
+
+        variants = build_inmail_variants(tg_cat, cohort, claude_key)
+        variant  = variants[0]  # default to Angle A for retries
+
+        if dry_run:
+            log.info("[dry-run] Would create InMail campaign for '%s'", cohort.name)
+            log.info("[dry-run] Subject: %s", variant.subject)
+            log.info("[dry-run] Body (first 100): %s…", variant.body[:100])
+            return
+
+        group_name  = f"Outlier {flow_id} {location} InMail".strip()
+        group_urn   = li_client.create_campaign_group(group_name)
+        campaign_urn = li_client.create_inmail_campaign(
+            name=cohort._stg_name,
+            campaign_group_urn=group_urn,
+            facet_urns=facet_urns,
+        )
+        campaign_id = campaign_urn.rsplit(":", 1)[-1]
+        sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
+
+        creative_urn = li_client.create_inmail_ad(
+            campaign_urn=campaign_urn,
+            sender_urn=inmail_sender,
+            subject=variant.subject,
+            body=variant.body,
+            cta_label=variant.cta_label,
+        )
+        sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
+        log.info("Retry InMail campaign %s creative %s", campaign_urn, creative_urn)
+    else:
+        # Image ad retry — skip creative generation, just recreate campaign
+        if dry_run:
+            log.info("[dry-run] Would create image ad campaign for '%s'", cohort.name)
+            return
+
+        if not row.get("master_campaign"):
+            log.warning(
+                "Skipping retry for stg_id=%s — master_campaign is empty. "
+                "Cannot build campaign group URN without it.",
+                row.get("stg_id", "?"),
+            )
+            return
+        master_urn  = f"urn:li:sponsoredCampaignGroup:{row['master_campaign']}"
+        campaign_urn = li_client.create_campaign(
+            name=cohort._stg_name,
+            campaign_group_urn=master_urn,
+            facet_urns=facet_urns,
+        )
+        campaign_id = campaign_urn.rsplit(":", 1)[-1]
+        sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
+        log.info("Retry image ad campaign %s (no creative — re-run full launch to regenerate)", campaign_urn)
 
 
 # ── Monitor mode ───────────────────────────────────────────────────────────────
@@ -295,7 +545,12 @@ def run_monitor(dry_run: bool = False) -> None:
     sheets    = SheetsClient()
     sheet_cfg = sheets.read_config()
 
-    li_token   = sheet_cfg.get("LINKEDIN_TOKEN") or os.getenv("LINKEDIN_TOKEN", "")
+    li_token   = (
+        sheet_cfg.get("LINKEDIN_TOKEN") or
+        os.getenv("LINKEDIN_ACCESS_TOKEN") or
+        os.getenv("LINKEDIN_TOKEN") or
+        config.LINKEDIN_TOKEN
+    )
     if not li_token:
         log.error("LINKEDIN_TOKEN not found — aborting")
         sys.exit(1)
