@@ -15,8 +15,17 @@ from pathlib import Path
 
 import anthropic
 import requests
+from openai import OpenAI
 
 import config
+
+
+def _llm_client() -> OpenAI:
+    """Return an OpenAI-compatible client pointed at the LiteLLM proxy."""
+    return OpenAI(
+        base_url=config.LITELLM_BASE_URL,
+        api_key=config.LITELLM_API_KEY,
+    )
 
 log = logging.getLogger(__name__)
 
@@ -50,14 +59,16 @@ def classify_tg(cohort_name: str, rules: list) -> str:
     Port of ui.html classifyTG() — keyword regex against cohort name + feature columns.
     Returns one of: DATA_ANALYST, ML_ENGINEER, MEDICAL, LANGUAGE, SOFTWARE_ENGINEER, GENERAL
     """
-    text = cohort_name.lower() + " " + " ".join(feat.lower() for feat, _ in rules)
+    # Replace __ separators with spaces so \b word-boundary regexes match correctly
+    # e.g. "skills__diagnosis" → "skills  diagnosis" → \bdiagnosis\b matches
+    text = (cohort_name.lower() + " " + " ".join(feat.lower() for feat, _ in rules)).replace("__", " ")
 
     if re.search(r'\b(data|sql|analyst|analytics|tableau|snowflake|bigquery|looker|power.?bi|excel|dashboard|spreadsheet)\b', text):
         return "DATA_ANALYST"
     if re.search(r'\b(ml|machine.?learning|deep.?learning|pytorch|tensorflow|llm|nlp|neural|ai.?model|research.?scientist)\b', text):
         return "ML_ENGINEER"
-    if re.search(r'\b(doctor|physician|clinical|nurse|dentist|surgeon|orthopedic)\b', text) or \
-       re.search(r'(radiolog|cardiolog|oncolog|patholog|neurolog|psychiatr|pediatr|dermatol|urolog|nephrolog|gastroenterol|endocrinol|immunolog|pulmonol|ophthal|anesthesiol|medical|health|pharma|biotech|med.?grad)', text):
+    if re.search(r'\b(doctor|physician|clinical|nurse|dentist|surgeon|orthopedic|diagnosis|medicine|anatomy|physiology|surgery|emergency|pharmacol|therapeut|patient|hospital|healthcare)\b', text) or \
+       re.search(r'(radiolog|cardiolog|oncolog|patholog|neurolog|psychiatr|pediatr|dermatol|urolog|nephrolog|gastroenterol|endocrinol|immunolog|pulmonol|ophthal|anesthesiol|internal.?med|medical|health|pharma|biotech|med.?grad)', text):
         return "MEDICAL"
     if re.search(r'\b(hindi|urdu|lingui|translat|spanish|french|german|arabic|japanese|korean|chinese|portuguese|italian|language)\b', text):
         return "LANGUAGE"
@@ -150,39 +161,46 @@ def _walk_text_layers(node: dict, out: dict) -> None:
 # ── Copy generation ────────────────────────────────────────────────────────────
 
 def build_copy_variants(
-    tg_category: str,
     cohort,
     layer_map: dict[str, str],
-    claude_key: str,
+    claude_key: str = "",
 ) -> list[dict]:
     """
-    Call Claude API to generate 3 A/B test copy variants.
-    Returns: [{angle, angleLabel, headline, subheadline, cta, layerUpdates, tgCategory}, ...]
+    Generate 3 A/B/C copy variants fully derived from cohort signals — no fixed TG categories.
+    The LLM infers the professional identity from the cohort name + rules and writes copy
+    and photo_subject specific to that exact audience.
+
+    Returns: [{angle, angleLabel, headline, subheadline, cta, photo_subject, tgLabel, layerUpdates}, ...]
     """
     from src.linkedin_urn import _col_to_human
     from src.analysis import _feature_to_facet
 
-    # Build human-readable TG description from cohort rules
     signals = []
     for feat, _ in cohort.rules:
         human = _col_to_human(feat)
         facet = _feature_to_facet(feat)
         signals.append(f"{facet}: {human}")
 
-    tg_description = cohort.name.replace("__", " ").replace("_", " ")
+    prompt = _build_copy_prompt(cohort.name, signals, layer_map)
 
-    prompt = _build_copy_prompt(tg_category, tg_description, signals, layer_map)
+    # Validate context fields are populated before LiteLLM call
+    _required_signals = ["skills", "job_titles_norm", "fields_of_study", "highest_degree_level",
+                         "accreditations_norm", "experience_band"]
+    populated = [s for s in signals if any(s.startswith(r.replace("_", " ")) for r in _required_signals)]
+    log.info("LiteLLM copy gen — cohort=%s signals=%d populated=%d",
+             cohort.name[:40], len(signals), len(populated))
+    if not signals:
+        log.warning("No signals for copy gen — LLM will use generic copy")
 
-    client = anthropic.Anthropic(api_key=claude_key)
-    resp = client.messages.create(
-        model="claude-sonnet-4-6",
+    client = _llm_client()
+    resp = client.chat.completions.create(
+        model=config.LITELLM_MODEL,
         max_tokens=2048,
         messages=[{"role": "user", "content": prompt}],
     )
 
-    raw = resp.content[0].text.strip()
+    raw = resp.choices[0].message.content.strip()
 
-    # Extract JSON from response
     try:
         parsed = _extract_json(raw)
         variants = parsed.get("variants", [])
@@ -190,105 +208,99 @@ def build_copy_variants(
         log.error("Failed to parse copy variants JSON: %s\n%s", exc, raw[:500])
         variants = []
 
-    # Attach tgCategory to each variant
-    for v in variants:
-        v["tgCategory"] = tg_category
-
-    log.info("Generated %d copy variants for '%s' (%s)", len(variants), cohort.name, tg_category)
+    log.info("Generated %d copy variants for '%s'", len(variants), cohort.name)
     return variants
 
 
-def _build_copy_prompt(tg_category: str, tg_description: str, signals: list[str], layer_map: dict) -> str:
+def _build_copy_prompt(cohort_name: str, signals: list[str], layer_map: dict) -> str:
     layers_summary = json.dumps(layer_map, indent=2)
     signals_str    = "\n".join(f"  - {s}" for s in signals)
+    cohort_label   = cohort_name.replace("__", " ").replace("_", " ")
 
-    # Real Outlier ad examples by TG category — use these as tone/pattern references
-    real_examples = {
-        "ML_ENGINEER": {
-            "A": ("In between ML/Python tasks?\nLooking for AI experience?", "Earn extra income, from home."),
-            "B": ("Grow your **career in AI** and\nyour **wallet**, with Outlier.", "Earn extra income, from home."),
-            "C": ("In between ML/Python tasks?\nLooking for AI experience?", "Earn extra income, from home."),
-        },
-        "SOFTWARE_ENGINEER": {
-            "A": ("In between software\nengineering tasks?", "Earn extra income, from home."),
-            "B": ("AI companies are paying\nsoftware engineers like you.", "Earn extra income, from home."),
-            "C": ("Don't run your life on a 9-5.", "Earn from home as a software engineer."),
-        },
-        "MEDICAL": {
-            "A": ("Get AI experience as a\nmed post-grad.", "Fix & review medical AI and earn on the side."),
-            "B": ("Over 1000 med grads paid.", "We've paid out $500M+\nto experts like you."),
-            "C": ("Don't run your life on a 9-5.", "Earn from home as a med grad."),
-        },
-        "LANGUAGE": {
-            "A": ("Fluent in another language?\nAI companies need you.", "Earn extra income, from home."),
-            "B": ("Earn $20+ USD/hr reviewing\nAI language models.", "Flexible hours, 100% remote."),
-            "C": ("Don't run your life on a 9-5.", "Earn from home as a language expert."),
-        },
-        "DATA_ANALYST": {
-            "A": ("In between data/analytics tasks?\nLooking for AI experience?", "Earn extra income, from home."),
-            "B": ("AI companies are hiring\ndata experts like you.", "Earn extra income, from home."),
-            "C": ("Don't run your life on a 9-5.", "Earn from home as a data analyst."),
-        },
-        "GENERAL": {
-            "A": ("Your expertise is in demand.", "Earn extra income doing AI tasks from home."),
-            "B": ("We've paid out $500M+\nto experts like you.", "Join thousands earning with Outlier."),
-            "C": ("Don't run your life on a 9-5.", "Earn from home on your own schedule."),
-        },
-    }
-    tg_examples = real_examples.get(tg_category, real_examples["GENERAL"])
+    return f"""You are writing 3 A/B test ad creatives for **Outlier** — a platform where domain experts earn payment doing flexible, remote AI training tasks (reviewing, rating, and improving AI outputs in their field).
 
-    return f"""You are writing 3 A/B test ad creatives for **Outlier** — a platform where domain experts earn payment doing flexible, remote AI training tasks (reviewing, rating, and creating content that trains AI models).
+## YOUR FIRST JOB: IDENTIFY WHO THIS PERSON IS
+Do not use any pre-defined audience categories. Derive the person's professional identity entirely from the signals below.
 
-## TARGET AUDIENCE
-- TG Category: {tg_category}
-- Description: {tg_description}
-- Key signals that identify this audience:
+Cohort name (raw feature label): {cohort_label}
+Signals from statistical analysis — these are the features that predict this person passes Outlier's screening:
 {signals_str}
 
-## TEXT LAYERS IN THE BASE CREATIVE (update these with your copy)
+From these signals, identify:
+1. Their **specific professional title** — not a broad category. E.g. "DNA sequencing researcher" not "scientist". "Research associate at a European university" not "academic". "Environmental sanitary engineer" not "engineer".
+2. Their **primary daily activity** — what do they actually do at work? (sequencing DNA samples, reviewing wastewater treatment plans, teaching maths at a European university)
+3. Their **schedule constraint** — what controls their time? (lab schedules, academic calendar, project contracts, clinical shifts)
+4. Their **geography / language context** — any geo signals in the cohort name or accreditations? (Italian titles → EU academic, ICAO/EASA → aviation, European context)
+5. Their **emotional state** — are they likely between projects? Seeking side income? Wanting flexible work?
+
+Write all 3 copy variants for the specific person you've identified — not a generic category.
+
+## TEXT LAYERS IN THE BASE CREATIVE
 {layers_summary}
 
 ## AD FORMAT CONSTRAINTS
-These are 1:1 square photo-background ads (like Instagram/LinkedIn feed). Text is overlaid on the photo.
-- **Headline**: MAX 8 words, 2 lines. White bold text at the top of the image.
-- **Subheadline**: MAX 10 words, 1–2 lines. White regular text lower on the image.
-- Keep copy SHORT and PUNCHY — each word must earn its place.
-- No logo, no CTA text in the image (CTA lives in the LinkedIn ad copy, not the creative).
+These are 1:1 square LinkedIn/Instagram feed ads. Text is overlaid on a background photo.
+- **Headline**: MAX 8 words, 2 lines max. Bold white text.
+- **Subheadline**: MAX 10 words. Regular white text.
+- Every word must earn its place. Short, punchy, specific.
+- No logo or CTA text in the image itself.
 
-## 3 COPY ANGLES — REAL OUTLIER AD PATTERNS
+## 3 COPY ANGLES
 
-**Variant A — Expertise / AI Experience Hook**
-Make the audience feel their specific domain is being sought for AI. They're being recruited as experts.
-Real Outlier example for this TG: headline="{tg_examples['A'][0]}" / sub="{tg_examples['A'][1]}"
-Pattern options: "In between [domain] tasks? Looking for AI experience?", "Get AI experience as a [TG] post-grad.", "AI companies need [domain] experts like you."
+### Variant A — Expertise / AI Experience Hook
+**Insight:** This person has niche expertise and wants meaningful use of it. They may be between tasks or looking for flexible extra income.
+**Pattern:** Name their specific professional moment → reveal that their exact skill has AI value.
+**Examples of good openers:** "In between DNA sequencing projects?", "Between lab rotations?", "AI needs your metagenomics expertise.", "Get AI experience as a research associate."
+**Never:** "Your expertise is in demand." (too generic) — always name the specific expertise.
 
-**Variant B — Earnings / Social Proof Hook**
-Lead with money or scale of payouts. Concrete numbers. Social proof that peers are already earning.
-Real Outlier example for this TG: headline="{tg_examples['B'][0]}" / sub="{tg_examples['B'][1]}"
-Pattern options: "Over [X] [TG]s paid.", "We've paid out $500M+ to experts like you.", "Earn $[X] USD or more, weekly.", "[Prestigious institution] [TG]s paying off school debt."
+### Variant B — Earnings / Social Proof Hook
+**Insight:** Proof that people like them are already earning real money.
+**Pattern:** Bold social proof stat or earnings claim → aspirational pull.
+**Examples:** "Over 500 environmental engineers paid.", "We've paid $500M+ to domain experts like you.", "Researchers across Europe earn with Outlier."
+**Never:** Generic "thousands of professionals paid." — name the exact peer group.
 
-**Variant C — Flexibility / Lifestyle Hook**
-Lead with freedom from the 9-5, remote lifestyle, side income. Low-commitment framing.
-Real Outlier example for this TG: headline="{tg_examples['C'][0]}" / sub="{tg_examples['C'][1]}"
-Pattern options: "Don't run your life on a 9-5.", "In between [domain] tasks? Earn a side income, from home.", "Earn from home as a [TG]."
+### Variant C — Flexibility / Lifestyle Hook
+**Insight:** Their schedule is controlled by something external (lab hours, academic calendar, project deadlines, shifts). Freedom from that is aspirational.
+**Pattern:** Bold declaration naming their specific constraint → low-friction income claim.
+**Examples:** "Lab hours don't have to own your income.", "Academic schedules leave room to earn.", "Between contracts? Work on AI, from home."
+**Never:** A question. Always a statement. **Never** "Work on your terms." — name the specific constraint.
 
-## STRICT RULES — YOU MUST FOLLOW ALL OF THESE
-1. **NEVER start a headline with the audience name as a label** — no "Cardiologists:", "Data Analysts:". The domain name can appear naturally mid-sentence or as "a [domain] post-grad" but NEVER as a standalone label prefix.
-2. Each variant must use a COMPLETELY DIFFERENT opening structure — question vs. statement vs. bold claim.
-3. Do NOT invent earning figures — only use numbers from the original layer text if present.
-4. Use Outlier's approved vocabulary:
-   - NEVER say "job" or "role" — say "opportunity" (for Outlier tasks; it's OK to say "in between [domain] jobs" when referring to the user's external employment)
-   - Say "payment" not "compensation"
-   - Say "current tasking rate" not "project rate"
+## STRICT RULES
+1. **NEVER start a headline with the audience name as a label** — "DNA Researchers:" is wrong. The profession can appear naturally mid-sentence.
+2. Each variant must have a COMPLETELY DIFFERENT opening structure — question vs. statement vs. bold claim.
+3. Do NOT invent earnings figures — only use numbers if the layer text already contains them.
+4. Use Outlier's mandatory vocabulary:
+   - Say "payment" not "compensation" or "salary"
+   - Say "opportunity" not "job" or "role" (when referring to Outlier tasks; "in between [their] jobs" referring to external work is fine)
    - Say "screening" not "interview"
    - Say "reward" not "bonus"
-5. Headline and subheadline are separate fields — do NOT merge them into one.
-6. Match the warmth, directness, and confidence of real Outlier ads — human and specific, not corporate.
+   - Say "current tasking rate" not "project rate"
+5. Headline and subheadline are separate fields — never merge them.
+6. Human and specific, not corporate. Write how a sharp, friendly colleague would put it.
+
+## PHOTO SUBJECT (one per variant)
+Each variant needs a `photo_subject` — a SHORT, specific scene description for the background photo generator.
+
+Format: "[gender] [ethnicity] [specific profession title], [specific activity at home]"
+
+Derive this from the professional identity you identified above. Never use generic descriptions.
+
+Good examples:
+  - "male Northern European DNA sequencing researcher, reviewing sequencing data on a laptop at home"
+  - "female Italian research associate, reading academic papers on a laptop at a home desk"
+  - "male South Asian environmental engineer, reviewing technical drawings on a laptop at home"
+
+Bad examples (never do these):
+  - "professional person working at a laptop at home" — too generic
+  - "scientist at a computer" — too vague, no ethnicity, no activity
+
+The photo generator will add: close-up portrait framing, plant-filled home interior, natural window light, warm film aesthetic.
 
 ## RESPONSE FORMAT
 Return ONLY valid JSON, no other text:
 ```json
 {{
+  "tg_label": "<your derived human-readable label for this TG, e.g. 'European DNA sequencing researcher'>",
   "variants": [
     {{
       "angle": "A",
@@ -296,6 +308,7 @@ Return ONLY valid JSON, no other text:
       "headline": "...",
       "subheadline": "...",
       "cta": "Apply Now",
+      "photo_subject": "...",
       "layerUpdates": {{"<node_id_from_layers>": "new text"}}
     }},
     {{
@@ -304,6 +317,7 @@ Return ONLY valid JSON, no other text:
       "headline": "...",
       "subheadline": "...",
       "cta": "Start Earning",
+      "photo_subject": "...",
       "layerUpdates": {{"<node_id_from_layers>": "new text"}}
     }},
     {{
@@ -312,6 +326,7 @@ Return ONLY valid JSON, no other text:
       "headline": "...",
       "subheadline": "...",
       "cta": "Get Matched Today",
+      "photo_subject": "...",
       "layerUpdates": {{"<node_id_from_layers>": "new text"}}
     }}
   ]

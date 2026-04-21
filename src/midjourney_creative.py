@@ -468,8 +468,8 @@ def generate_midjourney_creative(
         )
 
     prompt = _build_imagen_prompt(subject, angle)
-    log.info("Generating Gemini creative | angle=%s", angle)
-    log.debug("Imagen prompt: %s", prompt)
+    log.info("Gemini call — angle=%s photo_subject=%r", angle, subject[:80])
+    log.info("Imagen prompt (first 200 chars): %s", prompt[:200])
 
     bg_image = _generate_imagen(prompt, gemini_api_key or config.GEMINI_API_KEY)
     log.info("Imagen photo received (%dx%d)", bg_image.width, bg_image.height)
