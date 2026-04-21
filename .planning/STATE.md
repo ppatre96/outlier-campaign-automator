@@ -25,7 +25,7 @@ See: .planning/PROJECT.md (updated 2026-04-21)
 **Phase 2 — Observability & Storage**
 Goal: Automated weekly Slack reports, per-creative performance tracking, campaign lifecycle monitor.
 
-Status: Executing Phase 02 (Plan 02-02 is next)
+Status: Executing Phase 02 (Plan 02-04 is next)
 
 ## Completed Phases
 
@@ -59,18 +59,16 @@ Status: Executing Phase 02 (Plan 02-02 is next)
 
 ## Last Session
 
-Completed 02-01 Slack Bot Integration — 2026-04-21
+Completed 02-03 LLM Context Quality + photo_subject Validation — 2026-04-20
 
-- slack-sdk>=3.0.0 added to requirements.txt; installed 3.41.0 into venv
-- _post_to_slack() rewritten: Bot Token (chat.postMessage) first, webhook fallback retained
-- Crontab entry added: 30 3 * * 1 (09:00 IST Monday) with absolute venv Python path
-- Human action pending: create xoxb- Slack App bot token and update SLACK_BOT_TOKEN in .env
-- Progress: [████░░░░░░] 42%
+- validate_photo_subject() guard added to midjourney_creative.py with 7 generic-description regex patterns
+- LiteLLM model + per-variant photo_subject logging added to dry_run.py Stage 8 output
+- Two-stage LLM context flow documented in figma_creative.py before build_copy_variants()
+- OBS-03 requirement marked complete
+- Progress: [█████░░░░░] 50%
 
 ## Next Step
 
-Proceed to Plan 02-02: Drive URL + Sheets write_creative() extension
+Proceed to Plan 02-04: Lifecycle monitor Slack wiring
 
-- Plan 02-02: Drive URL + Sheets write_creative() extension
-- Plan 02-03: LLM context quality validation
 - Plan 02-04: Lifecycle monitor Slack wiring
