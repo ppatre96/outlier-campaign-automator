@@ -36,6 +36,7 @@ FIGMA_API = "https://api.figma.com/v1"
 TG_PALETTES = {
     "DATA_ANALYST":      [{"r": 0.78, "g": 0.88, "b": 1.00}, {"r": 0.88, "g": 0.94, "b": 1.00}],
     "ML_ENGINEER":       [{"r": 0.78, "g": 0.88, "b": 1.00}, {"r": 0.88, "g": 0.94, "b": 1.00}],
+    "MATH":              [{"r": 0.78, "g": 0.88, "b": 1.00}, {"r": 0.88, "g": 0.94, "b": 1.00}],
     "SOFTWARE_ENGINEER": [{"r": 0.67, "g": 0.85, "b": 1.00}, {"r": 0.85, "g": 0.95, "b": 1.00}],
     "MEDICAL":           [{"r": 0.87, "g": 0.85, "b": 1.00}, {"r": 0.93, "g": 0.91, "b": 1.00}],
     "LANGUAGE":          [{"r": 0.78, "g": 0.94, "b": 0.86}, {"r": 0.88, "g": 0.98, "b": 0.94}],
@@ -45,6 +46,7 @@ TG_PALETTES = {
 TG_ILLUS_VARIANTS = {
     "DATA_ANALYST":      ["chart",  "neural", "code"],
     "ML_ENGINEER":       ["neural", "chart",  "code"],
+    "MATH":              ["chart",  "neural", "chart"],
     "SOFTWARE_ENGINEER": ["code",   "chart",  "neural"],
     "MEDICAL":           ["brain",  "speech", "brain"],
     "LANGUAGE":          ["speech", "brain",  "speech"],
@@ -57,7 +59,7 @@ TG_ILLUS_VARIANTS = {
 def classify_tg(cohort_name: str, rules: list) -> str:
     """
     Port of ui.html classifyTG() — keyword regex against cohort name + feature columns.
-    Returns one of: DATA_ANALYST, ML_ENGINEER, MEDICAL, LANGUAGE, SOFTWARE_ENGINEER, GENERAL
+    Returns one of: DATA_ANALYST, ML_ENGINEER, MATH, MEDICAL, LANGUAGE, SOFTWARE_ENGINEER, GENERAL
     """
     # Replace __ separators with spaces so \b word-boundary regexes match correctly
     # e.g. "skills__diagnosis" → "skills  diagnosis" → \bdiagnosis\b matches
@@ -67,6 +69,8 @@ def classify_tg(cohort_name: str, rules: list) -> str:
         return "DATA_ANALYST"
     if re.search(r'\b(ml|machine.?learning|deep.?learning|pytorch|tensorflow|llm|nlp|neural|ai.?model|research.?scientist)\b', text):
         return "ML_ENGINEER"
+    if re.search(r'\b(math|mathematics|statistics|statistician|actuary|actuarial|quantitative|physicist|physics|algebra|calculus|probability|stochastic|mathematician|econometrics|biostatistics)\b', text):
+        return "MATH"
     if re.search(r'\b(doctor|physician|clinical|nurse|dentist|surgeon|orthopedic|diagnosis|medicine|anatomy|physiology|surgery|emergency|pharmacol|therapeut|patient|hospital|healthcare)\b', text) or \
        re.search(r'(radiolog|cardiolog|oncolog|patholog|neurolog|psychiatr|pediatr|dermatol|urolog|nephrolog|gastroenterol|endocrinol|immunolog|pulmonol|ophthal|anesthesiol|internal.?med|medical|health|pharma|biotech|med.?grad)', text):
         return "MEDICAL"
