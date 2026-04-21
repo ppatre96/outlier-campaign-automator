@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Executing Phase 03
-last_updated: "2026-04-21T03:22:05.153Z"
+status: Phase 03 Plan 01 Complete
+last_updated: "2026-04-21T03:22:45.242Z"
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 14
-  completed_plans: 13
+  completed_plans: 14
 ---
 
 # Project State
@@ -69,6 +69,7 @@ Goal: Enable continuous optimization by collecting creative/cohort performance f
 - [Phase 02.5-feedback-loops-experimentation]: Financial angle A assigned by default to all newly staged cohorts from reanalysis (locked decision from CONTEXT.md)
 - [Phase 02.5]: priority_score = impact × confidence (0.9) × feasibility (0.9); 20/80 test/baseline allocation; dedup by (cohort, angle, photo_subject)
 - [Phase 03-campaign-expansion]: MATH bucket added to classify_tg at priority slot 3 (between ML_ENGINEER and MEDICAL); locked regex covers math/statistics/actuary/quantitative/physicist/probability/econometrics/biostatistics (EXP-02)
+- [Phase 03-campaign-expansion]: StubCohort dataclass sufficient for build_inmail_variants; lazy client construction in live mode only; angle-F fallback gap documented as known limitation
 
 ## Session Notes
 
@@ -82,20 +83,16 @@ Goal: Enable continuous optimization by collecting creative/cohort performance f
 
 ## Last Session
 
-Completed 02.5-04 Reanalysis Loop — 2026-04-20
+Completed 03-01 STEM InMail Financial Angle Regen — 2026-04-21
 
-- on_pause_cohort() and on_test_new_angles() async callbacks added to slack_alert_handler.py
-- SlackReactionHandler.__init__ now registers default callbacks (thumbsup→pause, lab→test)
-- handle_reaction_event() updated to invoke callbacks via asyncio.run() and return callback result
-- ReanalysisOrchestrator class created (src/reanalysis_loop.py): trigger_reanalysis(), stage_new_cohorts(), collect_test_results()
-- Stub mode for Stage A when REDASH_API_KEY unset — pipeline testable without live credentials
-- New cohorts staged to data/scheduling_queue.json with angle=A (financial angle default)
-- Test variant results persisted to data/test_variant_results.json for next feedback_agent run (FEED-14)
-- CLI script created (scripts/trigger_reanalysis.py): --exclude, --focus, --collect-results, --cohorts, --dry-run
-- FEED-09, FEED-10, FEED-11, FEED-14 complete
-- Commits: 10780b6 (slack_alert_handler), c0dad93 (reanalysis_loop), f92e0d6 (CLI)
-- Phase 2.5 COMPLETE — full weekly feedback loop operational
+- scripts/regen_stem_inmail.py created: angle-F regen for campaigns 633412886, 635201096, 634012966
+- StubCohort dataclass + build_inmail_variants(angle_keys=["F"]) wired per plan spec
+- Preflight guards: LINKEDIN_INMAIL_SENDER_URN, LITELLM_API_KEY, LINKEDIN_ACCESS_TOKEN
+- Dry-run verified: exit=0, 3 campaign blocks, all 3 URNs, no banned vocab
+- README.md updated with Scripts section + STEM InMail regen usage
+- EXP-01 marked complete
+- Commits: 038fa99 (script), 7457b8d (README)
 
 ## Next Step
 
-Phase 2.5 complete. All 4 plans executed. Next: Phase 3 (Expansion) when ready.
+Phase 03 Plan 01 complete. Next: Phase 03 Plan 02 (Google Drive upload for generated creatives).

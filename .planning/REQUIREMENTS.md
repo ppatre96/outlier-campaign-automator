@@ -34,8 +34,8 @@
 
 ### Campaign Expansion
 
-- [ ] **EXP-01**: STEM InMail variants regenerated with financial angle (F/A/C) for campaigns 633412886, 635201096, 634012966
-- [ ] **EXP-02**: `classify_tg` extended with any new TG buckets needed for additional cohort types
+- [x] **EXP-01**: STEM InMail variants regenerated with financial angle (F/A/C) for campaigns 633412886, 635201096, 634012966
+- [x] **EXP-02**: `classify_tg` extended with any new TG buckets needed for additional cohort types
 
 ## v2 Requirements
 
@@ -86,8 +86,8 @@
 | OBS-04 | Phase 2 | Complete |
 | DATA-01 | Phase 2 | Complete |
 | DATA-02 | Phase 2 | Complete |
-| EXP-01 | Phase 3 | Pending |
-| EXP-02 | Phase 3 | Pending |
+| EXP-01 | Phase 3 | Complete |
+| EXP-02 | Phase 3 | Complete |
 
 **Coverage:**
 - v1 requirements: 17 total
