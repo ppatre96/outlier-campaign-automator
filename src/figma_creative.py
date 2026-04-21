@@ -158,6 +158,38 @@ def _walk_text_layers(node: dict, out: dict) -> None:
         _walk_text_layers(child, out)
 
 
+# ── LLM Context Flow Documentation ───────────────────────────────────────────
+#
+# Stage 1 — Copy generation (this function): LiteLLM → claude-sonnet-4-6
+#   Input context passed to the LLM:
+#     - cohort.name        : raw feature label, e.g. "skills__diagnosis__healthcare"
+#     - cohort.rules       : list of (feature, value) tuples from Stage A/B analysis
+#     - human-readable signals derived from _col_to_human() + _feature_to_facet()
+#     - Figma text layer map (empty dict {} when Figma is not configured)
+#
+#   Output consumed downstream:
+#     - headline, subheadline, cta  → text overlay in compose_ad()
+#     - photo_subject               → THE ONLY SIGNAL passed to Gemini (Stage 2)
+#     - layerUpdates                → Figma MCP path (currently out of scope)
+#
+# Stage 2 — Image generation: LiteLLM → Gemini /images/generations
+#   Defined in: src/midjourney_creative.py  generate_midjourney_creative()
+#   Input: photo_subject + hard-coded template (portrait framing, plant background,
+#          warm window light, 85mm lens, angle-specific expression)
+#   Output: background PNG, composited by compose_ad() with gradient + text overlay
+#
+# Why photo_subject is critical:
+#   It is the ONLY cohort-specific signal Gemini receives. If the LLM produces a
+#   generic description (e.g. "professional person"), Gemini generates a stock-photo
+#   image with no connection to the audience segment.
+#   validate_photo_subject() in midjourney_creative.py enforces specificity before
+#   the Gemini call is made.
+#
+# Approved Outlier vocabulary: all copy produced here must avoid the words in
+# CLAUDE.md "Don't Say" column. The ## STRICT RULES section of _build_copy_prompt()
+# enforces this at the prompt level.
+# ──────────────────────────────────────────────────────────────────────────────
+
 # ── Copy generation ────────────────────────────────────────────────────────────
 
 def build_copy_variants(
