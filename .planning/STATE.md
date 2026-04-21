@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-04-20T18:08:29Z"
+last_updated: "2026-04-21T01:58:15.816Z"
 progress:
-  total_phases: 3
+  total_phases: 4
   completed_phases: 1
-  total_plans: 7
-  completed_plans: 4
+  total_plans: 12
+  completed_plans: 6
 ---
 
 # Project State
@@ -18,24 +18,24 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-21)
 
 **Core value:** End-to-end campaign automation from screening data to live LinkedIn campaign — zero manual steps once triggered.
-**Current focus:** Phase 01 — pipeline-integrity
+**Current focus:** Phase 02 — observability-storage
 
 ## Current Phase
 
-**Phase 1 — Pipeline Integrity**
-Goal: Full pipeline runs end-to-end without silent skips or hard-fails.
+**Phase 2 — Observability & Storage**
+Goal: Automated weekly Slack reports, per-creative performance tracking, campaign lifecycle monitor.
 
-Status: Executing Phase 01
+Status: Executing Phase 02 (Plan 02-02 is next)
 
 ## Completed Phases
 
-None yet.
+- Phase 1 — Pipeline Integrity (COMPLETE)
 
 ## Known Blockers
 
 - `LINKEDIN_MEMBER_URN` — needs correct OAuth token owner identity to unblock `create_image_ad`
 - LinkedIn MDP approval — needed for audienceCounts Stage C (account 510956407)
-- `SLACK_WEBHOOK_URL` — empty; workspace restrictions blocked webhook setup
+- `SLACK_BOT_TOKEN` — current value is xoxe.xoxp- (user token); needs xoxb- bot token from new Slack App for DM delivery (create app at api.slack.com, chat:write scope)
 - Google Drive — needs Shared Drive created and service account added as Content Manager
 
 ## Decisions
@@ -47,6 +47,8 @@ None yet.
 - Stage C graceful bypass — try/except with cohorts_b[:config.MAX_CAMPAIGNS] fallback (D-05) — 2026-04-21
 - InMail gate removed — build_inmail_variants unconditional via LiteLLM (D-03) — 2026-04-21
 - Premature GEMINI_API_KEY raise removed — _generate_imagen() handles LiteLLM-first correctly (D-02) — 2026-04-21
+- [Phase 02]: Bot Token (chat.postMessage) tried first in _post_to_slack(); Incoming Webhook kept as fallback (D-08)
+- [Phase 02]: validate_photo_subject uses regex matching on lowercased input against 7 known generic patterns (D-08)
 
 ## Session Notes
 
@@ -57,17 +59,18 @@ None yet.
 
 ## Last Session
 
-Completed 01-pipeline-integrity plan 04 (Sub-agent pipeline orchestration documentation)
-- Agent trace logging added to dry_run.py
-- Context validation logging added (figma_creative, midjourney_creative)
-- Competitor intel JSON output + brief generator reader implemented
-- AGENT-PIPELINE.md verified complete
-- campaign-manager.md Stage 8g verified complete
+Completed 02-01 Slack Bot Integration — 2026-04-21
+
+- slack-sdk>=3.0.0 added to requirements.txt; installed 3.41.0 into venv
+- _post_to_slack() rewritten: Bot Token (chat.postMessage) first, webhook fallback retained
+- Crontab entry added: 30 3 * * 1 (09:00 IST Monday) with absolute venv Python path
+- Human action pending: create xoxb- Slack App bot token and update SLACK_BOT_TOKEN in .env
+- Progress: [████░░░░░░] 42%
 
 ## Next Step
 
-Phase 1 COMPLETE. Proceed to Phase 2: Observability & Storage
-- Plan 02-01: Slack Bot Integration (weekly reports delivery)
+Proceed to Plan 02-02: Drive URL + Sheets write_creative() extension
+
 - Plan 02-02: Drive URL + Sheets write_creative() extension
 - Plan 02-03: LLM context quality validation
 - Plan 02-04: Lifecycle monitor Slack wiring

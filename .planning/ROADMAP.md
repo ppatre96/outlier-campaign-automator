@@ -151,9 +151,9 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — Slack Bot Integration (slack-sdk, WebClient, crontab)
+- [x] 02-01-PLAN.md — Slack Bot Integration (slack-sdk, WebClient, crontab)
 - [ ] 02-02-PLAN.md — Drive URL fix + Sheets write_creative() extension
-- [ ] 02-03-PLAN.md — LLM context quality: validate_photo_subject() + flow docs
+- [x] 02-03-PLAN.md — LLM context quality: validate_photo_subject() + flow docs
 - [ ] 02-04-PLAN.md — Lifecycle monitor Slack wiring (depends on 02-01)
 
 **UI hint**: no
@@ -250,7 +250,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Pipeline Integrity | 4/4 | Complete | 2026-04-20 |
-| 2. Observability & Storage | 0/4 | Planned | - |
+| 2. Observability & Storage | 2/4 | In Progress|  |
 | 2.5. Feedback Loops & Experimentation | 0/? | Planned | - |
 | 3. Campaign Expansion | 0/? | Not started | - |
 
