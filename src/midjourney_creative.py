@@ -431,6 +431,59 @@ def compose_ad(
     return canvas
 
 
+# ── photo_subject validation ──────────────────────────────────────────────────
+
+# Patterns that indicate a generic, cohort-agnostic description.
+# The LiteLLM prompt explicitly forbids these, but this guard catches
+# cases where the LLM truncates or falls back to a stock phrase.
+_GENERIC_SUBJECT_PATTERNS = [
+    r"professional\s+(person|individual|at\s+a?\s*(?:laptop|computer|desk))",
+    r"scientist\s+at\s+a\s+computer",
+    r"person\s+working\s+at\s+a\s+laptop",
+    r"^(male|female)\s+(professional|scientist|person)\s*$",
+    r"domain\s+expert",
+    r"remote\s+worker",
+    r"knowledge\s+worker",
+]
+
+
+def validate_photo_subject(photo_subject: str) -> None:
+    """
+    Raise ValueError if photo_subject matches a known generic pattern.
+
+    The photo_subject must be specific to the cohort — describing a concrete
+    profession, attire, setting, and optionally geography. Generic descriptions
+    cause Gemini to generate stock-photo-style images unrelated to the audience.
+
+    Called by generate_midjourney_creative() before the Gemini API call.
+
+    Args:
+        photo_subject: The subject description produced by build_copy_variants().
+
+    Raises:
+        ValueError: If the subject matches a forbidden generic pattern.
+
+    Examples of valid subjects:
+        "female South Asian cardiologist, reviewing ECG data on a laptop at home"
+        "male Northern European DNA sequencing researcher, reviewing sequencing data"
+
+    Examples of invalid (raises ValueError):
+        "professional person at a laptop"
+        "scientist at a computer"
+        "domain expert"
+    """
+    subject_lower = photo_subject.strip().lower()
+    for pattern in _GENERIC_SUBJECT_PATTERNS:
+        if re.search(pattern, subject_lower):
+            raise ValueError(
+                f"photo_subject is too generic: '{photo_subject}'. "
+                "It must describe the cohort's actual profession, attire, setting, "
+                "and optionally geography — e.g. 'female South Asian cardiologist, "
+                "reviewing ECG data on a laptop at home'. "
+                "Check build_copy_variants() output and re-run."
+            )
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 def generate_midjourney_creative(
@@ -466,6 +519,8 @@ def generate_midjourney_creative(
             "photo_subject is required — pass the cohort-derived subject description "
             "from ad-creative-brief-generator, not a TG category label."
         )
+
+    validate_photo_subject(subject)  # raises ValueError if generic
 
     prompt = _build_imagen_prompt(subject, angle)
     log.info("Gemini call — angle=%s photo_subject=%r", angle, subject[:80])
