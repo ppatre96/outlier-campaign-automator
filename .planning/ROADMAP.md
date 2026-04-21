@@ -82,7 +82,7 @@
 Plans:
 - [x] 01-01-PLAN.md — Core pipeline bug fixes (has_mj guard, SCREENING_END_DATE, Stage C bypass, InMail gate, GEMINI_API_KEY check)
 - [x] 01-02-PLAN.md — Environment config + LinkedIn hardening (INMAIL_SENDER_URN, classify_tg verify, create_image_ad blocker logging)
-- [ ] 01-03-PLAN.md — Verification (LinkedIn token refresh test + full dry-run acceptance)
+- [x] 01-03-PLAN.md — Verification (LinkedIn token refresh test + full dry-run acceptance)
 - [x] 01-04-PLAN.md — Sub-agent pipeline orchestration (agent trace logging, AGENT-PIPELINE.md, context validation)
 
 ---
@@ -201,7 +201,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Pipeline Integrity | 3/4 | In Progress|  |
+| 1. Pipeline Integrity | 4/4 | Complete | 2026-04-20 |
 | 2. Observability & Storage | 0/4 | Planned | - |
 | 3. Campaign Expansion | 0/? | Not started | - |
 
@@ -212,14 +212,14 @@ Plans:
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | PIPE-01 | Phase 1 | Complete |
-| PIPE-02 | Phase 1 | Pending |
-| PIPE-03 | Phase 1 | Pending |
-| PIPE-04 | Phase 1 | Pending |
-| PIPE-05 | Phase 1 | Pending |
+| PIPE-02 | Phase 1 | Complete |
+| PIPE-03 | Phase 1 | Complete |
+| PIPE-04 | Phase 1 | Complete |
+| PIPE-05 | Phase 1 | Complete |
 | LI-01 | Phase 1 | Blocked |
 | LI-02 | Phase 1 | Blocked |
 | LI-03 | Phase 1 | Pending |
-| LI-04 | Phase 1 | Pending |
+| LI-04 | Phase 1 | Complete |
 | OBS-01 | Phase 2 | Pending |
 | OBS-02 | Phase 2 | Pending |
 | OBS-03 | Phase 2 | Pending |
