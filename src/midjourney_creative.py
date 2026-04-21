@@ -91,22 +91,32 @@ def _build_imagen_prompt(photo_subject: str, angle: str) -> str:
     """
     Build Gemini image prompt matching Outlier Static Ads v2 aesthetic.
 
-    photo_subject must be SHORT:
-      "[gender] [ethnicity] [profession], [activity]"
-    e.g. "male South Asian software developer, working at a laptop"
+    CRITICAL COMPOSITION RULES FOR TEXT OVERLAY:
+    - Top 25%: COMPLETELY CLEAR (no face, no subject) — headline text ONLY
+    - Middle 50%: Subject centered, empty left/right sides — subheadline beside subject
+    - Bottom 20%: Logo + earnings text zone (subject ends at shoulders)
+    - **TEXT MUST NOT APPEAR ON SUBJECT'S FACE OR BODY AT ALL**
 
-    The template wraps it with the correct room/light/style — do NOT add long
-    scene descriptions. The result should match the close-up, plant-background,
-    analog-film look of the reference ads.
+    Design Specifications:
+    - Font: Inter Bold (headlines), Inter Regular (subheadlines)
+    - Logo: /Users/pranavpatre/Downloads/outlier logo.svg (120px width, bottom-right)
+    - Gradients by angle:
+      - A: Pink (#FFB6C1) + Teal (#ADD8E6)
+      - B: Orange (#FFC97A) + Teal (#ADD8E6)
+      - C: Pink (#FFB6C1) + Green (#B4E6C8)
+
+    photo_subject format: "[gender] [ethnicity] [profession], [activity]"
+    e.g. "male South Asian software developer, working at a laptop"
     """
     expression = _ANGLE_EXPRESSIONS.get(angle, _ANGLE_EXPRESSIONS["A"])
     return (
         f"a close-up environmental portrait of a {photo_subject}, "
-        "face and upper body filling most of the frame, "
-        "lush plant-filled home interior visible in background around subject, "
-        "bookshelves, wall art, and potted plants behind them, "
-        "warm natural window light, "
-        f"85mm prime lens, {expression}, "
+        "positioned with at least 25% clear space ABOVE the head (no face in top quarter — headline zone). "
+        "Face centered vertically with breathing room. Body and torso clearly visible below shoulders (earnings zone). "
+        "Subject occupies center of frame with EMPTY SPACE on left and right sides — text will overlay beside/below subject, NOT on them. "
+        "Lush plant-filled home interior: bookshelves, potted plants, wall art, warm natural window light. "
+        f"85mm prime lens, shallow depth of field, {expression}. "
+        "Shot on film, analog color grade, authentic lifestyle photo. NOT stock photo. NOT corporate headshot. "
         f"{_IMAGEN_STYLE_SUFFIX}"
     )
 

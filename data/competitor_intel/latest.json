@@ -1,0 +1,153 @@
+{
+  "updated_at": "2026-04-21T14:00:00",
+  "run_trigger": "campaign-pipeline-project-69cf1a039ed66cc82e0fa8f3",
+
+  "hot_domains": [
+    {
+      "domain": "PhD / Domain Expert",
+      "platforms": ["DataAnnotation", "Mercor", "Alignerr", "Outlier"],
+      "notes": "All 4 major platforms running PhD/expert tracks. Mercor paying $70-120/hr for physics, bio, finance PhDs. DataAnnotation advertising $50-100+/hr for domain experts. This TG is actively competed for.",
+      "outlier_tg_recommendation": "PhD-level experts — HLE Screening T1"
+    },
+    {
+      "domain": "Coding / Software Engineering",
+      "platforms": ["DataAnnotation", "Mercor", "Alignerr", "Outlier"],
+      "notes": "DataAnnotation $50-75+/hr. Mercor $100/hr for open source. Saturated — Outlier needs strong differentiator here.",
+      "outlier_tg_recommendation": "Software engineers with Python/ML background"
+    },
+    {
+      "domain": "Languages / Bilingual",
+      "platforms": ["DataAnnotation", "Outlier"],
+      "notes": "DataAnnotation $20-50+ for bilingual. Outlier historically best CPA ($2.83) in language TG.",
+      "outlier_tg_recommendation": "Language specialists — translation/NLP tasks"
+    }
+  ],
+
+  "underserved_domains": [
+    {
+      "domain": "Medical / Clinical",
+      "notes": "DataAnnotation lists 'Clinical Researcher' role but no dedicated medical track visible. Mercor has bio PhDs but no explicit clinical track. Outlier has HLE Medical — potential whitespace.",
+      "opportunity": "Outlier can own clinical medicine TG before Mercor ramps medical-specific campaigns"
+    }
+  ],
+
+  "competitor_ads": [
+    {
+      "competitor": "DataAnnotation.tech",
+      "dominant_angle": "C — Flexibility",
+      "top_hook": "Work whenever and wherever you want.",
+      "earnings_claim": "$50–$100+/hr for domain experts",
+      "visual_style": "Clean, professional — no person photos on main site",
+      "social_proof": "4.6/5 Indeed (145 reviews), MIT researcher testimonial, media logos (NYT, TIME, BuzzFeed)",
+      "gap_vs_outlier": "DataAnnotation does NOT mention Scale AI backing, frontier model access, or $500M+ payout total. These are Outlier exclusives.",
+      "angle_saturation": "C (flexibility) is their lead — avoid repeating this verbatim"
+    },
+    {
+      "competitor": "Mercor",
+      "dominant_angle": "A — Expertise Hook + specific specialization",
+      "top_hook": "Shape the future of AI. Find top-tier, remote, AI roles for your expertise.",
+      "earnings_claim": "$70-90/hr for physics PhD; $120/hr equity research; $100/hr open source",
+      "visual_style": "Profile photo thumbnails, hiring velocity stats (e.g. '42 hired recently')",
+      "social_proof": "$500M annual revenue, $1.5M paid out daily, OpenAI/Anthropic as customers",
+      "gap_vs_outlier": "Mercor had a major data breach in 2026 with 5 class-action lawsuits — active trust liability. Outlier (Scale AI) has enterprise-grade security by contrast.",
+      "angle_saturation": "A (expertise hook) with specialization naming. Avoid generic 'shape the future of AI' — Mercor owns it."
+    },
+    {
+      "competitor": "LinkedIn AI Labor Marketplace",
+      "dominant_angle": "B — Earnings ($150/hr claim)",
+      "top_hook": "Make up to $150 an hour training AI chatbots.",
+      "earnings_claim": "$150/hr",
+      "visual_style": "LinkedIn-native sponsored posts",
+      "social_proof": "1B+ verified professionals on platform",
+      "gap_vs_outlier": "LinkedIn marketplace is in testing only — not yet live. Early mover advantage for Outlier on PhD/expert TG before LinkedIn activates.",
+      "angle_saturation": "B (earnings) — but LinkedIn is using inflated top-end claims. Outlier should use realistic $50-100/hr range with $500M proof."
+    }
+  ],
+
+  "voice_of_user": {
+    "top_complaints_competitors": [
+      "Mercor data breach 2026 — 5 class-action lawsuits (trust liability)",
+      "DataAnnotation no email notifications for new projects — users miss work",
+      "Both platforms: accounts suspended without warning before payout",
+      "Mercor: interview-heavy onboarding (Micro1, Alignerr interviews mentioned as friction)",
+      "All platforms: work availability is unpredictable, dry spells common"
+    ],
+    "top_complaints_outlier": [
+      "Queue inconsistency — work arrives unpredictably, long dry spells",
+      "Linter friction — contradictory automated feedback reduces effective hourly rate",
+      "Account bans without clear reason, appeal process unresponsive",
+      "Unpaid onboarding — long training process before first paid task"
+    ],
+    "top_praise_outlier": [
+      "Most reliable payment — consistently pays right amount on time",
+      "Specialist rates: $70-75/hr on Project Blackbeard (specialist work)",
+      "Legitimate, mostly well-run platform backed by Scale AI",
+      "Best entry point for AI training experience"
+    ],
+    "recurring_questions": [
+      "Is Outlier AI legit? → ad should lead with Scale AI / $500M+ proof",
+      "How much does Outlier actually pay? → ad should show specific rate for PhD/expert tier",
+      "Will I actually get work? → ad should manage expectation or address availability"
+    ]
+  },
+
+  "experiment_ideas": [
+    {
+      "id": "exp_001",
+      "tg": "PhD / Expert",
+      "angle": "B",
+      "idea": "Counter Mercor's data breach liability — use 'Scale AI-backed, enterprise-grade security' as subheadline trust element. Mercor has 5 active lawsuits. This is a direct differentiator.",
+      "priority": "HIGH",
+      "source": "Mercor data breach news April 2026"
+    },
+    {
+      "id": "exp_002",
+      "tg": "PhD / Expert",
+      "angle": "A",
+      "idea": "Specialization-specific hook — name the exact research domain (HLE = hard science/math/medicine). 'Your HLE-level expertise is rare. AI labs need exactly that.' Do not use generic 'your expertise'.",
+      "priority": "HIGH",
+      "source": "Mercor segment-specific listing strategy"
+    },
+    {
+      "id": "exp_003",
+      "tg": "PhD / Expert",
+      "angle": "C",
+      "idea": "Freedom from publication cycle pressure — 'Grant deadlines don't have to define your income.' Mercor and DataAnnotation are NOT running this angle. Whitespace opportunity.",
+      "priority": "MEDIUM",
+      "source": "Competitive gap — neither competitor addresses academic schedule constraint"
+    },
+    {
+      "id": "exp_004",
+      "tg": "All",
+      "angle": "B",
+      "idea": "Lead with $500M paid out total — Mercor uses $500M annual revenue (internal metric), Outlier has $500M+ contractor payouts (more relatable). Same number, opposite framing.",
+      "priority": "HIGH",
+      "source": "Outlier differentiator vs Mercor revenue claim"
+    }
+  ],
+
+  "competitor_hooks": [
+    "Work whenever and wherever you want. (DataAnnotation)",
+    "Shape the future of AI. (Mercor)",
+    "Your domain expertise IS the training data. (DataAnnotation)",
+    "Find top-tier, remote, AI roles for your expertise. (Mercor)",
+    "Make up to $150 an hour training AI chatbots. (LinkedIn AI marketplace)"
+  ],
+
+  "avoid": [
+    "Shape the future of AI — Mercor owns this phrase",
+    "Work whenever you want — DataAnnotation owns this, too generic",
+    "Up to $150/hr — LinkedIn is inflating rates, damages trust",
+    "Generic 'professional' or 'expert' without specialization naming",
+    "Side income / side hustle framing — confirmed worst performer internally"
+  ],
+
+  "tg_targeting_signals": {
+    "hot_tgs_by_listing_volume": [
+      "PhD researchers (physics, biology, chemistry, medicine) — all platforms competing",
+      "Software engineers / Python ML — all platforms competing",
+      "Finance / equity research PhDs — Mercor leads, Outlier whitespace",
+      "Clinical / medical experts — underserved, Outlier opportunity"
+    ]
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "project_id": "69cf1a039ed66cc82e0fa8f3",
+  "flow_id": "67e2f91240e7ae2eaa5c4f94",
+  "config_name": "[Experts] HLE Screening - T1",
+  "cohort_name": "highest_degree_level__Phd",
+  "pass_rate": 28.12,
+  "tg_label": "PhD researcher",
+  "generated_date": "2026-04-21",
+  "variants": [
+    {
+      "angle": "A",
+      "angleLabel": "Expertise Hook",
+      "headline": "AI labs need your\nPhD-level reasoning.",
+      "subheadline": "Review and improve AI outputs in your exact field.",
+      "cta": "Apply Now",
+      "photo_subject": "female East Asian postdoctoral researcher, annotating printed academic papers at a home desk with a laptop open beside her",
+      "layerUpdates": {}
+    },
+    {
+      "angle": "B",
+      "angleLabel": "Earnings Hook",
+      "headline": "PhD researchers worldwide\nare already earning.",
+      "subheadline": "Scale AI-backed, enterprise-grade security. Flexible payment, real work.",
+      "cta": "Start Earning",
+      "photo_subject": "male South Asian academic researcher, reviewing data charts on a laptop at a home office desk in natural light",
+      "layerUpdates": {}
+    },
+    {
+      "angle": "C",
+      "angleLabel": "Flexibility Hook",
+      "headline": "Grant deadlines don't\ndefine your income.",
+      "subheadline": "Train AI from home, between research cycles.",
+      "cta": "Get Matched Today",
+      "photo_subject": "female Northern European PhD researcher, typing on a laptop at a bright home desk surrounded by academic books and a coffee mug",
+      "layerUpdates": {}
+    }
+  ],
+  "image_paths": {
+    "A": "data/dry_run_outputs/69cf1a_A.png",
+    "B": "data/dry_run_outputs/69cf1a_B.png",
+    "C": "data/dry_run_outputs/69cf1a_C.png"
+  }
+}
