@@ -110,3 +110,84 @@ def list_dry_run_outputs(output_dir: str | Path = "data/dry_run_outputs") -> lis
     if not d.exists():
         return []
     return sorted(d.glob("dry_*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def build_figma_clone_js(
+    frame_name: str,
+    headline: str,
+    subheadline: str,
+    earnings: str = "Earn $25–$50 USD per hour.",
+) -> str:
+    """
+    Build JavaScript to clone the base Figma frame (20:2) and update text nodes.
+
+    Args:
+        frame_name: Target frame name, e.g. "abc123_A_v1"
+        headline: Headline text (Inter Bold, white)
+        subheadline: Subheadline text (Inter Regular, white)
+        earnings: Earnings text for bottom strip (default: generic rate)
+
+    Returns:
+        JavaScript string ready to be passed to use_figma MCP.
+
+    The script:
+      1. Clones base frame 20:2 (named "69cf1a039ed66cc82e0fa8f3_A_v1")
+      2. Renames clone to <frame_name>
+      3. Updates text nodes by DFS index:
+         [3] = headline
+         [4] = subheadline
+         [6] = earnings claim
+      4. Returns { nodeId, url } on success
+    """
+    # Escape single quotes in strings for safe JavaScript embedding
+    fn_safe = frame_name.replace("'", "\\'")
+    hl_safe = headline.replace("'", "\\'").replace("\n", "\\n")
+    sub_safe = subheadline.replace("'", "\\'").replace("\n", "\\n")
+    earn_safe = earnings.replace("'", "\\'")
+
+    js = f"""(async () => {{
+  const BASE_ID = "20:2";
+  const frameName = '{fn_safe}';
+  const headline = '{hl_safe}';
+  const subheadline = '{sub_safe}';
+  const earnings = '{earn_safe}';
+
+  const base = await figma.getNodeByIdAsync(BASE_ID);
+  if (!base || base.type !== "FRAME") {{
+    figma.closePlugin("Base frame not found");
+    return;
+  }}
+
+  function dfs(root) {{
+    const nodes = [];
+    (function walk(n) {{ nodes.push(n); if ("children" in n) n.children.forEach(walk); }})(root);
+    return nodes;
+  }}
+
+  const clone = base.clone();
+  clone.name = frameName;
+  clone.x = base.x + base.width + 80;
+
+  const nodes = dfs(clone);
+  const hlNode = nodes[3];   // headline text
+  const subNode = nodes[4];  // subheadline text
+  const earnNode = nodes[6]; // earnings text
+
+  if (hlNode?.type === "TEXT") {{
+    await figma.loadFontAsync({{ family: "Inter", style: "Bold" }});
+    hlNode.characters = headline;
+  }}
+  if (subNode?.type === "TEXT") {{
+    await figma.loadFontAsync({{ family: "Inter", style: "Regular" }});
+    subNode.characters = subheadline;
+  }}
+  if (earnNode?.type === "TEXT") {{
+    await figma.loadFontAsync({{ family: "Inter", style: "Bold" }});
+    earnNode.characters = earnings;
+  }}
+
+  const url = `https://www.figma.com/design/j16txqhVXak2TON1w5sdAH/?node-id=${{clone.id.replace(":", "-")}}`;
+  figma.closePlugin(JSON.stringify({{ nodeId: clone.id, url }}));
+}})();"""
+
+    return js
