@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in_progress
-last_updated: "2026-04-21T02:14:55.356Z"
+last_updated: "2026-04-21T02:37:32.567Z"
 progress:
   total_phases: 4
   completed_phases: 2
@@ -62,6 +62,8 @@ Goal: Enable continuous optimization by collecting creative/cohort performance f
 - [Phase 02]: read_monitor_summary() takes sheets arg (not constructing own SheetsClient) to avoid second auth round-trip in post_weekly_reports.py
 - [Phase 02.5-01]: FeedbackAgent delegates all Redash queries to RedashClient (dependency injection) for testability
 - [Phase 02.5-01]: identify_underperforming_cohorts uses numpy median+ddof=1 std (not mean) for z-score — robust to outliers
+- [Phase 02.5-02]: FeedbackAgent created inline (Rule 3): plan 02.5-01 not yet run in parallel execution
+- [Phase 02.5-02]: SlackReactionHandler uses callback registry pattern: register_reaction_callback(emoji, fn); in-memory dedup for one-time reactions
 
 ## Session Notes
 
