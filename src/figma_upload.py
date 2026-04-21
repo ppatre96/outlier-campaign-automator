@@ -112,6 +112,146 @@ def list_dry_run_outputs(output_dir: str | Path = "data/dry_run_outputs") -> lis
     return sorted(d.glob("dry_*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
 
 
+def build_figma_layered_frame_js(
+    frame_name: str,
+    headline: str,
+    subheadline: str,
+    angle: str,
+    photo_base64: str,
+    earnings: str = "Earn $25–$50 USD per hour.",
+) -> str:
+    """
+    Build JavaScript to create a fully deconstructed Figma frame with separate editable layers.
+
+    Args:
+        frame_name: Target frame name, e.g. "abc123_A_v1"
+        headline: Headline text (Inter Bold, white)
+        subheadline: Subheadline text (Inter Regular, white)
+        angle: "A", "B", or "C" — determines gradient colors
+        photo_base64: Gemini image as base64 data (PNG)
+        earnings: Earnings text for bottom strip
+
+    Returns:
+        JavaScript string for use_figma MCP.
+
+    Creates:
+      1. 1200×1200 frame with proper naming
+      2. Background image layer (from base64 photo)
+      3. Gradient overlay rectangles (vector shapes, angle-specific colors)
+      4. Text layers (headline, subheadline, earnings) — all editable
+    """
+    # Gradient colors per angle
+    gradients = {
+        "A": ("rgba(173,217,229,0.4)", "rgba(255,181,194,0.45)"),  # light blue + pink
+        "B": ("rgba(173,217,229,0.4)", "rgba(255,165,100,0.4)"),   # light blue + orange
+        "C": ("rgba(173,217,229,0.4)", "rgba(144,238,144,0.35)"),  # light blue + light green
+    }
+    grad_a, grad_b = gradients.get(angle, gradients["A"])
+
+    # Escape for safe JS embedding
+    fn_safe = frame_name.replace("'", "\\'")
+    hl_safe = headline.replace("'", "\\'")
+    sub_safe = subheadline.replace("'", "\\'")
+    earn_safe = earnings.replace("'", "\\'")
+
+    js = f"""(async () => {{
+  const frameName = '{fn_safe}';
+  const headline = '{hl_safe}';
+  const subheadline = '{sub_safe}';
+  const earnings = '{earn_safe}';
+  const photoData = 'data:image/png;base64,{photo_base64}';
+
+  // Create frame
+  const frame = figma.createFrame();
+  frame.name = frameName;
+  frame.resize(1200, 1200);
+  frame.fills = [{{ type: 'SOLID', color: {{ r: 1, g: 1, b: 1 }} }}];
+
+  // Background photo as image
+  const photoBlob = await fetch(photoData).then(r => r.blob());
+  const photoBytes = await photoBlob.arrayBuffer();
+  const photoImage = figma.createImage(new Uint8Array(photoBytes));
+  const photoPaint = {{ type: 'IMAGE', imageHash: photoImage.hash, scaleMode: 'FILL' }};
+  const photoBg = figma.createRectangle();
+  photoBg.resize(1200, 1200);
+  photoBg.fills = [photoPaint];
+  photoBg.name = "Photo";
+  frame.appendChild(photoBg);
+
+  // Gradient overlay rects (vector shapes)
+  const gradA = figma.createRectangle();
+  gradA.resize(1120, 992);
+  gradA.x = 40;
+  gradA.y = 40;
+  gradA.fills = [{{ type: 'SOLID', color: {{ r: 0.68, g: 0.85, b: 0.90 }}, opacity: 0.4 }}];
+  gradA.cornerRadius = 30;
+  gradA.name = "Gradient A";
+  frame.appendChild(gradA);
+
+  const gradB = figma.createRectangle();
+  gradB.resize(1120, 992);
+  gradB.x = 40;
+  gradB.y = 40;
+  gradB.fills = [{{ type: 'SOLID', color: {{ r: 1.0, g: 0.71, b: 0.76 }}, opacity: 0.45 }}];
+  gradB.cornerRadius = 30;
+  gradB.name = "Gradient B";
+  frame.appendChild(gradB);
+
+  // Headline text
+  const hlText = figma.createText();
+  await figma.loadFontAsync({{ family: "Inter", style: "Bold" }});
+  hlText.characters = headline;
+  hlText.fontName = {{ family: "Inter", style: "Bold" }};
+  hlText.fontSize = 86;
+  hlText.fills = [{{ type: 'SOLID', color: {{ r: 1, g: 1, b: 1 }} }}];
+  hlText.x = 40;
+  hlText.y = 100;
+  hlText.resize(1120, 208);
+  hlText.textAlignHorizontal = "CENTER";
+  hlText.name = "Headline";
+  frame.appendChild(hlText);
+
+  // Subheadline text
+  const subText = figma.createText();
+  await figma.loadFontAsync({{ family: "Inter", style: "Regular" }});
+  subText.characters = subheadline;
+  subText.fontName = {{ family: "Inter", style: "Regular" }};
+  subText.fontSize = 46;
+  subText.fills = [{{ type: 'SOLID', color: {{ r: 1, g: 1, b: 1 }} }}];
+  subText.x = 40;
+  subText.y = 853;
+  subText.resize(1120, 56);
+  subText.textAlignHorizontal = "CENTER";
+  subText.name = "Subheadline";
+  frame.appendChild(subText);
+
+  // Bottom strip (white rect)
+  const strip = figma.createRectangle();
+  strip.resize(1200, 168);
+  strip.y = 1032;
+  strip.fills = [{{ type: 'SOLID', color: {{ r: 1, g: 1, b: 1 }} }}];
+  strip.name = "Bottom Strip";
+  frame.appendChild(strip);
+
+  // Earnings text
+  const earnText = figma.createText();
+  await figma.loadFontAsync({{ family: "Inter", style: "Bold" }});
+  earnText.characters = earnings;
+  earnText.fontName = {{ family: "Inter", style: "Bold" }};
+  earnText.fontSize = 32;
+  earnText.fills = [{{ type: 'SOLID', color: {{ r: 0.24, g: 0.10, b: 0.0 }} }}];
+  earnText.x = 60;
+  earnText.y = 1066;
+  earnText.name = "Earnings";
+  frame.appendChild(earnText);
+
+  const url = `https://www.figma.com/design/j16txqhVXak2TON1w5sdAH/?node-id=${{frame.id.replace(":", "-")}}`;
+  figma.closePlugin(JSON.stringify({{ nodeId: frame.id, url }}));
+}})();"""
+
+    return js
+
+
 def build_figma_clone_js(
     frame_name: str,
     headline: str,
