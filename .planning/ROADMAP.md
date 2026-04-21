@@ -252,7 +252,7 @@ Plans:
 | 1. Pipeline Integrity | 4/4 | Complete | 2026-04-20 |
 | 2. Observability & Storage | 4/4 | Complete   | 2026-04-21 |
 | 2.5. Feedback Loops & Experimentation | 4/4 | Complete    | 2026-04-21 |
-| 3. Campaign Expansion | 0/? | Not started | - |
+| 3. Campaign Expansion | 1/2 | In Progress|  |
 
 ---
 

@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Ready to plan
-last_updated: "2026-04-21T02:48:04.669Z"
+status: Executing Phase 03
+last_updated: "2026-04-21T03:22:05.153Z"
 progress:
   total_phases: 4
   completed_phases: 3
-  total_plans: 12
-  completed_plans: 12
+  total_plans: 14
+  completed_plans: 13
 ---
 
 # Project State
@@ -18,7 +18,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-21)
 
 **Core value:** End-to-end campaign automation from screening data to live LinkedIn campaign — zero manual steps once triggered.
-**Current focus:** Phase 02.5 — feedback-loops-experimentation
+**Current focus:** Phase 03 — campaign-expansion
 
 ## Current Phase
 
@@ -68,6 +68,7 @@ Goal: Enable continuous optimization by collecting creative/cohort performance f
 - [Phase 02.5-feedback-loops-experimentation]: ReanalysisOrchestrator uses async trigger_reanalysis() for Stage A rediscovery; sync wrapper exported for CLI
 - [Phase 02.5-feedback-loops-experimentation]: Financial angle A assigned by default to all newly staged cohorts from reanalysis (locked decision from CONTEXT.md)
 - [Phase 02.5]: priority_score = impact × confidence (0.9) × feasibility (0.9); 20/80 test/baseline allocation; dedup by (cohort, angle, photo_subject)
+- [Phase 03-campaign-expansion]: MATH bucket added to classify_tg at priority slot 3 (between ML_ENGINEER and MEDICAL); locked regex covers math/statistics/actuary/quantitative/physicist/probability/econometrics/biostatistics (EXP-02)
 
 ## Session Notes
 
