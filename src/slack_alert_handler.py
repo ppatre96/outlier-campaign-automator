@@ -19,8 +19,10 @@ Usage:
     result = handler.handle_reaction_event(event)
 """
 
+import asyncio
 import logging
 import re
+from datetime import datetime
 from typing import Any, Callable, Optional
 
 from slack_sdk import WebClient
@@ -35,6 +37,104 @@ EMOJI_ACTION_MAP = {
 }
 
 
+async def on_pause_cohort(action_context: dict) -> dict:
+    """
+    Handle 👍 reaction: user wants to pause the underperforming cohort.
+
+    action_context: {emoji: 'thumbsup', cohort_name: 'DATA_ANALYST', user_id: 'U...', timestamp: '...'}
+
+    Action:
+    1. Log pause decision with timestamp + user
+    2. Trigger ReanalysisOrchestrator reanalysis on fresh screening data (exclude paused cohort)
+    3. Return {success: true, action: 'PAUSE', cohort: ..., triggered_by: ..., next_step: ...}
+    """
+    cohort = action_context.get("cohort_name", "")
+    user = action_context.get("user_id", "")
+    log.info("Pause request for cohort %s from user %s", cohort, user)
+    log.info("Reaction thumbsup from %s on %s", user, cohort)
+
+    try:
+        from src.reanalysis_loop import ReanalysisOrchestrator
+        orchestrator = ReanalysisOrchestrator()
+        log.info("Callback invoked: on_pause_cohort with args cohort=%s, reason=user_pause", cohort)
+        await orchestrator.trigger_reanalysis(cohort_to_exclude=cohort, reason="user_pause")
+        next_step = "reanalysis_queued"
+    except Exception as e:
+        log.error("Failed to queue reanalysis for pause: %s", str(e))
+        return {
+            "success": True,
+            "action": "PAUSE",
+            "cohort": cohort,
+            "triggered_by": user,
+            "next_step": "reanalysis_queue_failed",
+            "warning": "reanalysis_queue_failed",
+        }
+
+    return {
+        "success": True,
+        "action": "PAUSE",
+        "cohort": cohort,
+        "triggered_by": user,
+        "next_step": next_step,
+    }
+
+
+async def on_test_new_angles(action_context: dict) -> dict:
+    """
+    Handle 🧪 reaction: user wants to test new angles for this cohort.
+
+    action_context: {emoji: 'lab', cohort_name: 'ML_ENGINEER', user_id: 'U...', ...}
+
+    Action:
+    1. Log test request with user + cohort
+    2. Boost priority of pending experiments for this cohort in backlog
+    3. Trigger reanalysis on fresh data to discover angle variations
+    4. Return {success: true, action: 'TEST_NEW_ANGLES', cohort: ..., experiments_boosted: N}
+    """
+    cohort = action_context.get("cohort_name", "")
+    user = action_context.get("user_id", "")
+    log.info("Test new angles request for cohort %s from user %s", cohort, user)
+    log.info("Reaction lab from %s on %s", user, cohort)
+
+    # Boost experiment priority in backlog
+    boosted_count = 0
+    try:
+        from src.memory import ExperimentBacklog
+        backlog = ExperimentBacklog()
+        for exp in backlog.backlog:
+            if exp.get("cohort") == cohort and exp.get("status") == "pending":
+                exp["priority_score"] = exp.get("priority_score", 1.0) * 1.5
+                boosted_count += 1
+        backlog.save()
+    except Exception as e:
+        log.error("Failed to boost experiment priority: %s", str(e))
+
+    # Trigger reanalysis
+    try:
+        from src.reanalysis_loop import ReanalysisOrchestrator
+        orchestrator = ReanalysisOrchestrator()
+        log.info("Callback invoked: on_test_new_angles with args cohort=%s, reason=user_test_request", cohort)
+        await orchestrator.trigger_reanalysis(cohort_to_focus=cohort, reason="user_test_request")
+    except Exception as e:
+        log.error("Failed to queue reanalysis for test new angles: %s", str(e))
+        return {
+            "success": True,
+            "action": "TEST_NEW_ANGLES",
+            "cohort": cohort,
+            "triggered_by": user,
+            "experiments_boosted": boosted_count,
+            "warning": "reanalysis_queue_failed",
+        }
+
+    return {
+        "success": True,
+        "action": "TEST_NEW_ANGLES",
+        "cohort": cohort,
+        "triggered_by": user,
+        "experiments_boosted": boosted_count,
+    }
+
+
 class SlackReactionHandler:
     """
     Handler for Slack reaction_added events.
@@ -47,13 +147,25 @@ class SlackReactionHandler:
         """
         Initialize handler with Slack bot token.
 
+        Registers default callbacks for 'thumbsup' (pause) and 'lab' (test new angles)
+        using the module-level on_pause_cohort and on_test_new_angles functions.
+
         Args:
             slack_bot_token: Bot user OAuth token (starts with xoxb-)
-            callback_registry: Optional dict mapping emoji → callback function
+            callback_registry: Optional dict mapping emoji name → callback function
+                               (overrides default callbacks if provided)
         """
         self.token = slack_bot_token
         self.client = WebClient(token=self.token)
-        self.callbacks: dict[str, Callable] = callback_registry or {}
+        # Default callbacks for known emoji reactions
+        default_callbacks: dict[str, Callable] = {
+            "thumbsup": on_pause_cohort,
+            "lab": on_test_new_angles,
+        }
+        # Allow caller to override defaults
+        if callback_registry:
+            default_callbacks.update(callback_registry)
+        self.callbacks: dict[str, Callable] = default_callbacks
 
     def register_reaction_callback(self, emoji: str, callback: Callable) -> None:
         """
@@ -171,17 +283,19 @@ class SlackReactionHandler:
                 "message_text": message_text,
             }
 
-            # Look up and invoke callback if registered
-            emoji_char = "👍" if reaction_emoji_name == "thumbsup" else "🧪"
-            if emoji_char in self.callbacks:
-                callback = self.callbacks[emoji_char]
+            # Look up and invoke callback if registered (by emoji name: 'thumbsup', 'lab')
+            callback = self.callbacks.get(reaction_emoji_name)
+            if callback:
                 log.debug("Triggering callback for action=%s", action_type)
                 try:
-                    # Callback is typically async; caller responsible for asyncio.run()
-                    callback(action_context)
+                    # Support both sync and async callbacks
+                    if asyncio.iscoroutinefunction(callback):
+                        result = asyncio.run(callback(action_context))
+                    else:
+                        result = callback(action_context)
+                    return result
                 except Exception as e:
-                    log.error("Callback failed: %s", e, exc_info=True)
-                    # Don't re-raise; return clean failure
+                    log.error("Callback invocation failed: %s", str(e), exc_info=True)
                     return {
                         "success": False,
                         "action": "callback_error",
@@ -189,7 +303,7 @@ class SlackReactionHandler:
                         "message": str(e),
                     }
             else:
-                log.debug("No callback registered for emoji=%s", emoji_char)
+                log.debug("No callback registered for emoji=%s", reaction_emoji_name)
 
             return {
                 "success": True,
