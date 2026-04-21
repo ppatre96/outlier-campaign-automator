@@ -9,6 +9,7 @@ Usage:
 """
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # Load .env before importing anything that reads config
@@ -17,6 +18,8 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 import requests
 import config
+from src.feedback_agent import FeedbackAgent
+from src.redash_db import RedashClient
 
 logging.basicConfig(
     level=logging.INFO,
@@ -67,6 +70,44 @@ def _post_to_slack(text: str) -> None:
     log.info("Posted to Slack via webhook")
 
 
+def post_weekly_feedback_alert() -> dict:
+    """
+    Analyze creative and cohort performance; post underperformers to Slack.
+    Called as part of weekly reporting cycle (Monday 9 AM IST).
+
+    Returns dict with underperformers, hypotheses, and alert timestamp,
+    or empty dict on error.
+    """
+    try:
+        redash_client = RedashClient()
+        agent = FeedbackAgent(redash_client)
+
+        # Analyze past 7 days of creative + cohort performance
+        underperformers = agent.identify_underperforming_cohorts(days_back=7)
+        hypothesis_summary = agent.analyze_creative_performance(days_back=7)
+
+        # Generate Slack alert text
+        alert_text = agent.generate_slack_alert(underperformers, hypothesis_summary)
+
+        # Post to Slack
+        _post_to_slack(alert_text)
+
+        log.info(
+            "Feedback alert posted; underperformers: %d",
+            len(underperformers),
+        )
+
+        # Return underperformers for potential downstream use (experiment_scientist_agent)
+        return {
+            "underperformers": underperformers,
+            "hypotheses": hypothesis_summary,
+            "alert_posted_at": datetime.utcnow().isoformat(),
+        }
+    except Exception as e:
+        log.error("Feedback alert failed: %s", e, exc_info=True)
+        return {}
+
+
 def main() -> None:
     log.info("=== Weekly InMail Report ===")
     try:
@@ -99,6 +140,17 @@ def main() -> None:
             log.info("Monitor summary: no data (monitor has not run yet or Monitor tab is empty)")
     except Exception as exc:
         log.error("Monitor summary failed: %s", exc, exc_info=True)
+
+    log.info("=== Weekly Feedback Alert ===")
+    try:
+        feedback_result = post_weekly_feedback_alert()
+        if feedback_result:
+            log.info(
+                "Feedback alert posted; underperformers: %d",
+                len(feedback_result.get("underperformers", [])),
+            )
+    except Exception as exc:
+        log.error("Feedback alert failed: %s", exc, exc_info=True)
 
 
 if __name__ == "__main__":

@@ -102,6 +102,25 @@ SLACK_BOT_TOKEN   = os.getenv("SLACK_BOT_TOKEN", "")
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
 SLACK_REPORT_USER = "U095J930UEL"   # pranav.patre@scale.com
 
+# Slack reaction handler configuration (Phase 2.5 feedback loop)
+SLACK_REACTION_BOT_USER_ID = os.getenv("SLACK_REACTION_BOT_USER_ID", "")  # Bot user ID for reaction events
+# NOTE: SLACK_FEEDBACK_CHANNEL_ID is the direct message channel with the feedback alert bot.
+# In Slack, DM channels have format "D..." (not "C...").
+# Set SLACK_FEEDBACK_CHANNEL_ID="{DM_CHANNEL_ID}" in .env if monitoring DM reactions.
+# If posting to a public/private channel instead, use "C..." format.
+SLACK_FEEDBACK_CHANNEL_ID = os.getenv("SLACK_FEEDBACK_CHANNEL_ID", "")  # Channel where feedback alerts post
+
+# Feedback thresholds (for feedback_agent.py)
+CPA_BASELINE_PERCENTILE = 50  # Median CPA used as baseline for z-score calc
+CPA_Z_SCORE_THRESHOLD = 2.0   # Number of std devs above baseline to flag underperformance
+CTR_DECLINE_THRESHOLD = 0.10   # 10% week-over-week decline triggers underperformance flag
+
+# Reaction handler configuration
+REACTION_EMOJI_MAPPING = {
+    "thumbsup": "PAUSE",        # 👍 = pause cohort
+    "lab": "TEST_NEW_ANGLES",   # 🧪 = test new angles
+}
+
 # Campaign lifecycle monitor
 CAMPAIGN_UNDERPERFORM_THRESHOLD = float(os.getenv("CAMPAIGN_UNDERPERFORM_THRESHOLD", "0.20"))
 
