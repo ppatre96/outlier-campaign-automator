@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-04-21T01:58:15.816Z"
+last_updated: "2026-04-21T01:59:28.305Z"
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 12
-  completed_plans: 6
+  completed_plans: 7
 ---
 
 # Project State
@@ -49,9 +49,11 @@ Status: Executing Phase 02 (Plan 02-04 is next)
 - Premature GEMINI_API_KEY raise removed — _generate_imagen() handles LiteLLM-first correctly (D-02) — 2026-04-21
 - [Phase 02]: Bot Token (chat.postMessage) tried first in _post_to_slack(); Incoming Webhook kept as fallback (D-08)
 - [Phase 02]: validate_photo_subject uses regex matching on lowercased input against 7 known generic patterns (D-08)
+- [Phase 02]: drive_url defaults to empty string in write_creative() for backward compatibility; Drive upload wrapped in try/except so LinkedIn creative attach continues even on Drive failure (D-08)
 
 ## Session Notes
 
+- 2026-04-21 (plan 02-02): Drive URL + Sheets write_creative() fix complete. drive_url wired as optional 5th column, GDRIVE_ENABLED guard + try/except, README.md created with Shared Drive admin steps. Requirements DATA-01, DATA-02 marked complete. Progress: [██████░░░░] 58%
 - 2026-04-20 (plan 03): Acceptance test complete. Token refresh verified (new token persisted to .env, API call 200 OK). Dry-run pipeline executed: stages 0-3 tested, PNG files confirmed in data/dry_run_outputs/, main.py --dry-run processed 4 rows without crash. Phase 1 COMPLETE. Progress: [████████████] 100%
 - 2026-04-20 (plan 02): Set LINKEDIN_INMAIL_SENDER_URN, verified classify_tg import callable, hardened create_image_ad blocker log. Progress: [███████░░░] 67%
 - 2026-04-21: Project initialized. Codebase map written (7 docs). Critical bug fixed: `classify_tg` import added to `main.py`.
@@ -59,13 +61,14 @@ Status: Executing Phase 02 (Plan 02-04 is next)
 
 ## Last Session
 
-Completed 02-03 LLM Context Quality + photo_subject Validation — 2026-04-20
+Completed 02-02 Drive Upload + Sheets Logging Fix — 2026-04-21
 
-- validate_photo_subject() guard added to midjourney_creative.py with 7 generic-description regex patterns
-- LiteLLM model + per-variant photo_subject logging added to dry_run.py Stage 8 output
-- Two-stage LLM context flow documented in figma_creative.py before build_copy_variants()
-- OBS-03 requirement marked complete
-- Progress: [█████░░░░░] 50%
+- write_creative() extended with drive_url: str = "" optional 5th column
+- Drive upload block added to main.py with GDRIVE_ENABLED guard + try/except fallback
+- GDRIVE_ENABLED / GDRIVE_FOLDER_ID added to config.py
+- README.md created with full Google Drive Setup (DATA-01) Shared Drive admin steps
+- DATA-01, DATA-02 requirements marked complete
+- Progress: [██████░░░░] 58%
 
 ## Next Step
 

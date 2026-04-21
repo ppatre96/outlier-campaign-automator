@@ -29,8 +29,8 @@
 
 ### Data & Storage
 
-- [ ] **DATA-01**: Google Drive upload enabled for generated creatives — `GDRIVE_ENABLED=true`, Shared Drive shared with service account
-- [ ] **DATA-02**: Generated PNG files and Drive URLs logged to Sheets after each creative run
+- [x] **DATA-01**: Google Drive upload enabled for generated creatives — `GDRIVE_ENABLED=true`, Shared Drive shared with service account
+- [x] **DATA-02**: Generated PNG files and Drive URLs logged to Sheets after each creative run
 
 ### Campaign Expansion
 
@@ -84,8 +84,8 @@
 | OBS-02 | Phase 2 | Complete |
 | OBS-03 | Phase 2 | Complete |
 | OBS-04 | Phase 2 | Pending |
-| DATA-01 | Phase 2 | Pending |
-| DATA-02 | Phase 2 | Pending |
+| DATA-01 | Phase 2 | Complete |
+| DATA-02 | Phase 2 | Complete |
 | EXP-01 | Phase 3 | Pending |
 | EXP-02 | Phase 3 | Pending |
 
