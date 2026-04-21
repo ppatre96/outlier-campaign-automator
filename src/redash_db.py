@@ -61,6 +61,130 @@ fields_of_study_agg AS (
   WHERE e.value:fieldOfStudy IS NOT NULL
   GROUP BY rm.CONTRIBUTOR_ID
 ),
+skills_agg AS (
+  SELECT
+    rm.CONTRIBUTOR_ID,
+    LISTAGG(DISTINCT LOWER(TRIM(s.value::STRING)), '; ')
+      WITHIN GROUP (ORDER BY LOWER(TRIM(s.value::STRING))) AS skills_str
+  FROM resume_meta rm,
+  LATERAL FLATTEN(input => rm.JOB_EXPERIENCES) j,
+  LATERAL FLATTEN(input => j.value:skills) s
+  WHERE s.value IS NOT NULL
+    AND TRIM(s.value::STRING) != ''
+  GROUP BY rm.CONTRIBUTOR_ID
+),
+experience_agg AS (
+  SELECT
+    rm.CONTRIBUTOR_ID,
+    COALESCE(SUM(
+      CASE
+        WHEN j.value:yearsOfExperience IS NOT NULL
+          THEN TRY_TO_DOUBLE(j.value:yearsOfExperience::STRING)
+        WHEN j.value:startYear IS NOT NULL
+          THEN GREATEST(0, COALESCE(TRY_TO_NUMBER(j.value:endYear::STRING), YEAR(CURRENT_DATE())) - TRY_TO_NUMBER(j.value:startYear::STRING))
+        ELSE 0
+      END
+    ), 0) AS total_years_experience,
+    COUNT(*) AS role_count,
+    CASE
+      WHEN COALESCE(SUM(
+        CASE
+          WHEN j.value:yearsOfExperience IS NOT NULL THEN TRY_TO_DOUBLE(j.value:yearsOfExperience::STRING)
+          WHEN j.value:startYear IS NOT NULL THEN GREATEST(0, COALESCE(TRY_TO_NUMBER(j.value:endYear::STRING), YEAR(CURRENT_DATE())) - TRY_TO_NUMBER(j.value:startYear::STRING))
+          ELSE 0
+        END
+      ), 0) <= 1  THEN '0-1'
+      WHEN COALESCE(SUM(
+        CASE
+          WHEN j.value:yearsOfExperience IS NOT NULL THEN TRY_TO_DOUBLE(j.value:yearsOfExperience::STRING)
+          WHEN j.value:startYear IS NOT NULL THEN GREATEST(0, COALESCE(TRY_TO_NUMBER(j.value:endYear::STRING), YEAR(CURRENT_DATE())) - TRY_TO_NUMBER(j.value:startYear::STRING))
+          ELSE 0
+        END
+      ), 0) <= 4  THEN '2-4'
+      WHEN COALESCE(SUM(
+        CASE
+          WHEN j.value:yearsOfExperience IS NOT NULL THEN TRY_TO_DOUBLE(j.value:yearsOfExperience::STRING)
+          WHEN j.value:startYear IS NOT NULL THEN GREATEST(0, COALESCE(TRY_TO_NUMBER(j.value:endYear::STRING), YEAR(CURRENT_DATE())) - TRY_TO_NUMBER(j.value:startYear::STRING))
+          ELSE 0
+        END
+      ), 0) <= 7  THEN '5-7'
+      WHEN COALESCE(SUM(
+        CASE
+          WHEN j.value:yearsOfExperience IS NOT NULL THEN TRY_TO_DOUBLE(j.value:yearsOfExperience::STRING)
+          WHEN j.value:startYear IS NOT NULL THEN GREATEST(0, COALESCE(TRY_TO_NUMBER(j.value:endYear::STRING), YEAR(CURRENT_DATE())) - TRY_TO_NUMBER(j.value:startYear::STRING))
+          ELSE 0
+        END
+      ), 0) <= 10 THEN '8-10'
+      ELSE '10+'
+    END AS experience_band
+  FROM resume_meta rm,
+  LATERAL FLATTEN(input => rm.JOB_EXPERIENCES) j
+  GROUP BY rm.CONTRIBUTOR_ID
+),
+degree_agg AS (
+  SELECT
+    rm.CONTRIBUTOR_ID,
+    MAX(CASE
+      WHEN LOWER(COALESCE(e.value:degree::STRING, e.value:degreeName::STRING, '')) LIKE '%phd%'
+        OR LOWER(COALESCE(e.value:degree::STRING, e.value:degreeName::STRING, '')) LIKE '%doctorat%' THEN 4
+      WHEN LOWER(COALESCE(e.value:degree::STRING, e.value:degreeName::STRING, '')) LIKE '%master%'
+        OR LOWER(COALESCE(e.value:degree::STRING, e.value:degreeName::STRING, '')) LIKE '%mba%' THEN 3
+      WHEN LOWER(COALESCE(e.value:degree::STRING, e.value:degreeName::STRING, '')) LIKE '%bachelor%'
+        OR LOWER(COALESCE(e.value:degree::STRING, e.value:degreeName::STRING, '')) LIKE '%undergraduate%' THEN 2
+      ELSE 1
+    END) AS degree_rank,
+    CASE MAX(CASE
+      WHEN LOWER(COALESCE(e.value:degree::STRING, e.value:degreeName::STRING, '')) LIKE '%phd%'
+        OR LOWER(COALESCE(e.value:degree::STRING, e.value:degreeName::STRING, '')) LIKE '%doctorat%' THEN 4
+      WHEN LOWER(COALESCE(e.value:degree::STRING, e.value:degreeName::STRING, '')) LIKE '%master%'
+        OR LOWER(COALESCE(e.value:degree::STRING, e.value:degreeName::STRING, '')) LIKE '%mba%' THEN 3
+      WHEN LOWER(COALESCE(e.value:degree::STRING, e.value:degreeName::STRING, '')) LIKE '%bachelor%'
+        OR LOWER(COALESCE(e.value:degree::STRING, e.value:degreeName::STRING, '')) LIKE '%undergraduate%' THEN 2
+      ELSE 1
+    END)
+      WHEN 4 THEN 'Phd'
+      WHEN 3 THEN 'Masters'
+      WHEN 2 THEN 'Bachelors'
+      ELSE 'Other'
+    END AS highest_degree_level
+  FROM resume_meta rm,
+  LATERAL FLATTEN(input => rm.EDUCATIONS) e
+  GROUP BY rm.CONTRIBUTOR_ID
+),
+country_agg AS (
+  SELECT CONTRIBUTOR_ID, country FROM (
+    SELECT rm.CONTRIBUTOR_ID,
+           TRIM(e.value:country::STRING) AS country,
+           ROW_NUMBER() OVER (PARTITION BY rm.CONTRIBUTOR_ID ORDER BY e.index) AS rn
+    FROM resume_meta rm,
+    LATERAL FLATTEN(input => rm.EDUCATIONS) e
+    WHERE TRIM(e.value:country::STRING) IS NOT NULL AND TRIM(e.value:country::STRING) != ''
+  ) WHERE rn = 1
+  UNION ALL
+  SELECT CONTRIBUTOR_ID, country FROM (
+    SELECT rm.CONTRIBUTOR_ID,
+           COALESCE(
+             TRIM(j.value:companyLocation::STRING),
+             TRIM(j.value:location::STRING)
+           ) AS country,
+           ROW_NUMBER() OVER (PARTITION BY rm.CONTRIBUTOR_ID ORDER BY j.index) AS rn
+    FROM resume_meta rm,
+    LATERAL FLATTEN(input => rm.JOB_EXPERIENCES) j
+    WHERE COALESCE(TRIM(j.value:companyLocation::STRING), TRIM(j.value:location::STRING)) IS NOT NULL
+      AND COALESCE(TRIM(j.value:companyLocation::STRING), TRIM(j.value:location::STRING)) != ''
+  ) WHERE rn = 1
+),
+accreditations_agg AS (
+  SELECT
+    rm.CONTRIBUTOR_ID,
+    LISTAGG(DISTINCT LOWER(TRIM(COALESCE(a.value:name::STRING, a.value:title::STRING, ''))), '; ')
+      WITHIN GROUP (ORDER BY LOWER(TRIM(COALESCE(a.value:name::STRING, a.value:title::STRING, '')))) AS accreditations_str
+  FROM resume_meta rm,
+  LATERAL FLATTEN(input => rm.ACCREDITATIONS) a
+  WHERE COALESCE(TRIM(a.value:name::STRING), TRIM(a.value:title::STRING)) IS NOT NULL
+    AND COALESCE(TRIM(a.value:name::STRING), TRIM(a.value:title::STRING)) != ''
+  GROUP BY rm.CONTRIBUTOR_ID
+),
 ScreeningData AS (
   SELECT
     g.CANDIDATE_EMAIL,
@@ -87,9 +211,13 @@ SELECT
   sd.SCREENING_DATE AS resume_screening_date,
   jt.job_titles,
   fos.fields_of_study,
-  rm.EDUCATIONS,
-  rm.JOB_EXPERIENCES,
-  rm.ACCREDITATIONS
+  sa.skills_str,
+  ea.experience_band,
+  ea.total_years_experience,
+  ea.role_count,
+  da.highest_degree_level,
+  COALESCE(ca.country, 'UNKNOWN') AS country,
+  acr.accreditations_str
 FROM VIEW.APPLICATION_CONVERSION ac
 INNER JOIN ScreeningData sd
   ON ac.EMAIL = sd.CANDIDATE_EMAIL
@@ -99,9 +227,49 @@ LEFT JOIN job_titles_agg jt
   ON ac.USER_ID = jt.CONTRIBUTOR_ID::STRING
 LEFT JOIN fields_of_study_agg fos
   ON ac.USER_ID = fos.CONTRIBUTOR_ID::STRING
+LEFT JOIN skills_agg sa
+  ON ac.USER_ID = sa.CONTRIBUTOR_ID::STRING
+LEFT JOIN experience_agg ea
+  ON ac.USER_ID = ea.CONTRIBUTOR_ID::STRING
+LEFT JOIN degree_agg da
+  ON ac.USER_ID = da.CONTRIBUTOR_ID::STRING
+LEFT JOIN (
+  SELECT CONTRIBUTOR_ID, MIN(country) AS country
+  FROM country_agg
+  GROUP BY CONTRIBUTOR_ID
+) ca ON ac.USER_ID = ca.CONTRIBUTOR_ID::STRING
+LEFT JOIN accreditations_agg acr
+  ON ac.USER_ID = acr.CONTRIBUTOR_ID::STRING
 WHERE ac.SIGNUP_FLOW_ID = '{signup_flow_id}'
   AND sd.CONFIG_NAME = '{config_name}'
 ORDER BY sd.SCREENING_RESULT DESC, ac.USER_ID
+"""
+
+# ── Project-ID → signup_flow_id + config_name mapping ───────────────────────
+# Used when the caller has an Outlier project_id (activation_project_id /
+# starting_project_id) instead of a signup_flow_id.
+# Returns the dominant signup flow + config for that project,
+# i.e. the (signup_flow_id, config_name) pair with the most PASS results.
+PROJECT_FLOW_LOOKUP_SQL = """
+SELECT
+  ac.SIGNUP_FLOW_ID,
+  ac.SIGNUP_FLOW_NAME,
+  r.NAME AS config_name,
+  COUNT(CASE WHEN UPPER(g.RESULT) = 'PASS' THEN 1 END) AS passes,
+  COUNT(*) AS n
+FROM VIEW.APPLICATION_CONVERSION ac
+INNER JOIN PUBLIC.GROWTHRESUMESCREENINGRESULTS g
+  ON ac.EMAIL = g.CANDIDATE_EMAIL
+JOIN PUBLIC.RESUMESCREENINGCONFIGS r
+  ON g.RESUME_SCREENING_CONFIG_ID = r._ID
+WHERE (
+  ac.STARTING_PROJECT_ID = '{project_id}'
+  OR ac.ACTIVATION_PROJECT_ID = '{project_id}'
+)
+  AND g.CREATED_AT >= '{start_date}'
+GROUP BY 1, 2, 3
+ORDER BY passes DESC, n DESC
+LIMIT 20
 """
 
 JOB_POST_SQL = """
@@ -109,6 +277,89 @@ SELECT description
 FROM public.jobposts
 WHERE signup_flow_id = '{signup_flow_id}'
 LIMIT 1
+"""
+
+# -- Creative performance analysis for feedback loop (FEED-01)
+CREATIVE_PERFORMANCE_SQL = """
+SELECT
+  c.CREATIVE_ID            AS creative_id,
+  c.CREATIVE_URN           AS creative_urn,
+  c.CAMPAIGN_NAME          AS cohort_name,
+  COALESCE(c.ANGLE, 'unknown')         AS angle,
+  COALESCE(c.PHOTO_SUBJECT, 'unknown') AS photo_subject,
+  SUM(c.IMPRESSIONS)       AS impressions,
+  SUM(c.CLICKS)            AS clicks,
+  CASE WHEN SUM(c.IMPRESSIONS) > 0
+    THEN ROUND(SUM(c.CLICKS)::FLOAT / SUM(c.IMPRESSIONS) * 100, 4)
+    ELSE 0
+  END                      AS ctr,
+  SUM(c.SPEND_USD)         AS spend,
+  SUM(c.CONVERSIONS)       AS conversions,
+  CASE WHEN SUM(c.CONVERSIONS) > 0
+    THEN ROUND(SUM(c.SPEND_USD) / SUM(c.CONVERSIONS), 2)
+    ELSE NULL
+  END                      AS cpa,
+  MIN(c.DATE)              AS created_date
+FROM VIEW.LINKEDIN_CREATIVE_COSTS c
+WHERE c.DATE >= CURRENT_DATE - INTERVAL '{days_back} days'
+GROUP BY 1, 2, 3, 4, 5
+HAVING SUM(c.IMPRESSIONS) > 100
+ORDER BY cohort_name, cpa DESC NULLS LAST
+"""
+
+# -- Cohort performance and trend analysis for feedback loop (FEED-05/FEED-06)
+COHORT_METRICS_SQL = """
+WITH weekly AS (
+  SELECT
+    ac.SIGNUP_FLOW_NAME                       AS cohort_name,
+    DATE_TRUNC('week', ac.APPLICATION_DAY)    AS week_of,
+    COUNT(DISTINCT ac.EMAIL)                  AS n_impressions,
+    SUM(CASE WHEN ac.LINKEDIN_CLICK THEN 1 ELSE 0 END)      AS n_clicks,
+    CASE WHEN COUNT(DISTINCT ac.EMAIL) > 0
+      THEN ROUND(
+        SUM(CASE WHEN ac.LINKEDIN_CLICK THEN 1 ELSE 0 END)::FLOAT
+        / COUNT(DISTINCT ac.EMAIL) * 100, 4)
+      ELSE 0
+    END                                       AS ctr,
+    COUNT(DISTINCT CASE WHEN ac.ACTIVATION_DAY IS NOT NULL
+                        THEN ac.EMAIL END)    AS n_conversions,
+    COALESCE(SUM(ac.SPEND_USD), 0)            AS spend_usd,
+    CASE WHEN COUNT(DISTINCT CASE WHEN ac.ACTIVATION_DAY IS NOT NULL
+                                  THEN ac.EMAIL END) > 0
+      THEN ROUND(
+        SUM(ac.SPEND_USD) /
+        COUNT(DISTINCT CASE WHEN ac.ACTIVATION_DAY IS NOT NULL
+                            THEN ac.EMAIL END), 2)
+      ELSE NULL
+    END                                       AS cpa
+  FROM VIEW.APPLICATION_CONVERSION ac
+  WHERE ac.APPLICATION_DAY >= CURRENT_DATE - INTERVAL '{weeks_back} weeks'
+    AND ac.UTM_SOURCE ILIKE '%linkedin%'
+  GROUP BY 1, 2
+),
+with_trend AS (
+  SELECT
+    w.*,
+    LAG(w.ctr, 1) OVER (PARTITION BY w.cohort_name ORDER BY w.week_of)  AS prev_ctr,
+    CASE
+      WHEN LAG(w.ctr, 1) OVER (PARTITION BY w.cohort_name ORDER BY w.week_of) > 0
+        THEN ROUND((w.ctr - LAG(w.ctr, 1) OVER (PARTITION BY w.cohort_name ORDER BY w.week_of))
+                   / LAG(w.ctr, 1) OVER (PARTITION BY w.cohort_name ORDER BY w.week_of) * 100, 2)
+      ELSE NULL
+    END                                       AS trend_indicator
+  FROM weekly w
+)
+SELECT
+  cohort_name,
+  week_of,
+  n_impressions,
+  n_clicks,
+  ctr,
+  n_conversions,
+  cpa,
+  trend_indicator
+FROM with_trend
+ORDER BY cohort_name, week_of DESC
 """
 
 PASS_RATES_SQL = """
@@ -162,6 +413,62 @@ class RedashClient:
         log.info("Fetched %d screening rows", len(df))
         return df
 
+    def resolve_project_to_flow(
+        self,
+        project_id: str,
+        start_date: str | None = None,
+    ) -> tuple[str, str] | None:
+        """
+        Given an Outlier project_id (activation_project_id or starting_project_id),
+        return the (signup_flow_id, config_name) pair with the most PASS results.
+        Returns None if no data found.
+        """
+        sql = PROJECT_FLOW_LOOKUP_SQL.format(
+            project_id=_esc(project_id),
+            start_date=start_date or config.SCREENING_START_DATE,
+        )
+        log.info("Resolving project_id=%s to signup_flow_id + config_name", project_id)
+        df = self._run_query(sql, label=f"proj-lookup-{project_id[:12]}")
+        if df.empty:
+            return None
+        row = df.iloc[0]
+        signup_flow_id = row.get("signup_flow_id") or row.get("SIGNUP_FLOW_ID")
+        config_name    = row.get("config_name")    or row.get("CONFIG_NAME")
+        log.info(
+            "Resolved project → signup_flow_id=%s config='%s' (passes=%s)",
+            signup_flow_id, config_name, row.get("passes"),
+        )
+        return str(signup_flow_id), str(config_name)
+
+    def fetch_screenings_by_project(
+        self,
+        project_id: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> tuple[pd.DataFrame, str, str]:
+        """
+        Fetch screening data by Outlier project_id instead of signup_flow_id.
+
+        Automatically resolves the dominant signup_flow_id + config_name for
+        the project, then delegates to fetch_screenings().
+
+        Returns:
+            (df, signup_flow_id, config_name)  — df may be empty if no data found.
+        """
+        resolved = self.resolve_project_to_flow(project_id, start_date=start_date)
+        if not resolved:
+            log.warning("No signup flow found for project_id=%s", project_id)
+            return pd.DataFrame(), "", ""
+
+        signup_flow_id, config_name = resolved
+        df = self.fetch_screenings(
+            signup_flow_id=signup_flow_id,
+            config_name=config_name,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return df, signup_flow_id, config_name
+
     def fetch_job_post(self, signup_flow_id: str) -> str:
         sql = JOB_POST_SQL.format(signup_flow_id=_esc(signup_flow_id))
         df  = self._run_query(sql, label=f"jobpost-{signup_flow_id}")
@@ -178,6 +485,69 @@ class RedashClient:
         log.info("Fetching pass rates via Redash for flow=%s since=%s", flow_id, since_date)
         df = self._run_query(sql, label=f"pass-rates-{flow_id}")
         log.info("Pass rate rows: %d", len(df))
+        return df
+
+    def query_creative_performance(
+        self,
+        days_back: int = 7,
+        end_date: str | None = None,
+    ) -> pd.DataFrame:
+        """
+        Return creative-level performance metrics for the feedback loop.
+
+        Columns: creative_id, creative_urn, cohort_name, angle, photo_subject,
+                 impressions, clicks, ctr, spend, conversions, cpa, created_date
+
+        Filters to last `days_back` days and campaigns with > 100 impressions.
+        Source: VIEW.LINKEDIN_CREATIVE_COSTS (FEED-01)
+        """
+        # end_date parameter reserved for future date-range filtering; SQL uses CURRENT_DATE
+        sql = CREATIVE_PERFORMANCE_SQL.format(
+            days_back=int(days_back),
+        )
+        label = f"creative-perf-{days_back}"
+        log.info("Querying creative performance (days_back=%d)", days_back)
+        _expected_cols = [
+            "creative_id", "creative_urn", "cohort_name", "angle", "photo_subject",
+            "impressions", "clicks", "ctr", "spend", "conversions", "cpa", "created_date",
+        ]
+        df = self._run_query(sql, label=label)
+        if df.empty:
+            log.warning("query_creative_performance returned no rows")
+            return pd.DataFrame(columns=_expected_cols)
+        log.info("Fetched %d rows from creative performance query", len(df))
+        return df
+
+    def query_cohort_metrics(
+        self,
+        days_back: int = 7,
+        end_date: str | None = None,
+    ) -> pd.DataFrame:
+        """
+        Return cohort-level weekly performance metrics for the feedback loop.
+
+        Columns: cohort_name, week_of, n_impressions, n_clicks, ctr,
+                 n_conversions, cpa, trend_indicator
+
+        Fetches current week + 7 prior weeks (8 weeks total) for trend analysis.
+        Source: VIEW.APPLICATION_CONVERSION grouped by cohort × week (FEED-05/FEED-06)
+        """
+        # Use 8 weeks (56 days) to ensure current + 7 prior weeks are captured
+        weeks_back = max(8, (days_back // 7) + 1)
+        sql = COHORT_METRICS_SQL.format(
+            weeks_back=int(weeks_back),
+        )
+        label = f"cohort-metrics-{weeks_back}"
+        log.info("Querying cohort metrics (weeks_back=%d)", weeks_back)
+        _expected_cols = [
+            "cohort_name", "week_of", "n_impressions", "n_clicks", "ctr",
+            "n_conversions", "cpa", "trend_indicator",
+        ]
+        df = self._run_query(sql, label=label)
+        if df.empty:
+            log.warning("query_cohort_metrics returned no rows")
+            return pd.DataFrame(columns=_expected_cols)
+        log.info("Fetched %d rows from cohort metrics query", len(df))
         return df
 
     def close(self) -> None:
