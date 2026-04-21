@@ -1,0 +1,13 @@
+[
+  {
+    "timestamp": "2026-04-21T02:41:47.595827",
+    "reason": "test",
+    "cohort_excluded": null,
+    "cohort_focused": "DATA_ANALYST",
+    "cohorts_discovered": [
+      "DATA_ANALYST_VARIANT_A",
+      "REANALYSIS_COHORT_20260421"
+    ],
+    "count": 2
+  }
+]

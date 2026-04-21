@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in_progress
-last_updated: "2026-04-21T02:37:32.567Z"
+last_updated: "2026-04-21T02:43:19.858Z"
 progress:
   total_phases: 4
   completed_phases: 2
   total_plans: 12
-  completed_plans: 10
+  completed_plans: 11
 ---
 
 # Project State
@@ -25,11 +25,12 @@ See: .planning/PROJECT.md (updated 2026-04-21)
 **Phase 2.5 — Feedback Loops & Experimentation**
 Goal: Enable continuous optimization by collecting creative/cohort performance feedback, generating experiment hypotheses, and driving weekly A/B testing.
 
-**Status: Phase 2.5 IN PROGRESS**
+**Status: Phase 2.5 COMPLETE**
 
-- Plan 02 (Weekly Slack Alert + Reaction Handler) — COMPLETE (02:24 UTC, commit c9fc4dd)
 - Plan 01 (FeedbackAgent) — COMPLETE
-- Plans 03-04 — pending
+- Plan 02 (Weekly Slack Alert + Reaction Handler) — COMPLETE (commit c9fc4dd)
+- Plan 03 (ExperimentScientistAgent) — COMPLETE (commits 8c932e1, 444c2f4)
+- Plan 04 (Reanalysis Loop) — COMPLETE (commits 10780b6, c0dad93, f92e0d6)
 
 ## Completed Phases
 
@@ -64,6 +65,8 @@ Goal: Enable continuous optimization by collecting creative/cohort performance f
 - [Phase 02.5-01]: identify_underperforming_cohorts uses numpy median+ddof=1 std (not mean) for z-score — robust to outliers
 - [Phase 02.5-02]: FeedbackAgent created inline (Rule 3): plan 02.5-01 not yet run in parallel execution
 - [Phase 02.5-02]: SlackReactionHandler uses callback registry pattern: register_reaction_callback(emoji, fn); in-memory dedup for one-time reactions
+- [Phase 02.5-feedback-loops-experimentation]: ReanalysisOrchestrator uses async trigger_reanalysis() for Stage A rediscovery; sync wrapper exported for CLI
+- [Phase 02.5-feedback-loops-experimentation]: Financial angle A assigned by default to all newly staged cohorts from reanalysis (locked decision from CONTEXT.md)
 
 ## Session Notes
 
@@ -77,16 +80,20 @@ Goal: Enable continuous optimization by collecting creative/cohort performance f
 
 ## Last Session
 
-Completed 02.5-01 FeedbackAgent — 2026-04-21
+Completed 02.5-04 Reanalysis Loop — 2026-04-20
 
-- query_creative_performance() and query_cohort_metrics() added to RedashClient (src/redash_db.py)
-- FeedbackAgent class created (src/feedback_agent.py): analyze_creative_performance(), identify_underperforming_cohorts(), generate_slack_alert()
-- 5 unit tests created (tests/test_feedback_agent.py), all passing
-- 2σ CPA underperformance threshold implemented using numpy median+ddof=1 std
-- Outlier vocabulary verified: no banned terms in alert output
-- FEED-01, FEED-02, FEED-05, FEED-06, FEED-07 complete
-- Commits: a3281f6 (redash_db), cdf5d7f (feedback_agent), 993a4d8 (tests)
+- on_pause_cohort() and on_test_new_angles() async callbacks added to slack_alert_handler.py
+- SlackReactionHandler.__init__ now registers default callbacks (thumbsup→pause, lab→test)
+- handle_reaction_event() updated to invoke callbacks via asyncio.run() and return callback result
+- ReanalysisOrchestrator class created (src/reanalysis_loop.py): trigger_reanalysis(), stage_new_cohorts(), collect_test_results()
+- Stub mode for Stage A when REDASH_API_KEY unset — pipeline testable without live credentials
+- New cohorts staged to data/scheduling_queue.json with angle=A (financial angle default)
+- Test variant results persisted to data/test_variant_results.json for next feedback_agent run (FEED-14)
+- CLI script created (scripts/trigger_reanalysis.py): --exclude, --focus, --collect-results, --cohorts, --dry-run
+- FEED-09, FEED-10, FEED-11, FEED-14 complete
+- Commits: 10780b6 (slack_alert_handler), c0dad93 (reanalysis_loop), f92e0d6 (CLI)
+- Phase 2.5 COMPLETE — full weekly feedback loop operational
 
 ## Next Step
 
-Execute Phase 2.5-02 (Weekly Slack Alert + Reaction Handler) — consumes FeedbackAgent.identify_underperforming_cohorts() output
+Phase 2.5 complete. All 4 plans executed. Next: Phase 3 (Expansion) when ready.

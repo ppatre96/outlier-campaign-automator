@@ -1,0 +1,59 @@
+[
+  {
+    "cohort": "TEST_COHORT_A",
+    "tg_category": "SOFTWARE_ENGINEER",
+    "pass_rate": 0.72,
+    "angle": "A",
+    "status": "queued",
+    "queued_at": "2026-04-21T02:40:59.767444",
+    "source": "reanalysis",
+    "rules": {}
+  },
+  {
+    "cohort": "TEST_COHORT_B",
+    "tg_category": "DATA_SCIENTIST",
+    "pass_rate": 0.65,
+    "angle": "A",
+    "status": "queued",
+    "queued_at": "2026-04-21T02:40:59.768039",
+    "source": "reanalysis",
+    "rules": {}
+  },
+  {
+    "cohort": "VERIFY_COHORT",
+    "tg_category": "MATH",
+    "pass_rate": 0.8,
+    "angle": "A",
+    "status": "queued",
+    "queued_at": "2026-04-21T02:41:46.941642",
+    "source": "reanalysis",
+    "rules": {}
+  },
+  {
+    "cohort": "DATA_ANALYST_VARIANT_A",
+    "tg_category": "GENERAL",
+    "pass_rate": 0.68,
+    "angle": "A",
+    "status": "queued",
+    "queued_at": "2026-04-21T02:41:47.595551",
+    "source": "reanalysis_focus_stub",
+    "rules": {
+      "variant_of": "DATA_ANALYST"
+    }
+  },
+  {
+    "cohort": "REANALYSIS_COHORT_20260421",
+    "tg_category": "SOFTWARE_ENGINEER",
+    "pass_rate": 0.72,
+    "angle": "A",
+    "status": "queued",
+    "queued_at": "2026-04-21T02:41:47.595572",
+    "source": "reanalysis_stub",
+    "rules": {
+      "fields_of_study": [
+        "computer science",
+        "software engineering"
+      ]
+    }
+  }
+]

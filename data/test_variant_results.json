@@ -1,0 +1,28 @@
+{
+  "TEST_COHORT_A": {
+    "cohort": "TEST_COHORT_A",
+    "baseline_ctr": 0.035,
+    "test_ctr": 0.042,
+    "ctr_delta": 0.2,
+    "baseline_cpa": 14.0,
+    "test_cpa": 11.5,
+    "cpa_delta": -0.179,
+    "conversions": 12,
+    "source": "stub",
+    "result": "won",
+    "recorded_at": "2026-04-21T02:41:01.596510"
+  },
+  "VERIFY_COHORT": {
+    "cohort": "VERIFY_COHORT",
+    "baseline_ctr": 0.035,
+    "test_ctr": 0.042,
+    "ctr_delta": 0.2,
+    "baseline_cpa": 14.0,
+    "test_cpa": 11.5,
+    "cpa_delta": -0.179,
+    "conversions": 12,
+    "source": "stub",
+    "result": "won",
+    "recorded_at": "2026-04-21T02:41:47.594539"
+  }
+}
