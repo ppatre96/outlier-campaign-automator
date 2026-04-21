@@ -7,7 +7,7 @@ last_updated: "2026-04-20T21:43:52.946Z"
 progress:
   total_phases: 3
   completed_phases: 0
-  total_plans: 3
+  total_plans: 7
   completed_plans: 2
 ---
 

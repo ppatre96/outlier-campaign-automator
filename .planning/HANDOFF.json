@@ -1,0 +1,57 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-04-21T00:30:00.000Z",
+  "phase": "1",
+  "phase_name": "Pipeline Integrity",
+  "phase_dir": "01-pipeline-integrity",
+  "plan": 4,
+  "task": 0,
+  "total_tasks": 5,
+  "status": "paused",
+  "paused_at": "Plan 01-04 created, not yet executed",
+  "completed_plans": ["01-01", "01-02"],
+  "pending_plans": ["01-03", "01-04"],
+  "next_action": "Execute /gsd:execute-phase 1 to run plans 01-03 and 01-04",
+  "phase_2_status": "All 4 plans written and verified READY TO EXECUTE — 0 blockers",
+  "phase_2_plans": ["02-01", "02-02", "02-03", "02-04"],
+  "key_decisions": {
+    "figma_approach": "Native Figma elements (Frame + gradient fills + text nodes) — figma.createImage() broken for >~100 bytes in MCP sandbox",
+    "figma_frame_confirmed": "Node 20:2 in file j16txqhVXak2TON1w5sdAH — 69cf1a039ed66cc82e0fa8f3_A_v1 rendered correctly",
+    "sub_agent_architecture": "Two paths: (1) Claude Code interactive — campaign-manager orchestrates sub-agents; (2) Script/cron — dry_run.py/main.py direct Python calls, no sub-agents",
+    "competitor_bot": "Runs weekly independently. Writes data/competitor_intel/latest.json. ad-creative-brief-generator reads this at Stage 8b.",
+    "campaign_manager_stage_8g": "Added to ~/.claude/agents/campaign-manager.md with native elements spec"
+  },
+  "human_actions_required": [
+    "Slack App: create with chat:write scope, install to workspace, set SLACK_BOT_TOKEN in .env",
+    "Google Shared Drive: create, add service account outlier-sheets-agent@... as Content Manager, set GDRIVE_FOLDER_ID",
+    "LinkedIn r_liteprofile scope: request on OAuth app, re-auth, call GET /v2/me for LINKEDIN_MEMBER_URN",
+    "LinkedIn MDP approval: pending for account 510956407 (audienceCounts Stage C)"
+  ],
+  "uncommitted_files": [
+    ".planning/ROADMAP.md",
+    ".planning/STATE.md",
+    ".planning/config.json",
+    "main.py",
+    "requirements.txt",
+    "src/analysis.py",
+    "src/campaign_monitor.py",
+    "src/competitor_intel.py",
+    "src/features.py",
+    "src/figma_creative.py",
+    "src/linkedin_api.py",
+    "src/linkedin_urn.py",
+    "src/redash_db.py",
+    "src/sheets.py",
+    "src/stage_c.py"
+  ],
+  "new_files": [
+    ".planning/phases/01-pipeline-integrity/01-04-PLAN.md",
+    ".planning/phases/02-observability-storage/02-01-PLAN.md",
+    ".planning/phases/02-observability-storage/02-02-PLAN.md",
+    ".planning/phases/02-observability-storage/02-03-PLAN.md",
+    ".planning/phases/02-observability-storage/02-04-PLAN.md",
+    ".planning/phases/02-observability-storage/VERIFICATION.md",
+    "AGENT-PIPELINE.md",
+    "src/figma_upload.py"
+  ]
+}
