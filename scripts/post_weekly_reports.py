@@ -86,6 +86,20 @@ def main() -> None:
     except Exception as exc:
         log.error("Static report failed: %s", exc, exc_info=True)
 
+    log.info("=== Campaign Monitor Summary ===")
+    try:
+        from src.sheets import SheetsClient
+        from src.campaign_monitor import read_monitor_summary
+        sheets = SheetsClient()
+        monitor_text = read_monitor_summary(sheets)
+        if monitor_text:
+            log.info("Monitor summary generated (%d chars)", len(monitor_text))
+            _post_to_slack(monitor_text)
+        else:
+            log.info("Monitor summary: no data (monitor has not run yet or Monitor tab is empty)")
+    except Exception as exc:
+        log.error("Monitor summary failed: %s", exc, exc_info=True)
+
 
 if __name__ == "__main__":
     main()
