@@ -1,57 +1,134 @@
 {
-  "version": "1.0",
-  "timestamp": "2026-04-21T00:30:00.000Z",
-  "phase": "1",
-  "phase_name": "Pipeline Integrity",
-  "phase_dir": "01-pipeline-integrity",
-  "plan": 4,
-  "task": 0,
-  "total_tasks": 5,
+  "version": "2.0",
+  "session_date": "2026-04-21",
+  "timestamp": "2026-04-21T18:45:00.000Z",
   "status": "paused",
-  "paused_at": "Plan 01-04 created, not yet executed",
-  "completed_plans": ["01-01", "01-02"],
-  "pending_plans": ["01-03", "01-04"],
-  "next_action": "Execute /gsd:execute-phase 1 to run plans 01-03 and 01-04",
-  "phase_2_status": "All 4 plans written and verified READY TO EXECUTE — 0 blockers",
-  "phase_2_plans": ["02-01", "02-02", "02-03", "02-04"],
-  "key_decisions": {
-    "figma_approach": "Native Figma elements (Frame + gradient fills + text nodes) — figma.createImage() broken for >~100 bytes in MCP sandbox",
-    "figma_frame_confirmed": "Node 20:2 in file j16txqhVXak2TON1w5sdAH — 69cf1a039ed66cc82e0fa8f3_A_v1 rendered correctly",
-    "sub_agent_architecture": "Two paths: (1) Claude Code interactive — campaign-manager orchestrates sub-agents; (2) Script/cron — dry_run.py/main.py direct Python calls, no sub-agents",
-    "competitor_bot": "Runs weekly independently. Writes data/competitor_intel/latest.json. ad-creative-brief-generator reads this at Stage 8b.",
-    "campaign_manager_stage_8g": "Added to ~/.claude/agents/campaign-manager.md with native elements spec"
+  "phase": "2.5",
+  "phase_name": "Feedback Loops & Experimentation",
+  "phase_dir": "02.5-feedback-loops-experimentation",
+  "paused_at": "Phase 2.5 planning complete. Ready for execution.",
+
+  "completed_work": [
+    "✓ Phase 2.5 added to ROADMAP.md",
+    "✓ PRD created (.planning/PHASE-2.5-PRD.md)",
+    "✓ Phase directory created (.planning/phases/02.5-feedback-loops-experimentation/)",
+    "✓ CONTEXT.md generated from PRD",
+    "✓ 4 executable plans created (02.5-01 through 02.5-04)",
+    "✓ Plans verified by gsd-plan-checker",
+    "✓ All 14 FEED requirements mapped to tasks"
+  ],
+
+  "next_actions": [
+    "1. EXECUTE PHASE 2 FIRST (if not already done): /gsd:execute-phase 2",
+    "2. After Phase 2 complete, execute Phase 2.5: /gsd:execute-phase 2.5",
+    "3. Monitor Wave 1 completion (feedback infrastructure setup)",
+    "4. Monitor Wave 2 completion (experiment design + reanalysis loop)"
+  ],
+
+  "critical_dependencies": {
+    "phase_2_prerequisite": "SLACK_BOT_TOKEN must be configured in .env (from Phase 2-01 execution)",
+    "blocking_plan": "02.5-02-PLAN.md requires token for WebClient initialization",
+    "mitigation": "Add token validation guard: if not slack_bot_token: raise ValueError('SLACK_BOT_TOKEN required')"
   },
-  "human_actions_required": [
-    "Slack App: create with chat:write scope, install to workspace, set SLACK_BOT_TOKEN in .env",
-    "Google Shared Drive: create, add service account outlier-sheets-agent@... as Content Manager, set GDRIVE_FOLDER_ID",
-    "LinkedIn r_liteprofile scope: request on OAuth app, re-auth, call GET /v2/me for LINKEDIN_MEMBER_URN",
-    "LinkedIn MDP approval: pending for account 510956407 (audienceCounts Stage C)"
+
+  "execution_plan": {
+    "wave_1": {
+      "plans": ["02.5-01-PLAN.md", "02.5-02-PLAN.md"],
+      "objective": "Build feedback infrastructure (creative + cohort analysis, weekly Slack alerts)",
+      "artifacts_created": [
+        "src/feedback_agent.py (Redash queries + hypothesis generation)",
+        "src/slack_alert_handler.py (reaction callbacks)",
+        "scripts/post_weekly_reports.py (enhanced with feedback)",
+        "config.py (performance thresholds)"
+      ]
+    },
+    "wave_2": {
+      "plans": ["02.5-03-PLAN.md", "02.5-04-PLAN.md"],
+      "objective": "Implement experiment design + reanalysis loop",
+      "dependencies": "Wave 1 must complete first",
+      "artifacts_created": [
+        "src/experiment_scientist_agent.py (hypothesis → test decision)",
+        "src/reanalysis_loop.py (Slack reaction → trigger → new cohorts)",
+        ".claude/agents/ad-creative-brief-generator.md (updated for test directives)",
+        "src/memory.py (ExperimentBacklog persistence)"
+      ]
+    }
+  },
+
+  "sub_agent_architecture": {
+    "feedback_agent": {
+      "scope_1_creative": "Analyzes creative variants (A/B/C) per cohort. Generates hypotheses: why does angle X outperform Y?",
+      "scope_2_cohorts": "Identifies underperforming cohorts (CPA > 2σ or CTR ↓). Posts weekly Slack alert with recommendations.",
+      "data_sources": [
+        "VIEW.LINKEDIN_CREATIVE_COSTS (via Redash)",
+        "VIEW.APPLICATION_CONVERSION (via Redash)"
+      ]
+    },
+    "experiment_scientist_agent": {
+      "inputs": [
+        "feedback_agent hypotheses",
+        "competitor_bot latest.json",
+        "new screening data (Stage A reanalysis)"
+      ],
+      "maintains": "experiment_backlog.json (priority queue of tests)",
+      "outputs": "test_directive to ad-creative-brief-generator (80/20 baseline vs test rule)"
+    },
+    "integration_points": [
+      "ad-creative-brief-generator receives test directive, uses test variant 20% of time",
+      "outlier_data_analyst triggered by Slack reaction to rerun Stage A on fresh data",
+      "campaign-manager receives new cohort definitions and schedules campaigns",
+      "Weekly cycle: analyze → decide → test → collect results → next analysis"
+    ]
+  },
+
+  "phase_2_5_requirements": [
+    "FEED-01: feedback_agent reads creative performance from VIEW.LINKEDIN_CREATIVE_COSTS",
+    "FEED-02: feedback_agent generates hypothesis JSON",
+    "FEED-03: experiment_scientist_agent receives hypotheses",
+    "FEED-04: experiment_scientist_agent outputs test decision",
+    "FEED-05: feedback_agent reads cohort metrics from VIEW.APPLICATION_CONVERSION",
+    "FEED-06: feedback_agent identifies underperformers",
+    "FEED-07: feedback_agent posts weekly Slack alert",
+    "FEED-08: User acknowledges Slack alert (pause or test)",
+    "FEED-09: Reanalysis triggered by user action",
+    "FEED-10: New cohorts discovered from fresh data",
+    "FEED-11: campaign-manager schedules campaigns for new cohorts",
+    "FEED-12: experiment_scientist_agent maintains backlog",
+    "FEED-13: ad-creative-brief-generator checks backlog (20% test)",
+    "FEED-14: Test results fed back to feedback_agent"
   ],
-  "uncommitted_files": [
-    ".planning/ROADMAP.md",
-    ".planning/STATE.md",
-    ".planning/config.json",
-    "main.py",
-    "requirements.txt",
-    "src/analysis.py",
-    "src/campaign_monitor.py",
-    "src/competitor_intel.py",
-    "src/features.py",
-    "src/figma_creative.py",
-    "src/linkedin_api.py",
-    "src/linkedin_urn.py",
-    "src/redash_db.py",
-    "src/sheets.py",
-    "src/stage_c.py"
+
+  "verification_gate": {
+    "status": "Passed with warnings",
+    "issues_found": 3,
+    "blocker": "Phase 2 prerequisite not met (Slack Bot Token setup)",
+    "warnings": [
+      "Plan 02.5-02 needs token validation guard",
+      "Plan 02.5-03 should document competitor_intel as optional",
+      "VALIDATION.md not generated (optional for Phase 2.5)"
+    ]
+  },
+
+  "roadmap_status": {
+    "phase_1": "✓ Complete (4/4 plans executed)",
+    "phase_2": "Planned (0/4 plans) — MUST EXECUTE BEFORE 2.5",
+    "phase_2_5": "Planned (4/4 plans ready, verification passed)",
+    "phase_3": "Planned (depends on 2 & 2.5 completion)"
+  },
+
+  "recommended_reading": [
+    ".planning/phases/02.5-feedback-loops-experimentation/02.5-CONTEXT.md (user decisions)",
+    ".planning/phases/02.5-feedback-loops-experimentation/02.5-01-PLAN.md (feedback_agent tasks)",
+    ".planning/phases/02.5-feedback-loops-experimentation/02.5-02-PLAN.md (Slack integration)",
+    ".planning/phases/02.5-feedback-loops-experimentation/02.5-03-PLAN.md (experiment design)",
+    ".planning/phases/02.5-feedback-loops-experimentation/02.5-04-PLAN.md (reanalysis loop)"
   ],
-  "new_files": [
-    ".planning/phases/01-pipeline-integrity/01-04-PLAN.md",
-    ".planning/phases/02-observability-storage/02-01-PLAN.md",
-    ".planning/phases/02-observability-storage/02-02-PLAN.md",
-    ".planning/phases/02-observability-storage/02-03-PLAN.md",
-    ".planning/phases/02-observability-storage/02-04-PLAN.md",
-    ".planning/phases/02-observability-storage/VERIFICATION.md",
-    "AGENT-PIPELINE.md",
-    "src/figma_upload.py"
-  ]
+
+  "session_summary": {
+    "what_happened": "Created comprehensive Phase 2.5 (Feedback Loops & Experimentation) planning including PRD, CONTEXT, and 4 detailed executable plans covering feedback agents and experiment workflows.",
+    "why_phase_2_5": "Enables continuous optimization through weekly feedback loops that guide creative iteration and cohort expansion decisions.",
+    "two_new_agents": "feedback_agent (analyze performance, generate hypotheses), experiment_scientist_agent (design tests, maintain backlog)",
+    "integration": "Feeds creative hypotheses and cohort insights into brief generator (20% test / 80% baseline), triggers reanalysis on user feedback.",
+    "next_session": "Run /gsd:execute-phase 2, then /gsd:execute-phase 2.5 --wave 1"
+  }
 }
