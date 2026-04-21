@@ -20,18 +20,21 @@ SCOPES = [
 
 # Column indices (0-based) for "Triggers 2"
 COL = {
-    "date": 0,          # A
-    "flow_id": 1,       # B
-    "tg_status": 2,     # C
-    "master_campaign": 3,  # D
-    "location": 4,      # E
-    "figma_file": 5,    # F
-    "figma_node": 6,    # G
-    "stg_id": 7,        # H
-    "stg_name": 8,      # I
-    "targeting_facet": 9,  # J
+    "date": 0,              # A
+    "flow_id": 1,           # B
+    "tg_status": 2,         # C
+    "master_campaign": 3,   # D
+    "location": 4,          # E
+    "figma_file": 5,        # F
+    "figma_node": 6,        # G
+    "stg_id": 7,            # H
+    "stg_name": 8,          # I
+    "targeting_facet": 9,   # J
     "targeting_criteria": 10,  # K
-    "li_status": 11,    # L
+    "li_status": 11,        # L — LI Campaign Creation Status
+    "li_campaign_id": 12,   # M — LI Campaign ID (numeric)
+    "error_detail": 13,     # N — Error Detail
+    "ad_type": 14,          # O — "INMAIL" or blank (defaults to image ad)
 }
 
 
@@ -76,8 +79,8 @@ class SheetsClient:
         header = all_rows[0]
         pending = []
         for idx, row in enumerate(all_rows[1:], start=2):  # row 2 is first data row
-            # Pad row to expected width
-            while len(row) < len(COL):
+            # Pad row to expected width (max col index + 1)
+            while len(row) <= max(COL.values()):
                 row.append("")
             status = row[COL["tg_status"]].strip().upper()
             if status == "PENDING":
@@ -90,8 +93,46 @@ class SheetsClient:
                     "location":        row[COL["location"]].strip(),
                     "figma_file":      row[COL["figma_file"]].strip(),
                     "figma_node":      row[COL["figma_node"]].strip(),
+                    "ad_type":         row[COL["ad_type"]].strip().upper() if len(row) > COL["ad_type"] else "",
                 })
         return pending
+
+    def read_li_retry_rows(self) -> list[dict]:
+        """
+        Return rows where cohorts already exist (tg_status=Completed) but
+        LinkedIn campaign creation failed or is still pending (li_status in Failed/Pending).
+        These rows already have stg_id, stg_name, targeting_criteria filled in.
+        """
+        ws = self._triggers.worksheet(config.TRIGGERS_TAB)
+        all_rows = ws.get_all_values()
+        if not all_rows:
+            return []
+
+        retry = []
+        for idx, row in enumerate(all_rows[1:], start=2):
+            while len(row) <= max(COL.values()):
+                row.append("")
+            tg_status = row[COL["tg_status"]].strip().upper()
+            li_status = row[COL["li_status"]].strip().upper()
+            stg_id    = row[COL["stg_id"]].strip()
+            criteria  = row[COL["targeting_criteria"]].strip()
+            if tg_status == "COMPLETED" and li_status in ("FAILED", "PENDING") and stg_id and criteria:
+                retry.append({
+                    "sheet_row":          idx,
+                    "date":               row[COL["date"]],
+                    "flow_id":            row[COL["flow_id"]].strip(),
+                    "tg_status":          row[COL["tg_status"]].strip(),
+                    "master_campaign":    row[COL["master_campaign"]].strip(),
+                    "location":           row[COL["location"]].strip(),
+                    "figma_file":         row[COL["figma_file"]].strip(),
+                    "figma_node":         row[COL["figma_node"]].strip(),
+                    "stg_id":             stg_id,
+                    "stg_name":           row[COL["stg_name"]].strip(),
+                    "targeting_facet":    row[COL["targeting_facet"]].strip(),
+                    "targeting_criteria": criteria,
+                    "ad_type":            row[COL["ad_type"]].strip().upper(),
+                })
+        return retry
 
     def write_cohorts(self, input_row: dict, cohorts: list[dict]) -> None:
         """
@@ -128,11 +169,12 @@ class SheetsClient:
                 log.info("Appended new row for cohort %s", cohort["stg_id"])
 
     def update_li_campaign_id(self, stg_id: str, campaign_id: str) -> None:
-        """Write the LinkedIn campaign ID back to the row matching stg_id."""
+        """Write the LinkedIn campaign status + ID back to the row matching stg_id."""
         ws = self._triggers.worksheet(config.TRIGGERS_TAB)
         cell = ws.find(stg_id)
         if cell:
-            ws.update_cell(cell.row, COL["li_status"] + 1, f"Created:{campaign_id}")
+            ws.update_cell(cell.row, COL["li_status"] + 1, "Created")
+            ws.update_cell(cell.row, COL["li_campaign_id"] + 1, campaign_id)
 
     # ── Creatives tab ─────────────────────────────────────────────────────────
 

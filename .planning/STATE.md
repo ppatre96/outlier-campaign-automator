@@ -2,12 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-last_updated: "2026-04-21T02:05:01.947Z"
+status: in_progress
+last_updated: "2026-04-21T21:34:00Z"
 progress:
   total_phases: 4
   completed_phases: 2
-  total_plans: 12
+  planned_phases: 1
+  total_plans: 16
+  planned_plans: 4
   completed_plans: 8
 ---
 
@@ -18,19 +20,23 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-21)
 
 **Core value:** End-to-end campaign automation from screening data to live LinkedIn campaign — zero manual steps once triggered.
-**Current focus:** Phase 02 — observability-storage
+**Current focus:** Phase 02.5 — feedback-loops-experimentation
 
 ## Current Phase
 
-**Phase 2 — Observability & Storage**
-Goal: Automated weekly Slack reports, per-creative performance tracking, campaign lifecycle monitor.
+**Phase 2.5 — Feedback Loops & Experimentation**
+Goal: Enable continuous optimization by collecting creative/cohort performance feedback, generating experiment hypotheses, and driving weekly A/B testing.
 
-Status: Phase 02 COMPLETE — all 4 plans executed
+Status: Phase 2.5 PLANNED — all 4 plans verified and ready for execution
 
 ## Completed Phases
 
 - Phase 1 — Pipeline Integrity (COMPLETE)
 - Phase 2 — Observability & Storage (COMPLETE)
+
+## Planned Phases
+
+- Phase 2.5 — Feedback Loops & Experimentation (PLANNED, 4 plans ready for execution)
 
 ## Known Blockers
 
@@ -64,14 +70,17 @@ Status: Phase 02 COMPLETE — all 4 plans executed
 
 ## Last Session
 
-Completed 02-04 Lifecycle Monitor Slack Wiring — 2026-04-20
+Planned Phase 2.5: Feedback Loops & Experimentation — 2026-04-21
 
-- read_monitor_summary() added to src/campaign_monitor.py (after write_monitor_results())
-- Monitor section wired into scripts/post_weekly_reports.py as 3rd report block
-- main.py --mode monitor --dry-run verified: exit 0, "No active campaigns to monitor"
-- OBS-04 marked complete
-- Phase 02 COMPLETE. Progress: [███████░░░] 67%
+- All 4 draft PLAN.md files reviewed and verified by gsd-plan-checker
+- Three issues identified and resolved:
+  1. Plan 04 async/sync callback handling clarified with asyncio.run() wrapper
+  2. Plan 02 & 04 callback dependency documented (base registration in 02, logic extension in 04)
+  3. Plan 01 testing scope documented (unit tests mock Redash, live validation deferred to deployment)
+- All 14 FEED-* requirements fully covered across 4 plans
+- VERDICT: PASS — Phase 2.5 ready for execution
+- ROADMAP updated: Phase 2.5 marked as "Planned" with 4/4 plans complete
 
 ## Next Step
 
-Proceed to Phase 03 or Phase 2.5 (Feedback Loops & Experimentation)
+Execute Phase 2.5: `/gsd:execute-phase 2.5` — begin Wave 1 (Plans 01-02 in parallel), then Wave 2 (Plans 03-04)

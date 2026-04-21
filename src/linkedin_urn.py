@@ -51,8 +51,14 @@ class UrnResolver:
             # Each row is a dict; expect keys 'name' and 'urn' (case-insensitive)
             entries = []
             for row in rows:
-                name = str(row.get("name") or row.get("Name") or "").strip()
-                urn  = str(row.get("urn")  or row.get("URN")  or "").strip()
+                urn = str(row.get("urn") or row.get("URN") or "").strip()
+                # Name column varies per tab (e.g. 'Skills', 'Job Titles', 'Country').
+                # Pick the first column that isn't the URN column or a timestamp.
+                _skip = {"urn", "fetched at", "fetched_at"}
+                name_key = next(
+                    (k for k in row.keys() if k.lower() not in _skip), None
+                )
+                name = str(row.get(name_key, "")).strip() if name_key else ""
                 if name and urn:
                     entries.append((name.lower(), urn))
             self._cache[tab_name] = entries

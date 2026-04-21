@@ -1,0 +1,101 @@
+[
+  {
+    "id": "exp_20260416_1370626596",
+    "type": "creative_replacement",
+    "campaign_id": 559000496,
+    "current_creative_id": 1370626596,
+    "current_score": 25.0,
+    "recommendation": "EXPERIMENT",
+    "problems": [
+      "Learning-growth hook underperforms for 3+ yr experienced TGs"
+    ],
+    "action": "ADD_CHALLENGER",
+    "hypothesis": "Workspace photo with visible IDE code + expert identity hook will achieve LP CTR >0.3% and LP intent >60%",
+    "brief": {
+      "visual": "Creator at their coding desk, dual monitors with IDE/code visible and colourful",
+      "copy_angle": "Open with expert identity \u2014 e.g. 'You already know how to read bad code. Outlier pays you to apply that to AI.'",
+      "rate_framing": "Add explicit rate range if not present",
+      "aspect": "1:1.5 near-square or 4:3 landscape (avoid tall 3:4)",
+      "creator_brief": "Self-portrait at your coding setup. Two monitors behind you with IDE open and code clearly visible. Warm natural expression. Casual shirt. Photo taken from desk level looking up slightly."
+    },
+    "target_metrics": {
+      "lp_ctr": 0.3,
+      "lp_intent_pct": 60.0,
+      "cpc_lp": 2.0
+    },
+    "status": "dispatched",
+    "created_at": "2026-04-16",
+    "implemented_at": "2026-04-16",
+    "challenger_creative": {
+      "local_path": "/Users/pranavpatre/outlier-campaign-agent/data/experiment_outputs/exp_deepanshu_enUS_angleA.png",
+      "size_kb": 1463
+    },
+    "outcome": null
+  },
+  {
+    "id": "exp_20260416_1141921754",
+    "type": "creative_replacement",
+    "campaign_id": 535014976,
+    "current_creative_id": 1141921754,
+    "current_score": 31.5,
+    "recommendation": "EXPERIMENT",
+    "problems": [
+      "Only 36% of clicks reach LP \u2014 lifestyle image drives curiosity, not intent"
+    ],
+    "action": "ADD_CHALLENGER",
+    "hypothesis": "Workspace photo with visible IDE code + expert identity hook will achieve LP CTR >0.3% and LP intent >60%",
+    "brief": {
+      "visual": "Keep current visual but ensure code/IDE is prominent in frame",
+      "copy_angle": "Keep current hook; test weekly range rate framing instead of hourly ceiling",
+      "rate_framing": "Add explicit rate range if not present",
+      "aspect": "1:1.5 near-square or 4:3 landscape (avoid tall 3:4)",
+      "creator_brief": "Self-portrait at your coding setup. Two monitors behind you with IDE open and code clearly visible. Warm natural expression. Casual shirt. Photo taken from desk level looking up slightly."
+    },
+    "target_metrics": {
+      "lp_ctr": 0.3,
+      "lp_intent_pct": 60.0,
+      "cpc_lp": 2.0
+    },
+    "status": "dispatched",
+    "created_at": "2026-04-16",
+    "implemented_at": "2026-04-16",
+    "challenger_creative": {
+      "local_path": "/Users/pranavpatre/outlier-campaign-agent/data/experiment_outputs/exp_oleksandrr_ukUA_angleB.png",
+      "size_kb": 1507
+    },
+    "outcome": null
+  },
+  {
+    "id": "exp_20260416_1144706884",
+    "type": "creative_replacement",
+    "campaign_id": 535614956,
+    "current_creative_id": 1144706884,
+    "current_score": 27.0,
+    "recommendation": "EXPERIMENT",
+    "problems": [
+      "Weakest dimensions: CPC (2.0/10), Volume (2.0/10)"
+    ],
+    "action": "ADD_CHALLENGER",
+    "hypothesis": "Workspace photo with visible IDE code + expert identity hook will achieve LP CTR >0.3% and LP intent >60%",
+    "brief": {
+      "visual": "Keep current visual but ensure code/IDE is prominent in frame",
+      "copy_angle": "Open with expert identity \u2014 e.g. 'You already know how to read bad code. Outlier pays you to apply that to AI.'",
+      "rate_framing": "Add explicit rate range if not present",
+      "aspect": "1:1.5 near-square or 4:3 landscape (avoid tall 3:4)",
+      "creator_brief": "Self-portrait at your coding setup. Two monitors behind you with IDE open and code clearly visible. Warm natural expression. Casual shirt. Photo taken from desk level looking up slightly."
+    },
+    "target_metrics": {
+      "lp_ctr": 0.3,
+      "lp_intent_pct": 60.0,
+      "cpc_lp": 2.0
+    },
+    "status": "dispatched",
+    "created_at": "2026-04-16",
+    "implemented_at": "2026-04-16",
+    "challenger_creative": {
+      "local_path": "/Users/pranavpatre/outlier-campaign-agent/data/experiment_outputs/exp_mariiac_ukUA_angleA.png",
+      "size_kb": 1572
+    },
+    "outcome": null
+  }
+]

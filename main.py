@@ -54,7 +54,7 @@ log = logging.getLogger("main")
 
 # ── Launch mode ───────────────────────────────────────────────────────────────
 
-def run_launch(dry_run: bool = False) -> None:
+def run_launch(dry_run: bool = False, flow_id: str | None = None, project_id: str | None = None) -> None:
     sheets    = SheetsClient()
     sheet_cfg = sheets.read_config()
 
@@ -76,8 +76,22 @@ def run_launch(dry_run: bool = False) -> None:
     urn_res   = UrnResolver(sheets)
     snowflake = RedashClient()
 
-    pending = sheets.read_pending_rows()
-    retry   = sheets.read_li_retry_rows()
+    # --flow-id / --project-id: build a synthetic row, skip sheet read
+    resolved_config = ""
+    if project_id:
+        log.info("Resolving project_id=%s to flow_id ...", project_id)
+        result = snowflake.resolve_project_to_flow(project_id)
+        if not result:
+            log.error("No signup flow found for project_id=%s — aborting", project_id)
+            sys.exit(1)
+        flow_id, resolved_config = result
+        log.info("Resolved → flow_id=%s config=%s", flow_id, resolved_config)
+    if flow_id:
+        pending = [{"flow_id": flow_id, "location": "", "ad_type": "", "figma_file": "", "figma_node": "", "config_name": resolved_config}]
+        retry   = []
+    else:
+        pending = sheets.read_pending_rows()
+        retry   = sheets.read_li_retry_rows()
 
     if not pending and not retry:
         log.info("No PENDING rows and no retry rows found — nothing to do")
@@ -96,7 +110,7 @@ def run_launch(dry_run: bool = False) -> None:
         log.info("Processing flow_id=%s location=%s ad_type=%s",
                  flow_id, location, ad_type or "SPONSORED_UPDATE")
 
-        config_name = sheet_cfg.get("SCREENING_CONFIG_NAME", "") or flow_id
+        config_name = row.get("config_name") or sheet_cfg.get("SCREENING_CONFIG_NAME", "") or flow_id
 
         try:
             _process_row(
@@ -184,10 +198,14 @@ def _process_row(
         selected = stage_c(cohorts_b, urn_res, li_client)
     except Exception as exc:
         log.warning("Stage C unavailable (%s) — falling back to Stage B top cohorts", exc)
+        selected = []
+
+    if not selected:
+        log.warning("Stage C returned no cohorts for flow=%s — falling back to Stage B top cohorts", flow_id)
         selected = cohorts_b[:config.MAX_CAMPAIGNS]
 
     if not selected:
-        log.warning("No cohorts survived Stage C for flow=%s — skipping", flow_id)
+        log.warning("No cohorts survived Stage A/B for flow=%s — skipping", flow_id)
         return
 
     log.info("Final selected cohorts: %d", len(selected))
@@ -212,11 +230,11 @@ def _process_row(
         for c in selected
     ]
 
-    if not dry_run:
+    if not dry_run and row.get("sheet_row"):
         sheets.write_cohorts(row, cohort_sheet_rows)
         log.info("Wrote %d cohorts to sheet row %d", len(cohort_sheet_rows), row["sheet_row"])
     else:
-        log.info("[dry-run] Would write %d cohorts", len(cohort_sheet_rows))
+        log.info("[dry-run/direct] Would write %d cohorts to sheet", len(cohort_sheet_rows))
 
     # 8. Branch: InMail vs. Image Ad
     is_inmail = (ad_type == "INMAIL")
@@ -730,6 +748,14 @@ def main():
         help="Run analysis/checks but do not write to sheet or LinkedIn",
     )
     parser.add_argument(
+        "--flow-id",
+        help="Target a specific signup flow directly (bypasses Triggers sheet)",
+    )
+    parser.add_argument(
+        "--project-id",
+        help="Target a specific Outlier project (resolved to flow_id via Snowflake)",
+    )
+    parser.add_argument(
         "--log-level", default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
@@ -739,7 +765,7 @@ def main():
     if args.mode == "monitor":
         run_monitor(dry_run=args.dry_run)
     else:
-        run_launch(dry_run=args.dry_run)
+        run_launch(dry_run=args.dry_run, flow_id=args.flow_id, project_id=args.project_id)
 
 
 if __name__ == "__main__":

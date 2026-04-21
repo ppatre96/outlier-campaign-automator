@@ -67,13 +67,17 @@ def two_prop_z_test(pass_a: int, n_a: int, pass_b: int, n_b: int) -> float:
 
 
 def segment_stats(df: pd.DataFrame, mask: pd.Series, baseline_rate: float) -> dict:
-    sub    = df[mask]
-    n      = len(sub)
-    passes = int((sub["resume_screening_result"].str.upper() == "PASS").sum())
+    # Use pre-computed boolean column if available (set once in stage_a); fallback for safety
+    if "_is_pass" in df.columns:
+        is_pass = df["_is_pass"]
+    else:
+        is_pass = df["resume_screening_result"].str.upper() == "PASS"
+    n      = int(mask.sum())
+    passes = int(is_pass[mask].sum())
     rate   = passes / n if n > 0 else 0.0
     lift   = (rate - baseline_rate) * 100
     n_rest = len(df) - n
-    p_rest = int((df[~mask]["resume_screening_result"].str.upper() == "PASS").sum())
+    p_rest = int(is_pass[~mask].sum())
     pval   = two_prop_z_test(passes, n, p_rest, n_rest)
     return {"n": n, "passes": passes, "pass_rate": rate * 100, "lift_pp": lift, "p_value": pval}
 
@@ -101,8 +105,12 @@ def stage_a(df: pd.DataFrame, binary_cols: list[str]) -> list[Cohort]:
     3. Beam search for 2-way and 3-way intersections.
     Returns up to BEAM_CANDIDATES accepted cohorts sorted by adjusted score.
     """
+    # Pre-compute pass boolean once — reused by every segment_stats call
+    df = df.copy()
+    df["_is_pass"] = df["resume_screening_result"].str.upper() == "PASS"
+
     total    = len(df)
-    n_pass   = int((df["resume_screening_result"].str.upper() == "PASS").sum())
+    n_pass   = int(df["_is_pass"].sum())
     baseline = n_pass / total if total > 0 else 0.0
     log.info("Global baseline: %.1f%% (%d/%d)", baseline * 100, n_pass, total)
 

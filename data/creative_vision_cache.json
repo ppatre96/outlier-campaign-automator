@@ -1,0 +1,42 @@
+{
+  "1370691546": {
+    "image_type": "workspace_single_monitor",
+    "code_visibility": "prominent",
+    "professional_signal": 7,
+    "identity_trigger": "engineering",
+    "aspect_class": "portrait",
+    "raw_summary": "A young man with glasses and a light beard sits at a white desk smiling at the camera, with a large monitor behind him displaying what appears to be a dark-themed IDE or code editor with multiple panes of green and pink syntax-highlighted code. The setup includes a keyboard, small desk fan, and a WiFi antenna on a casual home office desk."
+  },
+  "1370740436": {
+    "image_type": "workspace_dual_monitor",
+    "code_visibility": "prominent",
+    "professional_signal": 8,
+    "identity_trigger": "engineering",
+    "aspect_class": "tall_portrait",
+    "raw_summary": "A smiling bald man with a short beard wearing a plaid shirt takes a selfie at his desk setup featuring multiple monitors displaying colorful syntax-highlighted code in a dark-themed IDE. The workspace includes a laptop, additional monitor, speakers, and a gaming headset, conveying an active software development environment."
+  },
+  "1370626596": {
+    "image_type": "graduation_formal",
+    "code_visibility": "none",
+    "professional_signal": 4,
+    "identity_trigger": "academic",
+    "aspect_class": "portrait",
+    "raw_summary": "A young man wearing a black graduation cap and gown with a blue hood stands in front of the Liverpool Philharmonic Hall, smiling and holding a University of Liverpool diploma. The setting is clearly a university graduation ceremony."
+  },
+  "1141921754": {
+    "image_type": "outdoor_lifestyle",
+    "code_visibility": "none",
+    "professional_signal": 2,
+    "identity_trigger": "travel_freedom",
+    "aspect_class": "landscape",
+    "raw_summary": "A bearded man wearing a navy baseball cap and backpack takes a selfie on a coastal hillside overlook, with the iconic chalk cliffs and turquoise sea of \u00c9tretat, Normandy, France visible in the background. The setting is entirely recreational and travel-oriented with no professional or technical context."
+  },
+  "1144706884": {
+    "image_type": "other",
+    "code_visibility": "none",
+    "professional_signal": 5,
+    "identity_trigger": "unknown",
+    "aspect_class": "tall_portrait",
+    "raw_summary": "(image analysis unavailable)"
+  }
+}
