@@ -367,3 +367,60 @@ def parse_cohort_from_message(text: str) -> Optional[str]:
 
     log.warning("No cohort pattern found in message")
     return None
+
+# Phase 2.5-04: Reaction callbacks for reanalysis
+import asyncio
+from src.reanalysis_loop import ReanalysisOrchestrator
+from src.memory import ExperimentBacklog
+
+
+async def on_pause_cohort(action_context: dict) -> dict:
+    """Handle 👍 reaction: pause underperforming cohort."""
+    cohort = action_context['cohort_name']
+    user = action_context['user_id']
+    log.info("Pause cohort: %s (user=%s)", cohort, user)
+    
+    orchestrator = ReanalysisOrchestrator()
+    new_cohorts = await asyncio.to_thread(
+        orchestrator.trigger_reanalysis,
+        cohort_to_exclude=cohort,
+        reason='user_pause'
+    )
+    
+    return {
+        'success': True,
+        'action': 'PAUSE',
+        'cohort': cohort,
+        'triggered_by': user,
+        'reanalysis_cohorts': len(new_cohorts)
+    }
+
+
+async def on_test_new_angles(action_context: dict) -> dict:
+    """Handle 🧪 reaction: test new angles for cohort."""
+    cohort = action_context['cohort_name']
+    user = action_context['user_id']
+    log.info("Test new angles: %s (user=%s)", cohort, user)
+    
+    backlog = ExperimentBacklog()
+    boosted = 0
+    for exp in backlog.backlog:
+        if exp['cohort'] == cohort and exp.get('status') == 'pending':
+            exp['priority_score'] = exp.get('priority_score', 0) * 1.5
+            boosted += 1
+    backlog.save()
+    
+    orchestrator = ReanalysisOrchestrator()
+    new_cohorts = await asyncio.to_thread(
+        orchestrator.trigger_reanalysis,
+        cohort_to_focus=cohort,
+        reason='user_test_request'
+    )
+    
+    return {
+        'success': True,
+        'action': 'TEST_NEW_ANGLES',
+        'cohort': cohort,
+        'triggered_by': user,
+        'experiments_boosted': boosted
+    }
