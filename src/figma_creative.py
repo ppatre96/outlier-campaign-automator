@@ -181,7 +181,23 @@ def build_copy_variants(
         facet = _feature_to_facet(feat)
         signals.append(f"{facet}: {human}")
 
+    # Load competitor intel if available (from weekly competitor-bot run)
+    competitor_context = ""
+    import pathlib
+    _intel_path = pathlib.Path("data/competitor_intel/latest.json")
+    if _intel_path.exists():
+        try:
+            intel_data = json.loads(_intel_path.read_text())
+            ideas = intel_data.get("experiment_ideas", [])
+            if ideas:
+                competitor_context = "\n\nCompetitor experiment ideas to consider:\n" + "\n".join(f"- {i}" for i in ideas[:3])
+                log.info("Loaded %d competitor experiment ideas for copy gen", len(ideas))
+        except Exception as exc:
+            log.warning("Failed to load competitor intel: %s", exc)
+
     prompt = _build_copy_prompt(cohort.name, signals, layer_map)
+    if competitor_context:
+        prompt += competitor_context
 
     # Validate context fields are populated before LiteLLM call
     _required_signals = ["skills", "job_titles_norm", "fields_of_study", "highest_degree_level",

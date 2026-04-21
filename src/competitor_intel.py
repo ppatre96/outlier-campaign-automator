@@ -3,15 +3,19 @@ Competitor intelligence module for the Outlier campaign pipeline.
 
 Researches:
   1. Competitor ad creatives — Meta Ads Library, LinkedIn
-  2. Site traffic signals — SimilarWeb/Semrush public data
-  3. User reviews — Reddit, Trustpilot, YouTube, App stores
-  4. SEO search intent — high-intent queries, autocomplete patterns
+  2. Task/opportunity listings — Turing, Surge AI, Handshake work pages
+     (reveals what AI training skills are in demand and which TGs to target)
+  3. Site traffic signals — SimilarWeb/Semrush public data
+  4. User reviews — Reddit, Trustpilot, YouTube, App stores
+  5. SEO search intent — high-intent queries, autocomplete patterns
 
 Outputs a structured CompetitorIntel object that is passed to the brief
 generator to sharpen angle selection, hooks, and proof elements.
 """
 
+import json
 import logging
+import pathlib
 import re
 import time
 from dataclasses import dataclass, field
@@ -23,6 +27,64 @@ from bs4 import BeautifulSoup
 import config
 
 log = logging.getLogger(__name__)
+
+# ── Hypothesis persistence ────────────────────────────────────────────────────
+# Hypotheses from the latest competitor intel run are cached here so that the
+# weekly InMail report can pull them without re-running the full sweep.
+
+_HYPOTHESES_PATH = pathlib.Path(__file__).parent.parent / "data" / "competitor_hypotheses.json"
+_INTEL_PATH = pathlib.Path(__file__).parent.parent / "data" / "competitor_intel" / "latest.json"
+
+
+def save_hypotheses(hypotheses: list[str]) -> None:
+    """Persist copy_recommendations from a competitor intel run to disk."""
+    _HYPOTHESES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _HYPOTHESES_PATH.write_text(json.dumps(hypotheses, ensure_ascii=False, indent=2))
+    log.info("Saved %d competitor hypotheses to %s", len(hypotheses), _HYPOTHESES_PATH)
+
+
+def save_intel_json(intel: CompetitorIntel, tg_label: str = "") -> None:
+    """
+    Persist structured competitor intelligence to JSON for consumption by brief generator.
+    Includes experiment ideas, competitor hooks, and avoid patterns.
+    """
+    from datetime import datetime
+
+    _INTEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    output = {
+        "updated_at": datetime.utcnow().isoformat(),
+        "tg_label": tg_label,
+        "experiment_ideas": intel.copy_recommendations,
+        "competitor_hooks": [ad.hook for ad in intel.competitor_ads if ad.hook and "Fetch" not in ad.hook],
+        "avoid": [
+            f"Angle {intel.dominant_competitor_angle}" if intel.dominant_competitor_angle else "",
+        ],
+        "hot_domains": intel.hot_domains,
+        "hot_tgs": intel.hot_tgs,
+        "underserved_domains": intel.underserved_domains,
+        "top_differentiators": intel.differentiators,
+    }
+    # Remove empty avoid entries
+    output["avoid"] = [a for a in output["avoid"] if a]
+
+    _INTEL_PATH.write_text(json.dumps(output, ensure_ascii=False, indent=2))
+    log.info("Saved structured competitor intel to %s", _INTEL_PATH)
+
+
+def load_pending_hypotheses() -> list[str]:
+    """
+    Return the hypothesis list from the most recent competitor intel run.
+    Returns an empty list if no run has been saved yet.
+    Called by inmail_weekly_report and static_weekly_report to surface
+    competitor-driven angle ideas.
+    """
+    if not _HYPOTHESES_PATH.exists():
+        return []
+    try:
+        return json.loads(_HYPOTHESES_PATH.read_text())
+    except Exception as exc:
+        log.warning("Could not load competitor hypotheses: %s", exc)
+        return []
 
 # ── Competitors ───────────────────────────────────────────────────────────────
 
@@ -62,6 +124,115 @@ COMPETITORS = {
         "trustpilot_slug": "appen.com",
         "reddit_terms": ["appen", "appen.com"],
     },
+    "surge": {
+        "name": "Surge AI",
+        "domain": "surgehq.ai",
+        "meta_search": "Surge AI",
+        "trustpilot_slug": "surgehq.ai",
+        "reddit_terms": ["surge ai", "surgehq"],
+    },
+    "turing": {
+        "name": "Turing AI",
+        "domain": "turing.com",
+        "meta_search": "Turing AI jobs",
+        "trustpilot_slug": "turing.com",
+        "reddit_terms": ["turing.com", "turing ai freelance"],
+    },
+    "handshake": {
+        "name": "Handshake",
+        "domain": "joinhandshake.com",
+        "meta_search": "Handshake jobs",
+        "trustpilot_slug": "joinhandshake.com",
+        "reddit_terms": ["handshake jobs", "joinhandshake"],
+    },
+}
+
+# ── Task listing pages (NOT careers — contributor opportunity pages) ───────────
+# These reveal which skills/professions competitors are actively recruiting
+# contributors for — a direct signal of AI training demand by TG
+
+TASK_LISTING_PAGES = {
+    "turing": {
+        "name": "Turing AI",
+        "url": "https://work.turing.com/jobs",
+        "pagination": "https://work.turing.com/jobs?page={page}",
+        "max_pages": 5,
+        "job_selector": "a[href*='/jobs/']",
+        "title_selector": "h2, h3, .job-title",
+        "description_selector": ".description, .job-body, p",
+    },
+    "mercor": {
+        "name": "Mercor",
+        "url": "https://work.mercor.com/explore",
+        "pagination": "https://work.mercor.com/explore?page={page}",
+        "max_pages": 5,
+        "job_selector": "a[href*='/job/'], a[href*='/explore/'], .job-card",
+        "title_selector": "h2, h3, .job-title, .role-title",
+        "description_selector": ".description, .job-body, p",
+    },
+    "surge": {
+        "name": "Surge AI",
+        "url": "https://app.surgehq.ai/jobs",
+        "pagination": None,
+        "max_pages": 1,
+        "job_selector": ".job-card, .task-card, a[href*='/jobs/']",
+        "title_selector": "h2, h3, .title",
+        "description_selector": ".description, p",
+    },
+    "alignerr": {
+        "name": "Alignerr",
+        "url": "https://app.alignerr.com/",
+        "pagination": None,
+        "max_pages": 1,
+        "job_selector": ".opportunity-card, .task-card, a[href*='/task'], a[href*='/opportunity']",
+        "title_selector": "h2, h3, .title, .task-name",
+        "description_selector": ".description, p",
+    },
+    "micro1": {
+        "name": "Micro1",
+        "url": "https://www.micro1.ai/experts/opportunities",
+        "pagination": "https://www.micro1.ai/experts/opportunities?page={page}",
+        "max_pages": 3,
+        "job_selector": "a[href*='/job/'], a[href*='/opportunity'], .job-card",
+        "title_selector": "h2, h3, .job-title",
+        "description_selector": ".description, p",
+    },
+    "appen": {
+        "name": "Appen",
+        "url": "https://crowdgen.com/",
+        "pagination": None,
+        "max_pages": 1,
+        "job_selector": ".project-card, .task-card, a[href*='/project']",
+        "title_selector": "h2, h3, .project-title",
+        "description_selector": ".description, p",
+    },
+    "dataannotation": {
+        "name": "DataAnnotation",
+        "url": "https://app.dataannotation.tech/workers/projects",
+        "pagination": None,
+        "max_pages": 1,
+        "job_selector": ".role-card, .opportunity-card, .project-card, a",
+        "title_selector": "h2, h3",
+        "description_selector": "p, .description",
+    },
+    "remotasks": {
+        "name": "Remotasks",
+        "url": "https://www.remotasks.com/en",
+        "pagination": None,
+        "max_pages": 1,
+        "job_selector": ".task-card, .project-card, a[href*='/task']",
+        "title_selector": "h2, h3, .task-title",
+        "description_selector": ".description, p",
+    },
+    "handshake": {
+        "name": "Handshake",
+        "url": "https://joinhandshake.com/ai/opportunities/",
+        "pagination": "https://joinhandshake.com/ai/opportunities/?page={page}",
+        "max_pages": 3,
+        "job_selector": "a[href*='/jobs/'], a[href*='/opportunity']",
+        "title_selector": "h2, h3, .job-name",
+        "description_selector": ".description, .job-description",
+    },
 }
 
 OUTLIER_INTEL = {
@@ -88,6 +259,23 @@ class AdCreative:
 
 
 @dataclass
+class TaskListing:
+    """
+    A single contributor opportunity from a competitor's work/task page.
+    NOT a full-time job — this is the crowd-sourced AI training work page.
+    """
+    platform: str
+    title: str                        # e.g. "Medical AI Reviewer", "Hindi Content Evaluator"
+    skills_required: list[str]        # extracted from description
+    domain: str                       # inferred domain: medical / legal / tech / language / general
+    geography: Optional[str]          # country/region if mentioned
+    pay_rate: Optional[str]           # e.g. "$15–$25/hr" if listed
+    volume_signal: str                # "high" / "medium" / "low" (inferred from listing count)
+    url: Optional[str] = None
+    raw_description: str = ""
+
+
+@dataclass
 class ReviewSignal:
     source: str          # reddit / trustpilot / youtube / appstore
     platform: str        # competitor name or "outlier"
@@ -100,17 +288,22 @@ class ReviewSignal:
 @dataclass
 class CompetitorIntel:
     competitor_ads: list[AdCreative] = field(default_factory=list)
+    task_listings: list[TaskListing] = field(default_factory=list)        # ← from work pages
     review_signals: list[ReviewSignal] = field(default_factory=list)
-    trustpilot_ratings: dict = field(default_factory=dict)   # {competitor: {"rating": 4.1, "count": 1200}}
+    trustpilot_ratings: dict = field(default_factory=dict)
     search_terms: list[str] = field(default_factory=list)
-    dominant_competitor_angle: Optional[str] = None          # A/B/C most used by competitors
-    whitespace_angle: Optional[str] = None                   # A/B/C least used = opportunity
+    dominant_competitor_angle: Optional[str] = None
+    whitespace_angle: Optional[str] = None
     top_user_pain_points: list[str] = field(default_factory=list)
     outlier_praise_themes: list[str] = field(default_factory=list)
     outlier_complaint_themes: list[str] = field(default_factory=list)
     differentiators: list[str] = field(default_factory=list)
     copy_recommendations: list[str] = field(default_factory=list)
     design_recommendations: list[str] = field(default_factory=list)
+    # Demand signals derived from task listings
+    hot_domains: list[str] = field(default_factory=list)                  # domains with most listings
+    hot_tgs: list[str] = field(default_factory=list)                      # TG labels competitors are hiring for
+    underserved_domains: list[str] = field(default_factory=list)          # domains Outlier can target but competitors aren't
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -161,6 +354,185 @@ def _extract_earnings_claim(text: str) -> Optional[str]:
         text
     )
     return match.group().strip() if match else None
+
+
+# ── Task / Opportunity Listing Scraper ───────────────────────────────────────
+#
+# Scrapes competitor WORK pages (not careers pages) to understand which
+# professional skills and domains they're actively recruiting contributors for.
+# High listing volume in a domain = strong AI training demand = good TG for Outlier.
+
+_DOMAIN_KEYWORDS = {
+    "medical":   ["medical", "clinical", "doctor", "nurse", "health", "pharma",
+                  "radiology", "cardiology", "biotech", "med grad", "mbbs", "md"],
+    "legal":     ["legal", "law", "attorney", "lawyer", "llb", "paralegal",
+                  "contract", "compliance", "litigation", "judiciary"],
+    "tech":      ["software", "engineer", "developer", "python", "ml", "machine learning",
+                  "data scientist", "coding", "programming", "swe", "backend", "frontend"],
+    "finance":   ["finance", "accounting", "cfa", "ca", "chartered", "audit",
+                  "investment", "banking", "analyst", "economics"],
+    "language":  ["translate", "linguist", "bilingual", "native speaker", "hindi",
+                  "spanish", "french", "arabic", "portuguese", "german", "japanese",
+                  "content writer", "copywriter", "editor"],
+    "education": ["teacher", "tutor", "educator", "professor", "academic",
+                  "phd", "research", "curriculum"],
+    "creative":  ["designer", "illustrator", "ux", "ui", "graphic", "video",
+                  "animation", "3d", "figma"],
+}
+
+_SKILLS_PATTERN = re.compile(
+    r'\b(python|sql|java|javascript|c\+\+|pytorch|tensorflow|nlp|llm|'
+    r'medical|clinical|legal|finance|accounting|translation|annotation|'
+    r'hindi|spanish|arabic|french|portuguese|data labeling|rlhf|'
+    r'content review|quality assurance|rating|evaluation)\b',
+    re.IGNORECASE
+)
+
+_PAY_PATTERN = re.compile(
+    r'\$[\d,]+(?:\.\d+)?\s*(?:[-–]\s*\$[\d,]+(?:\.\d+)?)?\s*(?:/hr|per hour|hourly|/hour)?',
+    re.IGNORECASE
+)
+
+_GEO_PATTERN = re.compile(
+    r'\b(india|philippines|nigeria|pakistan|brazil|indonesia|kenya|'
+    r'mexico|south africa|egypt|bangladesh|vietnam|us|uk|canada|'
+    r'australia|global|worldwide|remote)\b',
+    re.IGNORECASE
+)
+
+
+def _infer_domain(text: str) -> str:
+    t = text.lower()
+    scores = {domain: 0 for domain in _DOMAIN_KEYWORDS}
+    for domain, keywords in _DOMAIN_KEYWORDS.items():
+        scores[domain] = sum(1 for kw in keywords if kw in t)
+    best = max(scores, key=scores.get)
+    return best if scores[best] > 0 else "general"
+
+
+def fetch_task_listings(platform_key: str) -> list[TaskListing]:
+    """
+    Scrape a competitor's contributor work/task listing page.
+    Returns structured TaskListing objects representing what skills they're hiring for.
+
+    NOTE: This is NOT their careers page — it's the page where freelance
+    contributors apply to do AI training tasks (equivalent to Outlier's projects page).
+    """
+    conf = TASK_LISTING_PAGES.get(platform_key)
+    if not conf:
+        log.warning("No task listing config for %s", platform_key)
+        return []
+
+    listings = []
+    pages_to_fetch = [conf["url"]]
+    if conf.get("pagination") and conf.get("max_pages", 1) > 1:
+        pages_to_fetch += [
+            conf["pagination"].format(page=p)
+            for p in range(2, conf["max_pages"] + 1)
+        ]
+
+    for page_url in pages_to_fetch:
+        resp = _get(page_url, timeout=20)
+        if not resp:
+            log.warning("Could not fetch task listings from %s", page_url)
+            continue
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        # Try to extract individual listing cards/links
+        job_els = soup.select(conf["job_selector"])
+        if not job_els:
+            # Fallback: grab all heading elements as a proxy for listing titles
+            job_els = soup.find_all(["h2", "h3", "h4"])
+
+        seen_titles = set()
+        for el in job_els:
+            # Get title
+            title_el = el.select_one(conf["title_selector"]) if el.name not in ["h2","h3","h4"] else el
+            title = (title_el or el).get_text(strip=True)
+            if not title or len(title) < 4 or title in seen_titles:
+                continue
+            seen_titles.add(title)
+
+            # Get description snippet
+            desc_el = el.find_next(conf["description_selector"].split(",")[0].strip())
+            description = desc_el.get_text(strip=True)[:500] if desc_el else ""
+            full_text = f"{title} {description}"
+
+            # Extract structured fields
+            skills = list({m.group().lower() for m in _SKILLS_PATTERN.finditer(full_text)})
+            pay_match = _PAY_PATTERN.search(full_text)
+            geo_match = _GEO_PATTERN.search(full_text)
+
+            listing = TaskListing(
+                platform=conf["name"],
+                title=title,
+                skills_required=skills,
+                domain=_infer_domain(full_text),
+                geography=geo_match.group() if geo_match else None,
+                pay_rate=pay_match.group() if pay_match else None,
+                volume_signal="medium",   # updated in aggregate analysis
+                url=page_url,
+                raw_description=description,
+            )
+            listings.append(listing)
+            log.debug("TaskListing [%s]: %s | domain=%s skills=%s",
+                      conf["name"], title, listing.domain, skills)
+
+        time.sleep(1)
+        log.info("Task listings fetched from %s (%s): %d listings",
+                 conf["name"], page_url, len(seen_titles))
+
+    return listings
+
+
+def analyze_task_demand(listings: list[TaskListing]) -> dict:
+    """
+    Aggregate task listings across platforms to surface demand signals:
+    - Which domains are most actively hiring contributors?
+    - Which TG labels appear most frequently?
+    - Which domains have high competitor coverage (= validated demand)?
+    - Which domains appear on only 1-2 platforms (= opportunity gap)?
+    """
+    from collections import Counter
+
+    domain_counts = Counter(l.domain for l in listings)
+    platform_domain_counts: dict[str, Counter] = {}
+    for l in listings:
+        platform_domain_counts.setdefault(l.platform, Counter())[l.domain] += 1
+
+    # Domains appearing across ≥3 platforms = validated, warm demand
+    domain_platform_coverage = {}
+    for domain in set(l.domain for l in listings):
+        platforms_covering = [p for p, c in platform_domain_counts.items() if c.get(domain, 0) > 0]
+        domain_platform_coverage[domain] = platforms_covering
+
+    hot_domains = [d for d, platforms in domain_platform_coverage.items() if len(platforms) >= 2]
+    underserved = [d for d, platforms in domain_platform_coverage.items() if len(platforms) == 1]
+
+    # Extract the most specific TG labels from titles
+    tg_labels = []
+    for l in listings:
+        # Clean the title into a TG label: "Medical AI Reviewer" → "medical AI reviewer"
+        clean = re.sub(r'\b(AI|ML|LLM|NLP|RLHF|Reviewer|Evaluator|Annotator|Specialist)\b',
+                       '', l.title, flags=re.IGNORECASE).strip()
+        if clean and len(clean) > 3:
+            tg_labels.append(clean.lower())
+
+    top_tgs = [tg for tg, _ in Counter(tg_labels).most_common(15)]
+
+    # Mark volume signal on listings
+    for l in listings:
+        count = domain_counts.get(l.domain, 0)
+        l.volume_signal = "high" if count >= 10 else "medium" if count >= 4 else "low"
+
+    return {
+        "hot_domains": sorted(hot_domains, key=lambda d: domain_counts[d], reverse=True),
+        "underserved_domains": underserved,
+        "top_tgs": top_tgs,
+        "domain_counts": dict(domain_counts.most_common()),
+        "domain_platform_coverage": {d: len(ps) for d, ps in domain_platform_coverage.items()},
+    }
 
 
 # ── Meta Ads Library ──────────────────────────────────────────────────────────
@@ -417,16 +789,19 @@ def run_competitor_intel(
     include_reddit: bool = True,
     include_trustpilot: bool = True,
     include_seo: bool = True,
+    include_task_listings: bool = True,
 ) -> CompetitorIntel:
     """
     Run full competitive intelligence sweep for a given TG.
 
     Args:
-        tg_label:             The TG label from the cohort (e.g. "clinical nurses Philippines")
-        target_competitors:   List of competitor keys to research. Defaults to top 4.
-        include_reddit:       Whether to pull Reddit signals
-        include_trustpilot:   Whether to scrape Trustpilot
-        include_seo:          Whether to pull search intent terms
+        tg_label:               The TG label from the cohort (e.g. "clinical nurses Philippines")
+        target_competitors:     Competitor keys to research. Defaults to top 4 ad competitors.
+        include_reddit:         Whether to pull Reddit signals
+        include_trustpilot:     Whether to scrape Trustpilot
+        include_seo:            Whether to pull search intent terms
+        include_task_listings:  Whether to scrape Turing/Surge/Handshake work pages
+                                for AI training demand signals
 
     Returns:
         CompetitorIntel — structured output ready to pass to brief generator
@@ -434,13 +809,34 @@ def run_competitor_intel(
     competitors = target_competitors or ["dataannotation", "mercor", "alignerr", "micro1"]
     intel = CompetitorIntel()
 
-    # 1. Meta ads (URLs for agent to browse)
+    # 1. Task/opportunity listings — what skills are competitors actively hiring for?
+    #    Turing, Surge AI, Handshake work pages (NOT careers pages)
+    if include_task_listings:
+        all_listings = []
+        for platform_key in TASK_LISTING_PAGES:
+            log.info("Fetching task listings from %s", TASK_LISTING_PAGES[platform_key]["name"])
+            listings = fetch_task_listings(platform_key)
+            all_listings.extend(listings)
+            intel.task_listings.extend(listings)
+            time.sleep(2)
+
+        if all_listings:
+            demand = analyze_task_demand(all_listings)
+            intel.hot_domains = demand["hot_domains"]
+            intel.underserved_domains = demand["underserved_domains"]
+            intel.hot_tgs = demand["top_tgs"]
+            log.info(
+                "Task demand: hot_domains=%s | top_tgs=%s",
+                intel.hot_domains[:5], intel.hot_tgs[:5]
+            )
+
+    # 2. Meta ads (URLs for agent to browse)
     for comp_key in competitors:
         ads = fetch_meta_ads(comp_key)
         intel.competitor_ads.extend(ads)
         log.info("Meta ads queued for %s", comp_key)
 
-    # 2. Trustpilot ratings
+    # 3. Trustpilot ratings
     if include_trustpilot:
         # Competitors
         for comp_key in competitors:
@@ -455,33 +851,32 @@ def run_competitor_intel(
         if outlier_tp:
             intel.trustpilot_ratings["Outlier"] = outlier_tp
 
-    # 3. Reddit signals
+    # 4. Reddit signals
     if include_reddit:
         for comp_key in competitors:
             comp = COMPETITORS[comp_key]
-            for term in comp["reddit_terms"][:2]:  # limit to 2 terms per competitor
+            for term in comp["reddit_terms"][:2]:
                 signals = fetch_reddit_signals(term, comp["name"])
                 intel.review_signals.extend(signals)
                 time.sleep(1)
 
-        # Outlier signals
         for term in OUTLIER_INTEL["reddit_terms"][:2]:
             signals = fetch_reddit_signals(term, "Outlier")
             intel.review_signals.extend(signals)
             time.sleep(1)
 
-    # 4. SEO terms
+    # 5. SEO terms
     if include_seo:
         intel.search_terms = fetch_search_intent_terms(tg_label)
 
-    # 5. Angle analysis
+    # 7. Angle analysis
     real_ads = [ad for ad in intel.competitor_ads if ad.angle != "?"]
     if real_ads:
         angle_data = analyze_angle_distribution(real_ads)
         intel.dominant_competitor_angle = angle_data["dominant"]
         intel.whitespace_angle = angle_data["whitespace"]
 
-    # 6. Synthesize review signals
+    # 8. Synthesize review signals
     outlier_signals = [s for s in intel.review_signals if s.platform == "Outlier"]
     competitor_signals = [s for s in intel.review_signals if s.platform != "Outlier"]
 
@@ -495,13 +890,20 @@ def run_competitor_intel(
         s.theme for s in competitor_signals if s.sentiment == "negative"
     })
 
-    # 7. Score differentiators
+    # 9. Score differentiators
     scored = score_differentiators(intel.competitor_ads)
     intel.differentiators = [d["claim"] for d in scored[:3]]  # top 3 with most whitespace
 
-    # 8. Generate copy recommendations
+    # 10. Generate copy recommendations
     intel.copy_recommendations = _generate_copy_recommendations(intel, tg_label)
     intel.design_recommendations = _generate_design_recommendations(intel)
+
+    # 11. Persist hypotheses so weekly reports can surface them without a re-run
+    if intel.copy_recommendations:
+        save_hypotheses(intel.copy_recommendations)
+
+    # 12. Persist structured intel JSON for brief generator to read at Stage 8b
+    save_intel_json(intel, tg_label)
 
     return intel
 
@@ -582,17 +984,40 @@ def to_brief_context(intel: CompetitorIntel) -> dict:
     ad-creative-brief-generator and outlier-copy-writer.
     """
     return {
+        # Ad angle intelligence
         "dominant_competitor_angle": intel.dominant_competitor_angle,
         "whitespace_angle": intel.whitespace_angle,
+
+        # Review intelligence
         "top_user_pain_points": intel.top_user_pain_points,
         "outlier_praise_themes": intel.outlier_praise_themes,
         "outlier_complaint_themes": intel.outlier_complaint_themes,
+
+        # Differentiators with most whitespace
         "top_differentiators": intel.differentiators,
+
+        # SEO
         "high_intent_search_terms": intel.search_terms[:5],
+
+        # Actionable recommendations for brief/copy agents
         "copy_recommendations": intel.copy_recommendations,
         "design_recommendations": intel.design_recommendations,
+
+        # Trustpilot snapshot
         "trustpilot_snapshot": {
             k: {"rating": v.get("rating"), "count": v.get("review_count")}
             for k, v in intel.trustpilot_ratings.items()
+        },
+
+        # Task listing demand signals (from Turing, Surge, Handshake, DataAnnotation work pages)
+        # hot_domains = domains with most active task listings across platforms (= validated AI training demand)
+        # hot_tgs = specific TG titles appearing most frequently in listings (= warm audience already interested)
+        # underserved_domains = domains only 1 competitor is covering (= Outlier opportunity)
+        "task_demand": {
+            "hot_domains": intel.hot_domains,
+            "hot_tgs": intel.hot_tgs[:10],
+            "underserved_domains": intel.underserved_domains,
+            "total_listings_scraped": len(intel.task_listings),
+            "platforms_covered": list({l.platform for l in intel.task_listings}),
         },
     }
