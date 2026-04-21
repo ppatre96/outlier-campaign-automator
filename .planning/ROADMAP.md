@@ -12,6 +12,7 @@
 - [x] **Phase 1: Pipeline Integrity** — Fix all silent skips and hard blockers so a full dry run completes end-to-end
 - [x] **Phase 2: Observability & Storage** — Close the reporting loop with Slack delivery, Drive persistence, and lifecycle monitoring (completed 2026-04-21)
 - [x] **Phase 2.5: Feedback Loops & Experimentation** — Add feedback agents to analyze creative/cohort performance, generate experiment hypotheses, and drive weekly optimization cycles (completed 2026-04-21)
+- [ ] **Phase 3.1: Figma Creative Replication Integration** — Integrate completed Figma layer builder into agent pipeline; pass photo_base64 and create editable frames
 - [ ] **Phase 3: Campaign Expansion** — Regenerate STEM InMails with the winning financial angle and extend targeting buckets
 
 ---
@@ -207,13 +208,60 @@ Plans:
 
 ---
 
+### Phase 3.1: Figma Creative Replication Integration
+
+**Goal**: Connect completed Figma layer builder (`build_figma_layered_frame_js()`) into the campaign pipeline by updating agent instructions, passing `photo_base64` from image generation, and verifying end-to-end frame creation with editable photo + gradient + text layers.
+
+**Why here**: Image generation (Gemini) is complete but pipeline doesn't embed photos in editable Figma frames. Phase 3.1 bridges this gap, enabling designers to customize generated creatives. This is a **prerequisite for Phase 3** because STEM InMail campaigns will use photo-backed frames.
+
+**Depends on**: Phase 1 (pipeline must run), Phase 2.5 complete
+
+**Requirements**: IMG-01, IMG-02, IMG-03
+
+**Tasks**:
+
+1. **Update agent instructions** — `~/.claude/agents/outlier-creative-generator.md`
+   - Replace Stage 8g to use `build_figma_layered_frame_js()` instead of text-only clone
+   - Document input: `context["photo_base64"]` as Gemini PNG in base64 format
+   - Document output: 3 Figma frames (A/B/C) with raster photo, gradient overlays, editable text
+
+2. **Modify pipeline to pass `photo_base64`**
+   - Convert Gemini PNG to base64 in `src/midjourney_creative.py` or `scripts/dry_run.py`
+   - Add `context["photo_base64"]` in `main.py` context assembly before agent call
+   - Verify base64 conversion works for typical image sizes without NameError
+
+3. **End-to-end test**
+   - Run `python scripts/dry_run.py --flow-id <test-id> --skip-linkedin` to test creative generation
+   - Verify in Figma: 3 frames with correct names, visible photo backgrounds, angle-specific gradients, editable text
+   - Confirm no regressions in LinkedIn publish, Sheets logging, dry-run output
+
+**Success Criteria** (what must be TRUE):
+1. `outlier-creative-generator.md` Stage 8g references `build_figma_layered_frame_js()` and documents `photo_base64` input
+2. Pipeline passes `context["photo_base64"]` to agent without NameError
+3. End-to-end test creates 3 Figma frames with:
+   - Correct frame names (`project_id_A/B/C_v1`)
+   - Visible raster photo backgrounds
+   - Angle-specific gradient colors (A ≠ B ≠ C)
+   - Editable text layers with correct content
+4. No regressions in other pipeline stages
+
+**Blockers / external dependencies**:
+- None (implementation complete, integration pending)
+
+**Plans**: 1 plan
+
+Plans:
+- [ ] 03.1-01-PLAN.md — Agent instructions + pipeline photo_base64 + end-to-end test
+
+---
+
 ### Phase 3: Campaign Expansion
 
 **Goal**: STEM InMail campaigns regenerate with the proven financial angle and the targeting classifier is reviewed for new cohort types, so the pipeline can address audiences discovered in ongoing screening data.
 
 **Why here**: Expansion makes no sense until the pipeline runs reliably (Phase 1), its output is observable (Phase 2), and we have feedback loops to guide expansion decisions (Phase 2.5). STEM regen specifically requires the InMail pipeline to be unblocked end-to-end, which Phase 1 delivers. New TG buckets are low-risk once the classifier is known-good and we have data on what works.
 
-**Depends on**: Phase 1, Phase 2, Phase 2.5
+**Depends on**: Phase 1, Phase 2, Phase 2.5, Phase 3.1
 
 **Requirements**: EXP-01, EXP-02
 
@@ -252,7 +300,8 @@ Plans:
 | 1. Pipeline Integrity | 4/4 | Complete | 2026-04-20 |
 | 2. Observability & Storage | 4/4 | Complete   | 2026-04-21 |
 | 2.5. Feedback Loops & Experimentation | 4/4 | Complete    | 2026-04-21 |
-| 3. Campaign Expansion | 1/2 | In Progress|  |
+| 3.1. Figma Creative Integration | 0/1 | Planned | — |
+| 3. Campaign Expansion | 0/2 | Pending (blocked on 3.1) |  |
 
 ---
 
@@ -289,10 +338,13 @@ Plans:
 | FEED-12 | Phase 2.5 | Pending |
 | FEED-13 | Phase 2.5 | Pending |
 | FEED-14 | Phase 2.5 | Pending |
+| IMG-01 | Phase 3.1 | Pending |
+| IMG-02 | Phase 3.1 | Pending |
+| IMG-03 | Phase 3.1 | Pending |
 | EXP-01 | Phase 3 | Pending |
 | EXP-02 | Phase 3 | Pending |
 
-**v1 requirements: 17 total — 17 mapped | v2 requirements: 14 feedback/experimentation requirements added for Phase 2.5**
+**v1 requirements: 17 total — 17 mapped | v2 requirements: 14 feedback/experimentation requirements (Phase 2.5) + 3 Figma integration requirements (Phase 3.1)**
 
 ---
 

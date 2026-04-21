@@ -92,6 +92,35 @@ def prepare_for_figma(
     }
 
 
+def png_to_base64(png_path: str | Path) -> str:
+    """
+    Convert a PNG file to base64 data URI for embedding in Figma frames.
+
+    Returns a string with format: "data:image/png;base64,<base64_data>"
+
+    This is used by build_figma_layered_frame_js() to embed the Gemini-generated
+    photo as a raster layer in Figma frames.
+
+    Args:
+        png_path: Path to the PNG file
+
+    Returns:
+        Base64-encoded PNG with data URI prefix
+
+    Raises:
+        FileNotFoundError: If PNG file does not exist
+    """
+    png_path = Path(png_path)
+    if not png_path.exists():
+        raise FileNotFoundError(f"PNG not found: {png_path}")
+
+    with open(png_path, "rb") as f:
+        png_data = f.read()
+
+    b64 = base64.b64encode(png_data).decode()
+    return f"data:image/png;base64,{b64}"
+
+
 def parse_dry_run_filename(filename: str) -> tuple[str | None, str | None]:
     """
     Extract (stg_id_slug, angle) from a dry-run filename like:

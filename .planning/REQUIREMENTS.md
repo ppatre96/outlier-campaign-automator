@@ -32,10 +32,16 @@
 - [x] **DATA-01**: Google Drive upload enabled for generated creatives — `GDRIVE_ENABLED=true`, Shared Drive shared with service account
 - [x] **DATA-02**: Generated PNG files and Drive URLs logged to Sheets after each creative run
 
+### Figma Creative Integration
+
+- [ ] **IMG-01**: `outlier-creative-generator.md` agent instructions updated to use `build_figma_layered_frame_js()` with `photo_base64` input documented
+- [ ] **IMG-02**: Pipeline passes `context["photo_base64"]` to agent without NameError; base64 conversion works for typical image sizes
+- [ ] **IMG-03**: End-to-end test creates 3 Figma frames (A/B/C) with visible photo backgrounds, angle-specific gradients, and editable text layers
+
 ### Campaign Expansion
 
-- [x] **EXP-01**: STEM InMail variants regenerated with financial angle (F/A/C) for campaigns 633412886, 635201096, 634012966
-- [x] **EXP-02**: `classify_tg` extended with any new TG buckets needed for additional cohort types
+- [ ] **EXP-01**: STEM InMail variants regenerated with financial angle (F/A/C) for campaigns 633412886, 635201096, 634012966
+- [ ] **EXP-02**: `classify_tg` extended with any new TG buckets needed for additional cohort types
 
 ## v2 Requirements
 
@@ -63,7 +69,7 @@
 | Midjourney MCP image generation | Gemini via LiteLLM works; Midjourney deferred indefinitely |
 | Direct Snowflake connection | Redash proxy handles auth; adding direct connection adds credential risk |
 | Multi-LinkedIn-account support | Single account (510956407) only; multi-account adds complexity with no near-term need |
-| Figma MCP creative design | `figma_creative.py` exists but is superseded by Gemini image gen pipeline |
+| Figma MCP creative design (v1) | Replaced by Phase 3.1: Figma Creative Replication Integration (editable frames with photo + gradient + text) |
 | Real-time campaign monitoring | Weekly cadence sufficient; real-time adds infra complexity |
 | Web UI / dashboard | Script-based CLI is sufficient; web UI is out of scope |
 
@@ -86,14 +92,18 @@
 | OBS-04 | Phase 2 | Complete |
 | DATA-01 | Phase 2 | Complete |
 | DATA-02 | Phase 2 | Complete |
-| EXP-01 | Phase 3 | Complete |
-| EXP-02 | Phase 3 | Complete |
+| IMG-01 | Phase 3.1 | Pending |
+| IMG-02 | Phase 3.1 | Pending |
+| IMG-03 | Phase 3.1 | Pending |
+| EXP-01 | Phase 3 | Pending |
+| EXP-02 | Phase 3 | Pending |
 
 **Coverage:**
 - v1 requirements: 17 total
-- Mapped to phases: 17
+- v3 requirements: 3 Figma integration requirements
+- Mapped to phases: 20
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-04-21*
-*Last updated: 2026-04-21 after initial definition*
+*Last updated: 2026-04-21 — added Phase 3.1 Figma integration requirements (IMG-01, IMG-02, IMG-03)*

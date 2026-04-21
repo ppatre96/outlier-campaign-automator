@@ -44,7 +44,7 @@ from src.analysis import stage_a, stage_b
 from src.figma_creative import build_copy_variants
 from src.midjourney_creative import generate_midjourney_creative
 from src.gdrive import upload_creative
-from src.figma_upload import prepare_for_figma
+from src.figma_upload import prepare_for_figma, png_to_base64
 
 logging.basicConfig(
     level=logging.INFO,
@@ -329,6 +329,22 @@ def run(
                 tmp_path.unlink(missing_ok=True)
                 size_kb  = out_path.stat().st_size // 1024
                 print(f"     Image saved : {out_path} ({size_kb} KB)")
+
+                # Convert PNG to base64 for Figma frame creation (photo_base64 input)
+                photo_base64 = png_to_base64(out_path)
+                print(f"     Photo B64   : {len(photo_base64)} chars (~{len(photo_base64)//1024}KB encoded)")
+
+                # Prepare context for outlier-creative-generator agent
+                # (contains photo_base64, variants, project_id, tg_category)
+                agent_context = {
+                    "project_id": project_id or flow_id[:16],
+                    "tg_category": tg_label,
+                    "variants": variants,
+                    "photo_base64": photo_base64,
+                }
+                log.info("Agent context prepared: project_id=%s, variants=%d, photo_base64=%d chars",
+                         agent_context["project_id"], len(variants), len(photo_base64))
+
             except Exception as exc:
                 print(f"     Image gen   : FAILED — {exc}")
                 continue
