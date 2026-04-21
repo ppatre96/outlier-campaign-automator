@@ -27,7 +27,10 @@ See: .planning/PROJECT.md (updated 2026-04-21)
 **Phase 2.5 — Feedback Loops & Experimentation**
 Goal: Enable continuous optimization by collecting creative/cohort performance feedback, generating experiment hypotheses, and driving weekly A/B testing.
 
-Status: Phase 2.5 PLANNED — all 4 plans verified and ready for execution
+**Status: Phase 2.5 IN PROGRESS**
+- Plan 02 (Weekly Slack Alert + Reaction Handler) — COMPLETE (02:24 UTC, commit c9fc4dd)
+- Plan 01 (FeedbackAgent) — COMPLETE
+- Plans 03-04 — pending
 
 ## Completed Phases
 
@@ -61,6 +64,7 @@ Status: Phase 2.5 PLANNED — all 4 plans verified and ready for execution
 
 ## Session Notes
 
+- 2026-04-21 (plan 02.5-02): Weekly Slack alert + reaction handler complete. post_weekly_feedback_alert() integrated into scripts/post_weekly_reports.py. SlackReactionHandler class created with parse_cohort_from_message() helper. Config values added (SLACK_REACTION_BOT_USER_ID, SLACK_FEEDBACK_CHANNEL_ID, CPA thresholds, REACTION_EMOJI_MAPPING). FEED-07, FEED-08 complete. Phase 2.5-02 COMPLETE. Commit: c9fc4dd
 - 2026-04-20 (plan 02-04): Lifecycle monitor Slack wiring complete. read_monitor_summary() added to campaign_monitor.py, wired into post_weekly_reports.py as 3rd report section. monitor dry-run verified (exit 0). OBS-04 marked complete. Phase 02 COMPLETE. Progress: [███████░░░] 67%
 - 2026-04-21 (plan 02-02): Drive URL + Sheets write_creative() fix complete. drive_url wired as optional 5th column, GDRIVE_ENABLED guard + try/except, README.md created with Shared Drive admin steps. Requirements DATA-01, DATA-02 marked complete. Progress: [██████░░░░] 58%
 - 2026-04-20 (plan 03): Acceptance test complete. Token refresh verified (new token persisted to .env, API call 200 OK). Dry-run pipeline executed: stages 0-3 tested, PNG files confirmed in data/dry_run_outputs/, main.py --dry-run processed 4 rows without crash. Phase 1 COMPLETE. Progress: [████████████] 100%
