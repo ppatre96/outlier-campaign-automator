@@ -25,7 +25,7 @@
 - [x] **OBS-01**: Slack weekly report posted automatically every Monday 9 AM IST without manual trigger
 - [x] **OBS-02**: `SLACK_WEBHOOK_URL` filled in `.env` OR Slack Bot Token has `chat:write` scope for DM posting
 - [x] **OBS-03**: Static ad weekly report populated when static campaigns are active
-- [ ] **OBS-04**: Campaign lifecycle monitor running — underperforming campaigns flagged in Slack report
+- [x] **OBS-04**: Campaign lifecycle monitor running — underperforming campaigns flagged in Slack report
 
 ### Data & Storage
 
@@ -83,7 +83,7 @@
 | OBS-01 | Phase 2 | Complete |
 | OBS-02 | Phase 2 | Complete |
 | OBS-03 | Phase 2 | Complete |
-| OBS-04 | Phase 2 | Pending |
+| OBS-04 | Phase 2 | Complete |
 | DATA-01 | Phase 2 | Complete |
 | DATA-02 | Phase 2 | Complete |
 | EXP-01 | Phase 3 | Pending |

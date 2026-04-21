@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-04-21T01:59:28.305Z"
+last_updated: "2026-04-21T02:04:04.698Z"
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 12
-  completed_plans: 7
+  completed_plans: 8
 ---
 
 # Project State
@@ -25,11 +25,12 @@ See: .planning/PROJECT.md (updated 2026-04-21)
 **Phase 2 — Observability & Storage**
 Goal: Automated weekly Slack reports, per-creative performance tracking, campaign lifecycle monitor.
 
-Status: Executing Phase 02 (Plan 02-04 is next)
+Status: Phase 02 COMPLETE — all 4 plans executed
 
 ## Completed Phases
 
 - Phase 1 — Pipeline Integrity (COMPLETE)
+- Phase 2 — Observability & Storage (COMPLETE)
 
 ## Known Blockers
 
@@ -50,9 +51,11 @@ Status: Executing Phase 02 (Plan 02-04 is next)
 - [Phase 02]: Bot Token (chat.postMessage) tried first in _post_to_slack(); Incoming Webhook kept as fallback (D-08)
 - [Phase 02]: validate_photo_subject uses regex matching on lowercased input against 7 known generic patterns (D-08)
 - [Phase 02]: drive_url defaults to empty string in write_creative() for backward compatibility; Drive upload wrapped in try/except so LinkedIn creative attach continues even on Drive failure (D-08)
+- [Phase 02]: read_monitor_summary() takes sheets arg (not constructing own SheetsClient) to avoid second auth round-trip in post_weekly_reports.py
 
 ## Session Notes
 
+- 2026-04-20 (plan 02-04): Lifecycle monitor Slack wiring complete. read_monitor_summary() added to campaign_monitor.py, wired into post_weekly_reports.py as 3rd report section. monitor dry-run verified (exit 0). OBS-04 marked complete. Phase 02 COMPLETE. Progress: [███████░░░] 67%
 - 2026-04-21 (plan 02-02): Drive URL + Sheets write_creative() fix complete. drive_url wired as optional 5th column, GDRIVE_ENABLED guard + try/except, README.md created with Shared Drive admin steps. Requirements DATA-01, DATA-02 marked complete. Progress: [██████░░░░] 58%
 - 2026-04-20 (plan 03): Acceptance test complete. Token refresh verified (new token persisted to .env, API call 200 OK). Dry-run pipeline executed: stages 0-3 tested, PNG files confirmed in data/dry_run_outputs/, main.py --dry-run processed 4 rows without crash. Phase 1 COMPLETE. Progress: [████████████] 100%
 - 2026-04-20 (plan 02): Set LINKEDIN_INMAIL_SENDER_URN, verified classify_tg import callable, hardened create_image_ad blocker log. Progress: [███████░░░] 67%
@@ -61,17 +64,14 @@ Status: Executing Phase 02 (Plan 02-04 is next)
 
 ## Last Session
 
-Completed 02-02 Drive Upload + Sheets Logging Fix — 2026-04-21
+Completed 02-04 Lifecycle Monitor Slack Wiring — 2026-04-20
 
-- write_creative() extended with drive_url: str = "" optional 5th column
-- Drive upload block added to main.py with GDRIVE_ENABLED guard + try/except fallback
-- GDRIVE_ENABLED / GDRIVE_FOLDER_ID added to config.py
-- README.md created with full Google Drive Setup (DATA-01) Shared Drive admin steps
-- DATA-01, DATA-02 requirements marked complete
-- Progress: [██████░░░░] 58%
+- read_monitor_summary() added to src/campaign_monitor.py (after write_monitor_results())
+- Monitor section wired into scripts/post_weekly_reports.py as 3rd report block
+- main.py --mode monitor --dry-run verified: exit 0, "No active campaigns to monitor"
+- OBS-04 marked complete
+- Phase 02 COMPLETE. Progress: [███████░░░] 67%
 
 ## Next Step
 
-Proceed to Plan 02-04: Lifecycle monitor Slack wiring
-
-- Plan 02-04: Lifecycle monitor Slack wiring
+Proceed to Phase 03 or Phase 2.5 (Feedback Loops & Experimentation)
