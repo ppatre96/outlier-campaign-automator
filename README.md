@@ -27,3 +27,26 @@ See `WORKFLOW.md` for full pipeline walkthrough and `AGENT-PIPELINE.md` for sub-
 Each bucket also has a matching entry in `TG_PALETTES` and `TG_ILLUS_VARIANTS` (same file) driving Figma illustration selection.
 
 For exact regex patterns, see `src/figma_creative.py::classify_tg`.
+
+## Scripts
+
+### STEM InMail Financial-Angle Regen
+
+Regenerates InMail creatives for the three existing STEM campaigns using angle F (Financial — rate-in-subject-line). Does NOT create new campaigns or campaign groups; attaches new creatives to the existing campaign URNs.
+
+Dry run (no LinkedIn, no Sheets writes):
+```bash
+PYTHONPATH=. python3 scripts/regen_stem_inmail.py --dry-run
+```
+
+Single campaign only:
+```bash
+PYTHONPATH=. python3 scripts/regen_stem_inmail.py --only-id 633412886
+```
+
+Full run (writes to LinkedIn + Sheets):
+```bash
+PYTHONPATH=. python3 scripts/regen_stem_inmail.py
+```
+
+Prereqs: `LINKEDIN_INMAIL_SENDER_URN`, `LINKEDIN_ACCESS_TOKEN`, `LITELLM_API_KEY` must be set in `.env`.
