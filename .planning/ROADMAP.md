@@ -300,8 +300,8 @@ Plans:
 | 1. Pipeline Integrity | 4/4 | Complete | 2026-04-20 |
 | 2. Observability & Storage | 4/4 | Complete   | 2026-04-21 |
 | 2.5. Feedback Loops & Experimentation | 4/4 | Complete    | 2026-04-21 |
-| 3.1. Figma Creative Integration | 0/1 | Planned | — |
-| 3. Campaign Expansion | 0/2 | Pending (blocked on 3.1) |  |
+| 3.1. Figma Creative Integration | 1/1 | Complete | 2026-04-21 |
+| 3. Campaign Expansion | 0/2 | Ready | — |
 
 ---
 
