@@ -43,6 +43,7 @@ from src.campaign_monitor import (
     write_monitor_results,
     read_active_campaigns,
 )
+from src.brand_voice_validator import BrandVoiceValidator
 
 logging.basicConfig(
     level=logging.INFO,
@@ -75,6 +76,9 @@ def run_launch(dry_run: bool = False, flow_id: str | None = None, project_id: st
     li_client = LinkedInClient(li_token)
     urn_res   = UrnResolver(sheets)
     snowflake = RedashClient()
+
+    # Initialize brand voice validator
+    brand_voice_validator = BrandVoiceValidator()
 
     # --flow-id / --project-id: build a synthetic row, skip sheet read
     resolved_config = ""
@@ -249,6 +253,7 @@ def _process_row(
             urn_res=urn_res,
             claude_key=claude_key,
             inmail_sender=inmail_sender,
+            brand_voice_validator=brand_voice_validator,
             dry_run=dry_run,
         )
         return
@@ -388,7 +393,7 @@ def _process_row(
 def _process_inmail_campaigns(
     selected, flow_id, location,
     sheets, li_client, urn_res,
-    claude_key, inmail_sender, dry_run,
+    claude_key, inmail_sender, brand_voice_validator, dry_run,
 ) -> None:
     """
     InMail (Message Ad) path — no creative generation.
@@ -414,6 +419,26 @@ def _process_inmail_campaigns(
             log.info("[dry-run] Subject: %s", v.subject)
             log.info("[dry-run] Body (first 100): %s…", v.body[:100])
             log.info("[dry-run] CTA: %s", v.cta_label)
+
+            # Validate InMail copy against brand voice
+            full_copy = f"{v.subject}\n\n{v.body}"
+            report = brand_voice_validator.validate_copy(full_copy)
+
+            if not report.is_compliant:
+                log.warning(f"InMail angle {angle_label}: {len(report.violations)} brand voice violations")
+                log.warning(f"  Must fix: {len(report.must_violations)}")
+                log.warning(f"  Should fix: {len(report.should_violations)}")
+
+                if report.must_violations:
+                    log.error(f"InMail angle {angle_label} has MUST-FIX violations")
+                    for v_item in report.must_violations[:3]:  # Show first 3
+                        log.error(f"    {v_item.rule_name}: {v_item.found_text!r} → {v_item.suggestion}")
+                else:
+                    log.warning(f"InMail angle {angle_label} has SHOULD-FIX violations (allowed):")
+                    for v_item in report.should_violations[:2]:  # Show first 2
+                        log.warning(f"    {v_item.rule_name}: {v_item.found_text!r}")
+            else:
+                log.info(f"InMail angle {angle_label} passes brand voice check (confidence: {report.confidence_score:.0%})")
         return
 
     group_urn = li_client.create_campaign_group(group_name)
@@ -426,6 +451,27 @@ def _process_inmail_campaigns(
         # Generate InMail copy for this cohort
         variants = build_inmail_variants(tg_cat, cohort, claude_key)
         variant  = variants[angle_idx]
+
+        # Validate InMail copy against brand voice
+        full_copy = f"{variant.subject}\n\n{variant.body}"
+        report = brand_voice_validator.validate_copy(full_copy)
+
+        if not report.is_compliant:
+            log.warning(f"InMail angle {angle_label}: {len(report.violations)} brand voice violations")
+            log.warning(f"  Must fix: {len(report.must_violations)}")
+            log.warning(f"  Should fix: {len(report.should_violations)}")
+
+            if report.must_violations:
+                log.error(f"InMail angle {angle_label} has MUST-FIX violations — blocking submission")
+                for v_item in report.must_violations[:3]:
+                    log.error(f"    {v_item.rule_name}: {v_item.found_text!r} → {v_item.suggestion}")
+                raise RuntimeError(f"Brand voice violation in InMail angle {angle_label}: {report.must_violations[0].rule_name}")
+            else:
+                log.warning(f"InMail angle {angle_label} has SHOULD-FIX violations (allowed):")
+                for v_item in report.should_violations[:2]:
+                    log.warning(f"    {v_item.rule_name}: {v_item.found_text!r}")
+        else:
+            log.info(f"InMail angle {angle_label} passes brand voice check (confidence: {report.confidence_score:.0%})")
 
         facet_urns   = urn_res.resolve_cohort_rules(cohort.rules)
         campaign_urn = li_client.create_inmail_campaign(
@@ -445,6 +491,16 @@ def _process_inmail_campaigns(
             cta_label=variant.cta_label,
         )
         sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
+
+        # Store validation report metadata
+        validation_metadata = {
+            "is_compliant": report.is_compliant,
+            "must_violations": len(report.must_violations),
+            "should_violations": len(report.should_violations),
+            "confidence_score": report.confidence_score,
+        }
+        log.info(f"Creative validation: {json.dumps(validation_metadata)}")
+
         log.info(
             "InMail creative %s — cohort '%s' angle %s subject: %s",
             creative_urn, cohort.name, angle_label, variant.subject,

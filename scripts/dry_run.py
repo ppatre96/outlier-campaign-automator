@@ -45,6 +45,7 @@ from src.figma_creative import build_copy_variants
 from src.midjourney_creative import generate_midjourney_creative
 from src.gdrive import upload_creative
 from src.figma_upload import prepare_for_figma, png_to_base64
+from src.brand_voice_validator import BrandVoiceValidator
 
 logging.basicConfig(
     level=logging.INFO,
@@ -107,6 +108,7 @@ def run(
     project_id: str | None = None,
     config_name: str | None = None,
     skip_creatives: bool = False,
+    skip_brand_voice: bool = False,
 ) -> None:
     if not flow_id and not project_id:
         print("ERROR: Provide either --flow-id or --project-id")
@@ -320,6 +322,26 @@ def run(
             print(f"     Subheadline : {variant.get('subheadline', '')}")
             print(f"     Photo subj  : {photo_subject}")
 
+            # Validate copy against brand voice
+            if not skip_brand_voice:
+                try:
+                    brand_voice_validator = BrandVoiceValidator()
+                    copy_text = f"{variant.get('headline', '')} {variant.get('subheadline', '')}"
+                    if copy_text.strip():
+                        report = brand_voice_validator.validate_copy(copy_text)
+                        status = "✓ COMPLIANT" if report.is_compliant else "✗ VIOLATIONS"
+                        print(f"     Brand voice : {status} (confidence: {report.confidence_score:.0%})")
+                        if report.must_violations:
+                            print(f"       MUST FIX ({len(report.must_violations)}):")
+                            for v_item in report.must_violations[:2]:
+                                print(f"         - {v_item.rule_name}")
+                        if report.should_violations:
+                            print(f"       SHOULD FIX ({len(report.should_violations)}):")
+                            for v_item in report.should_violations[:2]:
+                                print(f"         - {v_item.rule_name}")
+                except Exception as e:
+                    print(f"     Brand voice : SKIP (validator error: {e})")
+
             # Generate image
             try:
                 tmp_path = generate_midjourney_creative(variant=variant, photo_subject=photo_subject)
@@ -389,6 +411,8 @@ if __name__ == "__main__":
     parser.add_argument("--config-name", default=None, help="Override screening config name")
     parser.add_argument("--skip-creatives", action="store_true",
                         help="Stop after Stage 7 — skip image generation and Drive upload")
+    parser.add_argument("--skip-brand-voice", action="store_true",
+                        help="Skip brand voice validation (testing only)")
     args = parser.parse_args()
 
     run(
@@ -396,4 +420,5 @@ if __name__ == "__main__":
         project_id=args.project_id,
         config_name=args.config_name,
         skip_creatives=args.skip_creatives,
+        skip_brand_voice=args.skip_brand_voice,
     )
