@@ -16,6 +16,21 @@ import config
 
 log = logging.getLogger(__name__)
 
+# ── Context notes ──────────────────────────────────────────────────────────────
+#
+# GEO RESTRICTIONS: Campaigns may not run in all geos due to client-imposed
+# restrictions, not just our own targeting choices. Low volume or missing geos
+# should not be interpreted as a TG signal — always check whether a geo
+# restriction is in place before drawing conclusions about TG performance.
+#
+# TG EARNINGS BASELINE: Lower conversion rates for high-skill TGs (e.g. PhD-
+# level STEM, Math specialists) do not automatically indicate weak targeting.
+# These professionals typically have higher average earnings and fewer financial
+# pain points, making them harder to convert via financial hooks alone. When
+# comparing pass rates or CPAs across TGs (e.g. Math vs. Languages), normalise
+# for earnings baseline before concluding that a TG is underperforming.
+# ──────────────────────────────────────────────────────────────────────────────
+
 # Relative threshold: a campaign is flagged if its pass_rate is below
 # (cohort_avg * (1 - UNDERPERFORM_THRESHOLD))
 UNDERPERFORM_THRESHOLD = config.CAMPAIGN_UNDERPERFORM_THRESHOLD
@@ -240,6 +255,68 @@ def write_monitor_results(sheets, results: list[dict]) -> None:
         ], value_input_option="RAW")
 
     log.info("Wrote %d monitor rows to Monitor tab", len(results))
+
+
+def read_monitor_summary(sheets, max_rows: int = 20) -> str:
+    """
+    Read the most recent rows from the 'Monitor' tab and return a
+    Slack-ready summary string.
+
+    Returns an empty string if the Monitor tab does not exist or has no data
+    rows (i.e. monitor has never been run).
+
+    Args:
+        sheets:   SheetsClient instance (already authenticated).
+        max_rows: Maximum number of recent rows to include in the summary.
+                  Defaults to 20 (covers up to 20 campaigns per monitor run).
+
+    Returns:
+        Formatted text block, e.g.:
+            Campaign Monitor (2026-04-21):
+              KEEP  : skills__diagnosis__healthcare (progress 34.2%, avg 28.1%)
+              PAUSE : skills__engineering__electrical (progress 18.5%, avg 28.1%)
+            1 campaign flagged for review.
+        Or empty string if no data is available.
+    """
+    try:
+        ws = sheets._triggers.worksheet("Monitor")
+    except Exception:
+        log.info("Monitor tab not found — skipping monitor summary")
+        return ""
+
+    rows = ws.get_all_values()
+    if len(rows) < 2:
+        log.info("Monitor tab has no data rows")
+        return ""
+
+    # Header: Date, STG ID, Campaign ID, Flow ID, Pass Rate %, Cohort Avg %, Verdict
+    data_rows = rows[1:]  # skip header
+    # Take the most recent max_rows
+    recent = data_rows[-max_rows:]
+
+    # Group by date — use the date of the last row as the report date
+    report_date = recent[-1][0] if recent else "unknown"
+
+    lines = [f"*Campaign Monitor ({report_date}):*"]
+    pause_count = 0
+    for row in recent:
+        if len(row) < 7:
+            continue
+        _date, stg_id, campaign_id, flow_id, pass_rate, cohort_avg, verdict = row[:7]
+        label = stg_id or campaign_id or flow_id or "unknown"
+        lines.append(
+            f"  {verdict:<10}: {label} "
+            f"(progress {pass_rate}%, avg {cohort_avg}%)"
+        )
+        if verdict.upper() == "PAUSE":
+            pause_count += 1
+
+    if pause_count:
+        lines.append(f"{pause_count} campaign(s) flagged for review — check Monitor tab.")
+    else:
+        lines.append("All monitored campaigns within progress thresholds.")
+
+    return "\n".join(lines)
 
 
 # ── Parse active campaigns from sheet ─────────────────────────────────────────
