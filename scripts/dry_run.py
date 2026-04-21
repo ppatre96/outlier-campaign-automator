@@ -294,6 +294,17 @@ def run(
                 print(f"     Copy gen    : returned 0 variants — skipping creative")
                 continue
 
+            # ── LLM context quality log ───────────────────────────────────────────────
+            # Logs model identity, token usage, and per-angle photo_subject so that
+            # generic subjects can be spotted in dry-run output before Gemini is called.
+            import config as _cfg
+            print(f"     LiteLLM model : {_cfg.LITELLM_MODEL}")
+            for vi, v in enumerate(variants):
+                angle_name = v.get("angle", ["A", "B", "C"][vi % 3])
+                ps = v.get("photo_subject", "")
+                token_hint = v.get("token_count", "n/a")   # present only if added by build_copy_variants
+                print(f"     Variant {angle_name}      : photo_subject = '{ps}'  (tokens={token_hint})")
+
             # TG label is derived by the LLM from the signals — no pre-defined buckets
             tg_label = variants[0].get("tg_label") or cohort.name.replace("__", " ").replace("_", " ")
             print(f"     TG (derived): {tg_label}")
