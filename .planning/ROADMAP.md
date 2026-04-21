@@ -11,7 +11,7 @@
 
 - [x] **Phase 1: Pipeline Integrity** — Fix all silent skips and hard blockers so a full dry run completes end-to-end
 - [x] **Phase 2: Observability & Storage** — Close the reporting loop with Slack delivery, Drive persistence, and lifecycle monitoring (completed 2026-04-21)
-- [ ] **Phase 2.5: Feedback Loops & Experimentation** — Add feedback agents to analyze creative/cohort performance, generate experiment hypotheses, and drive weekly optimization cycles
+- [x] **Phase 2.5: Feedback Loops & Experimentation** — Add feedback agents to analyze creative/cohort performance, generate experiment hypotheses, and drive weekly optimization cycles (completed 2026-04-21)
 - [ ] **Phase 3: Campaign Expansion** — Regenerate STEM InMails with the winning financial angle and extend targeting buckets
 
 ---
@@ -251,7 +251,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Pipeline Integrity | 4/4 | Complete | 2026-04-20 |
 | 2. Observability & Storage | 4/4 | Complete   | 2026-04-21 |
-| 2.5. Feedback Loops & Experimentation | 4/4 | Planned | 2026-04-21 |
+| 2.5. Feedback Loops & Experimentation | 4/4 | Complete   | 2026-04-21 |
 | 3. Campaign Expansion | 0/? | Not started | - |
 
 ---
