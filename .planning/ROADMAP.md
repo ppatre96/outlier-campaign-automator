@@ -9,8 +9,9 @@
 
 ## Phases
 
-- [ ] **Phase 1: Pipeline Integrity** — Fix all silent skips and hard blockers so a full dry run completes end-to-end
+- [x] **Phase 1: Pipeline Integrity** — Fix all silent skips and hard blockers so a full dry run completes end-to-end
 - [ ] **Phase 2: Observability & Storage** — Close the reporting loop with Slack delivery, Drive persistence, and lifecycle monitoring
+- [ ] **Phase 2.5: Feedback Loops & Experimentation** — Add feedback agents to analyze creative/cohort performance, generate experiment hypotheses, and drive weekly optimization cycles
 - [ ] **Phase 3: Campaign Expansion** — Regenerate STEM InMails with the winning financial angle and extend targeting buckets
 
 ---
@@ -159,13 +160,60 @@ Plans:
 
 ---
 
+### Phase 2.5: Feedback Loops & Experimentation
+
+**Goal**: Enable continuous optimization by collecting creative and cohort performance feedback, generating experiment hypotheses, and feeding results back into future creative generation and cohort analysis.
+
+**Why here**: Feedback loops require Phase 2's observability infrastructure (Slack reports, Drive storage, campaign monitoring) to provide the performance data. Once we can measure what works, we can systematically test hypotheses and improve. This enables Phase 3 (Campaign Expansion) to expand based on data-driven insights rather than guesswork.
+
+**Depends on**: Phase 1, Phase 2
+
+**Requirements**: FEED-01, FEED-02, FEED-03, FEED-04, FEED-05, FEED-06, FEED-07, FEED-08, FEED-09, FEED-10, FEED-11, FEED-12, FEED-13, FEED-14
+
+**Two New Agents**:
+
+1. **feedback_agent** — Analyzes creative and cohort performance
+   - Creative scope: Identifies best/worst performing headline/subheadline/photo_subject per cohort. Generates hypotheses on why.
+   - Cohort scope: Identifies underperforming cohorts (CPA > baseline, CTR trending down). Posts weekly Slack alert with recommendations.
+
+2. **experiment_scientist_agent** — Designs and tracks experiments
+   - Ingests feedback_agent output + competitor_bot insights + new screening data
+   - Maintains experiment backlog (priority queue of hypotheses)
+   - Communicates test directives to ad-creative-brief-generator
+   - Tracks results for next week's feedback loop
+
+**Weekly Cycle**:
+1. feedback_agent analyzes creative & cohort performance → generates hypotheses
+2. experiment_scientist_agent accumulates insights → decides what to test
+3. Per-run: ad-creative-brief-generator checks backlog → 20% test variants, 80% baseline
+4. User reviews weekly Slack alert → pauses underperforming cohorts or requests tests
+5. outlier_data_analyst reruns on fresh screening data → discovers new cohorts
+
+**Success Criteria** (what must be TRUE):
+1. feedback_agent runs weekly, identifies underperforming cohorts (CPA > 2σ or CTR ↓ trend)
+2. experiment_scientist_agent receives feedback + competitor data, maintains experiment backlog
+3. ad-creative-brief-generator receives test directive and uses test variant 20% of the time
+4. Weekly Slack alert posts with top 3 underperforming cohorts + recommendation
+5. User can react to Slack alert to pause cohort or request new angle test
+6. outlier_data_analyst reruns Stage A on fresh data, discovers new cohorts
+7. New cohort definitions fed back to campaign-manager for next run
+
+**Blockers / external dependencies**:
+- Phase 2 must be complete first (Slack reporting, lifecycle monitoring)
+- Redash queries must be accurate for creative + cohort performance analysis
+- Memory system must persist experiment backlog across restarts
+
+**Plans**: TBD
+
+---
+
 ### Phase 3: Campaign Expansion
 
 **Goal**: STEM InMail campaigns regenerate with the proven financial angle and the targeting classifier is reviewed for new cohort types, so the pipeline can address audiences discovered in ongoing screening data.
 
-**Why here**: Expansion makes no sense until the pipeline runs reliably (Phase 1) and its output is observable (Phase 2). STEM regen specifically requires the InMail pipeline to be unblocked end-to-end, which Phase 1 delivers. New TG buckets are low-risk once the classifier is known-good.
+**Why here**: Expansion makes no sense until the pipeline runs reliably (Phase 1), its output is observable (Phase 2), and we have feedback loops to guide expansion decisions (Phase 2.5). STEM regen specifically requires the InMail pipeline to be unblocked end-to-end, which Phase 1 delivers. New TG buckets are low-risk once the classifier is known-good and we have data on what works.
 
-**Depends on**: Phase 1, Phase 2
+**Depends on**: Phase 1, Phase 2, Phase 2.5
 
 **Requirements**: EXP-01, EXP-02
 
@@ -203,6 +251,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Pipeline Integrity | 4/4 | Complete | 2026-04-20 |
 | 2. Observability & Storage | 0/4 | Planned | - |
+| 2.5. Feedback Loops & Experimentation | 0/? | Planned | - |
 | 3. Campaign Expansion | 0/? | Not started | - |
 
 ---
@@ -226,10 +275,24 @@ Plans:
 | OBS-04 | Phase 2 | Pending |
 | DATA-01 | Phase 2 | Pending |
 | DATA-02 | Phase 2 | Pending |
+| FEED-01 | Phase 2.5 | Pending |
+| FEED-02 | Phase 2.5 | Pending |
+| FEED-03 | Phase 2.5 | Pending |
+| FEED-04 | Phase 2.5 | Pending |
+| FEED-05 | Phase 2.5 | Pending |
+| FEED-06 | Phase 2.5 | Pending |
+| FEED-07 | Phase 2.5 | Pending |
+| FEED-08 | Phase 2.5 | Pending |
+| FEED-09 | Phase 2.5 | Pending |
+| FEED-10 | Phase 2.5 | Pending |
+| FEED-11 | Phase 2.5 | Pending |
+| FEED-12 | Phase 2.5 | Pending |
+| FEED-13 | Phase 2.5 | Pending |
+| FEED-14 | Phase 2.5 | Pending |
 | EXP-01 | Phase 3 | Pending |
 | EXP-02 | Phase 3 | Pending |
 
-**v1 requirements: 17 total — 17 mapped — 0 unmapped**
+**v1 requirements: 17 total — 17 mapped | v2 requirements: 14 feedback/experimentation requirements added for Phase 2.5**
 
 ---
 
