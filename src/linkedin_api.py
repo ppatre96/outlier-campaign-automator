@@ -422,17 +422,48 @@ class LinkedInClient:
 
 def _build_targeting_criteria(facet_urns: dict[str, list[str]]) -> dict:
     """
-    Convert { facetUrn: [urn, ...] } to a LinkedIn targetingCriteria object.
-    The campaign API (adCampaigns) expects short keys (e.g. "degrees"),
-    not full facet URNs (e.g. "urn:li:adTargetingFacet:degrees").
+    Convert { facetKey: [urn, ...] } to a LinkedIn targetingCriteria object.
+    The campaign API (adCampaigns) requires full URN keys
+    (e.g. "urn:li:adTargetingFacet:degrees"), NOT short keys ("degrees").
+    Account-level defaults inject interfaceLocales as a full URN key;
+    mixing short + full URN keys in the same targeting causes a 400 INVALID_VALUE.
     All facets are ANDed together; values within each facet are ORed.
+
+    LinkedIn also requires at least one location facet (profileLocations, locations,
+    or ipLocations). If none is present, we add a worldwide fallback.
     """
-    urn_to_short = {v: k for k, v in _FACET_SHORT_TO_URN.items()}
+    _LOCATION_FACETS = {
+        "urn:li:adTargetingFacet:profileLocations",
+        "urn:li:adTargetingFacet:locations",
+        "urn:li:adTargetingFacet:ipLocations",
+        "profileLocations",
+        "locations",
+        "ipLocations",
+    }
+    # Worldwide geo URN — confirmed working 2026-04-21
+    _WORLDWIDE_URN = "urn:li:geo:90009492"
+
     include = []
+    has_location = False
+
     for facet, urns in facet_urns.items():
-        if urns:
-            short_key = urn_to_short.get(facet, facet)
-            include.append({"or": {short_key: urns}})
+        if not urns:
+            continue
+        # Normalize to full URN key
+        full_key = _FACET_SHORT_TO_URN.get(facet, facet)
+        include.append({"or": {full_key: urns}})
+        if facet in _LOCATION_FACETS or full_key in _LOCATION_FACETS:
+            has_location = True
+
+    # LinkedIn requires a location facet — add worldwide if not present
+    if not has_location:
+        include.append({
+            "or": {
+                "urn:li:adTargetingFacet:profileLocations": [_WORLDWIDE_URN],
+            }
+        })
+        log.debug("No location facet in targeting — added worldwide fallback")
+
     return {"include": {"and": include}}
 
 
