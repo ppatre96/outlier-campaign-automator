@@ -101,19 +101,36 @@ def _build_imagen_prompt(photo_subject: str, angle: str) -> str:
     """
     Build Gemini image prompt matching Outlier Static Ads v2 aesthetic.
 
-    Uses the photo generation section of the template with composition constraints
-    baked into the natural language prompt (not as explicit structural requirements
-    that confuse the image model).
+    Returns the full GEMINI_PROMPT_TEMPLATE with preamble that makes clear to Gemini
+    that composition requirements are layout specifications, not content to render.
 
     Args:
         photo_subject: Specific description of the subject (gender, ethnicity, profession, activity)
         angle: Copy variant angle ("A", "B", or "C") — determines expression in the prompt
 
     Returns:
-        Gemini image generation prompt string
+        Gemini image generation prompt string with full template structure
     """
     expression = _ANGLE_EXPRESSIONS.get(angle, _ANGLE_EXPRESSIONS["A"])
-    return _GEMINI_PHOTO_PROMPT.format(photo_subject=photo_subject, expression=expression)
+
+    # Preamble: clarify to Gemini that the following is layout specification
+    preamble = (
+        "COMPOSITION SPECIFICATION (Layout guidance — do NOT render this text as content):\n\n"
+    )
+
+    # Format the full template with actual values
+    formatted_template = GEMINI_PROMPT_TEMPLATE.format(
+        photo_subject=photo_subject,
+        expression=expression,
+    )
+
+    # Append reference image instruction
+    reference_note = (
+        f"\n\nREFERENCE IMAGE for composition style: {_REFERENCE_IMAGE_URL}\n"
+        "(This is a style reference only — generate a new, original photo with the subject specified above)"
+    )
+
+    return preamble + formatted_template + reference_note
 
 
 # ── Reference image handling ────────────────────────────────────────────────
