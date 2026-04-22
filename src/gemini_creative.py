@@ -61,69 +61,98 @@ _ANGLE_EXPRESSIONS = {
     "C": "genuine relaxed smile, looking directly at camera",
 }
 
-# Style suffix: authentic UGC/film aesthetic — NOT corporate stock photo
-_IMAGEN_STYLE_SUFFIX = (
-    "shot on film, 85mm prime lens, shallow depth of field, "
-    "warm natural window light, analog color grade, "
-    "authentic lifestyle photo, NOT stock photo, NOT corporate headshot, NOT AI generated"
+# ── Gemini prompt template ────────────────────────────────────────────────────────
+# Full spec document (used by outlier-creative-generator agent for context + design reference)
+GEMINI_PROMPT_TEMPLATE = """\
+IMAGE COMPOSITION REQUIREMENTS (CRITICAL — TEXT PLACEMENT):
+- Top 25%: COMPLETELY CLEAR (no face, no subject) — headline text ONLY
+- Middle 50%: Subject centered, empty left/right sides — subheadline text beside subject
+- Bottom 20%: Logo + earnings text zone (subject ends at shoulders)
+- TEXT MUST NOT APPEAR ON SUBJECT'S FACE OR BODY AT ALL
+
+PHOTO GENERATION PROMPT:
+A close-up environmental portrait of a {photo_subject}, positioned with at least 25% \
+clear space ABOVE the head (no subject face visible in top quarter). Face centered \
+vertically with breathing room. Body and torso clearly visible below shoulders. Subject \
+occupies center frame with EMPTY SPACE on sides — text will overlay beside/below subject, \
+NOT on them. Lush plant-filled home interior: bookshelves, potted plants, wall art, \
+warm natural window light. 85mm prime lens, shallow depth of field. {expression}. \
+Shot on film, analog color grade, authentic lifestyle photo. NOT stock photo. NOT corporate headshot.\
+"""
+
+# Just the photo generation section (the string sent to Gemini)
+# Extracted from GEMINI_PROMPT_TEMPLATE, with exact composition constraints
+_GEMINI_PHOTO_PROMPT = (
+    "A close-up environmental portrait of a {photo_subject}, positioned with at least 25% "
+    "clear space ABOVE the head (no subject face visible in top quarter). Face centered "
+    "vertically with breathing room. Body and torso clearly visible below shoulders. Subject "
+    "occupies center frame with EMPTY SPACE on sides — text will overlay beside/below subject, "
+    "NOT on them. Lush plant-filled home interior: bookshelves, potted plants, wall art, "
+    "warm natural window light. 85mm prime lens, shallow depth of field. {expression}. "
+    "Shot on film, analog color grade, authentic lifestyle photo. NOT stock photo. NOT corporate headshot."
 )
 
-# ── Imagen prompt template ────────────────────────────────────────────────────
-# GROUND TRUTH from Outlier Static Ads v2 reference images (7 ads analyzed):
-#
-# Photo style: CLOSE-UP PORTRAIT. Subject's face and upper body fill 60-70%
-# of the frame. This is NOT a wide/medium shot — it's a tight environmental
-# portrait where the person is the dominant element.
-#
-# Background: PLANT-DENSE home interior visible around and behind subject
-# (bookshelves, wall art, potted plants, warm décor). This is Outlier's brand
-# signature — every single reference ad has this.
-#
-# Text overlaps face area by design — the left-side gradient provides contrast.
-# Do NOT try to push the face lower or shoot from far away.
-#
-# photo_subject format: "[gender] [ethnicity] [profession], [activity]"
-# e.g. "male South Asian software developer, working at a laptop"
-# SHORT — the template adds all room/light/style context.
+# Reference image URL for composition guidance (Finance-Branded-BankerMale from Figma)
+# Used by Gemini to match the exact composition layout: top 25% clear, subject centered, bottom 20% earnings zone
+_REFERENCE_IMAGE_URL = "https://www.figma.com/api/mcp/asset/8b38a2e1-f303-4cc4-abd4-455cb8ccaab5"
 
 
 def _build_imagen_prompt(photo_subject: str, angle: str) -> str:
     """
     Build Gemini image prompt matching Outlier Static Ads v2 aesthetic.
 
-    CRITICAL COMPOSITION RULES FOR TEXT OVERLAY:
-    - Top 25%: COMPLETELY CLEAR (no face, no subject) — headline text ONLY
-    - Middle 50%: Subject centered, empty left/right sides — subheadline beside subject
-    - Bottom 20%: Logo + earnings text zone (subject ends at shoulders)
-    - **TEXT MUST NOT APPEAR ON SUBJECT'S FACE OR BODY AT ALL**
+    Returns the full GEMINI_PROMPT_TEMPLATE structure:
+    - Composition requirements (critical for text overlay safety)
+    - Formatted photo generation prompt with subject + expression
+    - Reference image instruction (matches Finance-Branded layout)
 
-    Design Specifications:
-    - Font: Inter Bold (headlines), Inter Regular (subheadlines)
-    - Logo: /Users/pranavpatre/Downloads/outlier logo.svg (120px width, bottom-right)
-    - Gradients by angle:
-      - A: Pink (#FFB6C1) + Teal (#ADD8E6)
-      - B: Orange (#FFC97A) + Teal (#ADD8E6)
-      - C: Pink (#FFB6C1) + Green (#B4E6C8)
+    Args:
+        photo_subject: Specific description of the subject (gender, ethnicity, profession, activity)
+        angle: Copy variant angle ("A", "B", or "C") — determines expression in the prompt
 
-    photo_subject format: "[gender] [ethnicity] [profession], [activity]"
-    e.g. "male South Asian software developer, working at a laptop"
+    Returns:
+        Gemini image generation prompt string with full template structure
     """
     expression = _ANGLE_EXPRESSIONS.get(angle, _ANGLE_EXPRESSIONS["A"])
-    return (
-        f"a close-up environmental portrait of a {photo_subject}, "
-        "positioned with at least 25% clear space ABOVE the head (no face in top quarter — headline zone). "
-        "Face centered vertically with breathing room. Body and torso clearly visible below shoulders (earnings zone). "
-        "Subject occupies center of frame with EMPTY SPACE on left and right sides — text will overlay beside/below subject, NOT on them. "
-        "Lush plant-filled home interior: bookshelves, potted plants, wall art, warm natural window light. "
-        f"85mm prime lens, shallow depth of field, {expression}. "
-        "Shot on film, analog color grade, authentic lifestyle photo. NOT stock photo. NOT corporate headshot. "
-        f"{_IMAGEN_STYLE_SUFFIX}"
+
+    # Format the full template with actual values
+    prompt = GEMINI_PROMPT_TEMPLATE.format(
+        photo_subject=photo_subject,
+        expression=expression,
     )
+
+    # Append reference image instruction to guide composition
+    prompt += f"\n\nREFERENCE IMAGE: Use this as a style guide for composition and layout:\n{_REFERENCE_IMAGE_URL}"
+
+    return prompt
+
+
+# ── Reference image handling ────────────────────────────────────────────────
+
+def _fetch_and_encode_image(image_url: str) -> str:
+    """
+    Fetch an image from a URL and encode it as base64.
+
+    Args:
+        image_url: HTTP(S) URL to the image
+
+    Returns:
+        Base64-encoded image data string (without data: URI prefix)
+
+    Raises:
+        RuntimeError: If image fetch or encoding fails
+    """
+    try:
+        resp = requests.get(image_url, timeout=30)
+        resp.raise_for_status()
+        return base64.b64encode(resp.content).decode("utf-8")
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch/encode reference image from {image_url}: {e}")
 
 
 # ── Gemini Imagen API call (via LiteLLM proxy) ────────────────────────────────
 
-def _generate_imagen(prompt: str, gemini_api_key: str = "") -> Image.Image:
+def _generate_imagen(prompt: str, gemini_api_key: str = "", reference_image_url: str = "") -> Image.Image:
     """
     Generate an image via the Scale LiteLLM proxy using Gemini image models.
 
@@ -133,6 +162,11 @@ def _generate_imagen(prompt: str, gemini_api_key: str = "") -> Image.Image:
     gemini/imagen-4.0-fast-generate-001, gemini/gemini-3.1-flash-image-preview.
 
     Falls back to the direct Google API (GEMINI_API_KEY) if LiteLLM is unavailable.
+
+    Args:
+        prompt: The image generation prompt (may include reference image instruction)
+        gemini_api_key: Optional override for Gemini API key (falls back to config)
+        reference_image_url: Optional URL to a reference image for style guidance
     """
     # ── Primary: LiteLLM proxy ────────────────────────────────────────────────
     if config.LITELLM_API_KEY:
@@ -163,21 +197,42 @@ def _generate_imagen(prompt: str, gemini_api_key: str = "") -> Image.Image:
         "https://generativelanguage.googleapis.com/v1beta/models"
         f"/gemini-2.5-flash-image:generateContent?key={api_key}"
     )
+
+    # Build request parts: text prompt + optional reference image
+    parts = [{"text": prompt}]
+    if reference_image_url:
+        try:
+            log.info("Fetching reference image from %s", reference_image_url[:60])
+            b64_data = _fetch_and_encode_image(reference_image_url)
+            # Determine MIME type from URL or default to PNG
+            mime_type = "image/png"
+            if ".jpg" in reference_image_url.lower() or ".jpeg" in reference_image_url.lower():
+                mime_type = "image/jpeg"
+            parts.append({
+                "inline_data": {
+                    "mime_type": mime_type,
+                    "data": b64_data,
+                }
+            })
+            log.info("Reference image attached (mime_type=%s)", mime_type)
+        except RuntimeError as e:
+            log.warning("Failed to attach reference image: %s", e)
+
     payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
+        "contents": [{"parts": parts}],
         "generationConfig": {"responseModalities": ["IMAGE", "TEXT"]},
     }
     resp = requests.post(url, json=payload, timeout=120)
     if resp.status_code != 200:
         raise RuntimeError(f"Gemini direct API error {resp.status_code}: {resp.text[:400]}")
 
-    parts = (
+    parts_resp = (
         resp.json()
         .get("candidates", [{}])[0]
         .get("content", {})
         .get("parts", [])
     )
-    for part in parts:
+    for part in parts_resp:
         if "inlineData" in part:
             return Image.open(BytesIO(base64.b64decode(part["inlineData"]["data"]))).convert("RGBA")
 
@@ -465,7 +520,7 @@ def validate_photo_subject(photo_subject: str) -> None:
     profession, attire, setting, and optionally geography. Generic descriptions
     cause Gemini to generate stock-photo-style images unrelated to the audience.
 
-    Called by generate_midjourney_creative() before the Gemini API call.
+    Called by generate_imagen_creative() before the Gemini API call.
 
     Args:
         photo_subject: The subject description produced by build_copy_variants().
@@ -496,7 +551,7 @@ def validate_photo_subject(photo_subject: str) -> None:
 
 # ── Public entry point ────────────────────────────────────────────────────────
 
-def generate_midjourney_creative(
+def generate_imagen_creative(
     variant: dict,
     photo_subject: str | None = None,
     gemini_api_key: str | None = None,
@@ -536,7 +591,11 @@ def generate_midjourney_creative(
     log.info("Gemini call — angle=%s photo_subject=%r", angle, subject[:80])
     log.info("Imagen prompt (first 200 chars): %s", prompt[:200])
 
-    bg_image = _generate_imagen(prompt, gemini_api_key or config.GEMINI_API_KEY)
+    bg_image = _generate_imagen(
+        prompt,
+        gemini_api_key or config.GEMINI_API_KEY,
+        reference_image_url=_REFERENCE_IMAGE_URL,
+    )
     log.info("Imagen photo received (%dx%d)", bg_image.width, bg_image.height)
 
     earnings_match = re.search(
