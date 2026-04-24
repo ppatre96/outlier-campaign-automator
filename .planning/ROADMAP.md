@@ -11,7 +11,7 @@
 
 - [x] **Phase 1: Pipeline Integrity** — Fix all silent skips and hard blockers so a full dry run completes end-to-end
 - [x] **Phase 2: Observability & Storage** — Close the reporting loop with Slack delivery, Drive persistence, and lifecycle monitoring (completed 2026-04-21)
-- [x] **Phase 2.5: Feedback Loops & Experimentation** — Add feedback agents to analyze creative/cohort performance, generate experiment hypotheses, and drive weekly optimization cycles (completed 2026-04-21)
+- [~] **Phase 2.5: Feedback Loops & Experimentation** — v1 shipped 2026-04-21 (creative/cohort CTR+CPA + experiment backlog + Slack reaction reanalysis). V2 re-opened 2026-04-24 to extend with full-funnel conversion (signup → screening pass → activation), social + support sentiment mining, automatic weekly ICP drift detection, and cron-scheduled orchestration.
 - [ ] **Phase 3.1: Figma Creative Replication Integration** — Integrate completed Figma layer builder into agent pipeline; pass photo_base64 and create editable frames
 - [ ] **Phase 3: Campaign Expansion** — Regenerate STEM InMails with the winning financial angle and extend targeting buckets
 
@@ -169,7 +169,9 @@ Plans:
 
 **Depends on**: Phase 1, Phase 2
 
-**Requirements**: FEED-01, FEED-02, FEED-03, FEED-04, FEED-05, FEED-06, FEED-07, FEED-08, FEED-09, FEED-10, FEED-11, FEED-12, FEED-13, FEED-14
+**Requirements (v1 — shipped 2026-04-21)**: FEED-01, FEED-02, FEED-03, FEED-04, FEED-05, FEED-06, FEED-07, FEED-08, FEED-09, FEED-10, FEED-11, FEED-12, FEED-13, FEED-14
+
+**Requirements (V2 — re-opened 2026-04-24)**: FEED-15, FEED-16, FEED-17, FEED-18, FEED-19, FEED-20, FEED-21, FEED-22, FEED-23
 
 **Two New Agents**:
 
@@ -204,7 +206,61 @@ Plans:
 - Redash queries must be accurate for creative + cohort performance analysis
 - Memory system must persist experiment backlog across restarts
 
-**Plans**: TBD
+**Plans (v1)**: 02.5-01 (feedback_agent core), 02.5-02 (Slack alerts + reactions), 02.5-03 (experiment_scientist_agent + backlog), 02.5-04 (reanalysis loop) — all shipped.
+
+---
+
+### Phase 2.5 V2 Extension (2026-04-24)
+
+**Goal**: Close the optimization loop end-to-end by (a) extending feedback to full-funnel conversion, (b) ingesting contributor sentiment from public + internal channels, (c) detecting ICP drift automatically week-over-week, and (d) running the whole loop on a weekly cron without manual trigger.
+
+**Why here**: v1 tells us which creatives get clicks but not which creatives produce paying contributors. Without full-funnel data, every "winner" is a hypothesis. Sentiment mining surfaces the pain points that copy should address (or avoid), and ICP drift detection catches audience shift before CPA degrades rather than after.
+
+**V2 Plans**:
+
+1. **Plan 05 — Full-funnel conversion tracking**
+   - Extend `feedback_agent` (or wire `campaign_feedback_agent`) to decompose creative × cohort into four funnel stages: click → signup → screening-pass → activation
+   - Identify the stage where each underperforming cohort loses contributors (top-of-funnel vs conversion vs retention)
+   - Inject funnel-drop diagnosis into weekly Slack alert
+
+2. **Plan 06 — Sentiment miner**
+   - New `src/sentiment_miner.py` that scrapes Reddit (r/Outlier_AI, r/BeerMoney, r/WorkOnline), Trustpilot, Glassdoor, Apple/Play Store reviews, Outlier Discourse forum weekly
+   - Ingests internal Zendesk/Intercom tickets (auth-gated) for current-contributor issues
+   - Uses LLM to extract issue themes and produces `data/sentiment_callouts.json` feeding `ad-creative-brief-generator` with validated "address X" / "avoid Y" copy directives
+
+3. **Plan 07 — Automatic ICP drift detector**
+   - New `src/icp_drift_monitor.py` snapshots Stage 1 ICP output weekly
+   - Computes week-over-week feature distribution diff (KL divergence or chi-square on categorical bins) → drift score
+   - Auto-triggers `outlier-data-analyst` reanalysis when drift > configurable threshold — no Slack reaction needed
+
+4. **Plan 08 — Weekly cron orchestrator**
+   - `scripts/weekly_feedback_loop.py` wires plans 05/06/07 + existing 02.5 `feedback_agent` + `reanalysis_loop` into a single ordered run
+   - Crontab entry: `30 3 * * 1` (Monday 9 AM IST) with idempotency guard (skip if a run succeeded within last 6 days)
+   - Consolidated Slack report covers funnel drops, sentiment themes, ICP drift alerts
+
+**Success Criteria (V2)**:
+1. Weekly Slack report breaks down every cohort by click → signup → screening → activation rates
+2. Underperformer alerts name the exact funnel stage where drop occurs
+3. `data/sentiment_callouts.json` refreshed weekly with at least 3 scored issue themes per active TG
+4. `ad-creative-brief-generator` reads `sentiment_callouts.json` and honors at least one "address" / "avoid" directive in test briefs
+5. ICP drift scored weekly; drift > threshold triggers `outlier-data-analyst` rerun without user intervention; new cohorts reach `campaign-manager` within the same weekly cycle
+6. Full pipeline runs from cron on Monday 9 AM IST unattended; logs + artifacts persist on failure
+
+**Blockers / external dependencies (V2)**:
+- Reddit read access (no auth needed for public subs, rate-limit aware)
+- Trustpilot scrape path or API — Firecrawl acceptable
+- Zendesk/Intercom credentials in `.env` (scope: read tickets)
+- Outlier Discourse API token (if available) or scrape-friendly access
+- Server/container with reliable cron (macOS laptop cron is unreliable; document host choice)
+- LLM budget for sentiment classification (LiteLLM gateway OK)
+
+**V2 Plans**: 4 plans
+
+Plans:
+- [ ] 02.5-05-PLAN.md — Full-funnel conversion tracking (FEED-15, FEED-16)
+- [ ] 02.5-06-PLAN.md — Sentiment miner (FEED-17, FEED-18, FEED-19)
+- [ ] 02.5-07-PLAN.md — Automatic ICP drift detector (FEED-20, FEED-21)
+- [ ] 02.5-08-PLAN.md — Weekly cron orchestrator (FEED-22, FEED-23)
 
 ---
 
@@ -338,6 +394,15 @@ Plans:
 | FEED-12 | Phase 2.5 | Pending |
 | FEED-13 | Phase 2.5 | Pending |
 | FEED-14 | Phase 2.5 | Pending |
+| FEED-15 | Phase 2.5 V2 | Pending |
+| FEED-16 | Phase 2.5 V2 | Pending |
+| FEED-17 | Phase 2.5 V2 | Pending |
+| FEED-18 | Phase 2.5 V2 | Pending |
+| FEED-19 | Phase 2.5 V2 | Pending |
+| FEED-20 | Phase 2.5 V2 | Pending |
+| FEED-21 | Phase 2.5 V2 | Pending |
+| FEED-22 | Phase 2.5 V2 | Pending |
+| FEED-23 | Phase 2.5 V2 | Pending |
 | IMG-01 | Phase 3.1 | Pending |
 | IMG-02 | Phase 3.1 | Pending |
 | IMG-03 | Phase 3.1 | Pending |
