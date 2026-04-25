@@ -260,7 +260,7 @@ Plans:
 - [x] 02.5-05-PLAN.md — Full-funnel conversion tracking (FEED-15, FEED-16)
 - [x] 02.5-06-PLAN.md — Sentiment miner (FEED-17, FEED-18, FEED-19)
 - [x] 02.5-07-PLAN.md — Automatic ICP drift detector (FEED-20, FEED-21)
-- [ ] 02.5-08-PLAN.md — Weekly cron orchestrator (FEED-22, FEED-23)
+- [x] 02.5-08-PLAN.md — Weekly cron orchestrator (FEED-22, FEED-23)
 
 ---
 
@@ -401,8 +401,8 @@ Plans:
 | FEED-19 | Phase 2.5 V2 | Pending |
 | FEED-20 | Phase 2.5 V2 | Pending |
 | FEED-21 | Phase 2.5 V2 | Pending |
-| FEED-22 | Phase 2.5 V2 | Pending |
-| FEED-23 | Phase 2.5 V2 | Pending |
+| FEED-22 | Phase 2.5 V2 | Complete |
+| FEED-23 | Phase 2.5 V2 | Complete |
 | IMG-01 | Phase 3.1 | Pending |
 | IMG-02 | Phase 3.1 | Pending |
 | IMG-03 | Phase 3.1 | Pending |
