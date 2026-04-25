@@ -12,6 +12,7 @@
 - [x] **Phase 1: Pipeline Integrity** — Fix all silent skips and hard blockers so a full dry run completes end-to-end
 - [x] **Phase 2: Observability & Storage** — Close the reporting loop with Slack delivery, Drive persistence, and lifecycle monitoring (completed 2026-04-21)
 - [x] **Phase 2.5: Feedback Loops & Experimentation** — v1 shipped 2026-04-21 (creative/cohort CTR+CPA + experiment backlog + Slack reaction reanalysis). V2 shipped 2026-04-25 with full-funnel conversion (signup → screening pass → activation), public + internal sentiment mining, automatic weekly ICP drift detection, and cron-scheduled orchestration.
+- [ ] **Phase 2.6: Smart Ramp → Pipeline Auto-Trigger** — 15-min polling loop watches Smart Ramp for newly-submitted ramps, runs the full campaign pipeline (InMail + Static for every cohort), saves images locally when LinkedIn upload is blocked, notifies Pranav + Diego (DMs) and channel `C0B0NBB986L` with the campaign URNs + creative paths. Re-runs on edits as `_v2` drafts; supersedes prior. 5 consecutive failures triggers a Slack escalation message.
 - [ ] **Phase 3.1: Figma Creative Replication Integration** — Integrate completed Figma layer builder into agent pipeline; pass photo_base64 and create editable frames
 - [ ] **Phase 3: Campaign Expansion** — Regenerate STEM InMails with the winning financial angle and extend targeting buckets
 
@@ -264,6 +265,61 @@ Plans:
 
 ---
 
+### Phase 2.6: Smart Ramp → Pipeline Auto-Trigger (2026-04-25)
+
+**Goal**: Eliminate the manual `python main.py --ramp-id <id>` step by polling Smart Ramp every 15 minutes and auto-running the full campaign pipeline as soon as a new ramp is submitted (or an existing one is edited). Pranav + Diego receive a Slack DM with campaign URNs + creative paths the moment the run finishes; failures escalate to a separate DM after 5 consecutive failed attempts on the same ramp.
+
+**Why here**: Phase 2.5 V2 closed the optimization side of the feedback loop; Phase 2.6 closes the *intake* side. Today new Smart Ramp requests sit in `submitted` state until someone manually invokes the pipeline. This is the highest-leverage automation gap remaining — every ramp that comes in is a multi-hour manual task that the existing `main.py --ramp-id` machinery already handles end-to-end.
+
+**Depends on**: Phase 1, Phase 2, Phase 2.5 (Smart Ramp client + main.py --ramp-id integration shipped 2026-04-24, see `src/smart_ramp_client.py` + memory `project_smart_ramp_integration_progress.md`). Phase 2.5's launchd infrastructure is reused — Phase 2.6 adds a second plist for the 15-min poller, leaves the weekly orchestrator alone.
+
+**Requirements**: SR-01, SR-02, SR-03, SR-04, SR-05, SR-06, SR-07, SR-08, SR-09, SR-10
+
+**Architecture (Path A — polling, locked 2026-04-25)**:
+
+1. **Poller** — `scripts/smart_ramp_poller.py` runs every 15 minutes via launchd. Calls `SmartRampClient.fetch_ramp_list()`, then for each `submitted` ramp computes a content signature `sha256(cohorts + summary + updated_at)`. Diffs against `data/processed_ramps.json` to find new + edited ramps. Filters out test ramps (requester_name contains "test" case-insensitive — e.g., GMR-0004 "Quintin Au Test").
+
+2. **Pipeline runner** — for each new/edited ramp, the poller invokes the equivalent of `python main.py --ramp-id <id>` for *every* cohort, producing **both InMail and Static creatives per cohort** (currently main.py picks one; Phase 2.6 ensures both run). Whichever creative path the LinkedIn upload blocker hits first — image attach is currently 403'd by the LINKEDIN_MEMBER_URN issue from Phase 1 pending tasks — falls back to saving the PNG locally at `data/ramp_creatives/<ramp_id>/<cohort_id>_<inmail|static>_<angle>.png` with the campaign name embedded in the filename for downstream manual upload.
+
+3. **Edit handling** — if a ramp's content signature changes between polls, the poller re-runs the pipeline producing `_v2` (then `_v3`, ...) suffixed campaign names. Prior campaigns are tagged `superseded: true` in `processed_ramps.json` but left in DRAFT state on LinkedIn for audit. Pranav can delete them on next sweep.
+
+4. **Slack DM** — on success, `src/smart_ramp_notifier.py` posts a single DM to both Pranav (`U095J930UEL`) and Diego (`U08AW9FCP27`) with the ramp ID, project name, requester, campaign URNs (one section per cohort), creative paths (both LinkedIn URNs and local fallback paths), and a "review and activate" CTA. On 5 consecutive failures for the same ramp, posts a separate escalation DM with the last error class + traceback summary + manual recovery command.
+
+5. **Retry semantics** — every poll retries any ramp that's in failed state (transient errors like Redash timeouts, LinkedIn 5xx, LiteLLM rate limits will self-resolve). Counter resets on success. Counter ≥ 5 → escalation DM, then poller stops retrying that ramp until the user clears it from `processed_ramps.json` manually OR replies in Slack thread (deferred to v2 of this phase).
+
+6. **Cron / launchd** — new plist `~/Library/LaunchAgents/com.outlier.smart-ramp-poller.plist` with `StartInterval=900` (every 15 min). Separate from the weekly feedback-loop launchd job (Phase 2.5 V2). Logs to `logs/smart_ramp_poller/<yyyy-mm-dd>.log`.
+
+**Success Criteria** (what must be TRUE):
+1. New ramps with `status=submitted` are detected within 15 min of submission and processed automatically
+2. Each cohort in a processed ramp produces both an InMail draft campaign and a Static-ad draft campaign on LinkedIn (when image upload is unblocked) OR a campaign + locally-saved PNG (current state)
+3. Pranav + Diego both receive a single consolidated DM per successful ramp with all artifacts
+4. Edited ramps re-trigger the pipeline as `_v2` drafts; prior drafts are flagged `superseded` in state but not deleted
+5. After 5 consecutive failed runs on the same ramp, an escalation DM fires; the poller stops retrying that ramp until manual reset
+6. Test ramps (requester contains "test") are skipped silently
+7. Poller runs unattended every 15 min via launchd; one failure does not halt subsequent polls
+
+**Blockers / external dependencies**:
+- Smart Ramp client already wired (no Smart Ramp codebase changes needed for Path A polling)
+- `LINKEDIN_MEMBER_URN` blocker still applies — image attach will fall back to local-save on every run until Phase 1 PIPE-LI fix lands. This is by design for v1.
+- `SLACK_BOT_TOKEN` must have `chat:write` to BOTH Pranav and Diego DMs (verify Diego has accepted bot invite, or use webhook fallback)
+- Diego's user ID: `U08AW9FCP27` (locked 2026-04-25)
+- `VERCEL_AUTOMATION_BYPASS_SECRET` already in `.env`
+
+**V2 deferred (out of scope for Phase 2.6)**:
+- Slack thread interactions (✅/🔁/⏸️ reactions to approve / retry / pause a ramp)
+- Auto-deleting superseded drafts after N days
+- Webhook from Smart Ramp (true event-driven) — upgrade path if polling latency becomes a problem
+- Service-account Slack identity (currently DMs come from Pranav's bot)
+
+**Plans**: 3 plans
+
+Plans:
+- [ ] 02.6-01-PLAN.md — Smart Ramp poller + state file + edit detection (SR-01, SR-02, SR-05, SR-08, SR-10)
+- [ ] 02.6-02-PLAN.md — Pipeline runner: both InMail + Static per cohort + image-local fallback (SR-03, SR-04)
+- [ ] 02.6-03-PLAN.md — Slack notifier + launchd plist + integration tests (SR-06, SR-07, SR-09)
+
+---
+
 ### Phase 3.1: Figma Creative Replication Integration
 
 **Goal**: Connect completed Figma layer builder (`build_figma_layered_frame_js()`) into the campaign pipeline by updating agent instructions, passing `photo_base64` from image generation, and verifying end-to-end frame creation with editable photo + gradient + text layers.
@@ -403,6 +459,16 @@ Plans:
 | FEED-21 | Phase 2.5 V2 | Pending |
 | FEED-22 | Phase 2.5 V2 | Complete |
 | FEED-23 | Phase 2.5 V2 | Complete |
+| SR-01 | Phase 2.6 | Pending |
+| SR-02 | Phase 2.6 | Pending |
+| SR-03 | Phase 2.6 | Pending |
+| SR-04 | Phase 2.6 | Pending |
+| SR-05 | Phase 2.6 | Pending |
+| SR-06 | Phase 2.6 | Pending |
+| SR-07 | Phase 2.6 | Pending |
+| SR-08 | Phase 2.6 | Pending |
+| SR-09 | Phase 2.6 | Pending |
+| SR-10 | Phase 2.6 | Pending |
 | IMG-01 | Phase 3.1 | Pending |
 | IMG-02 | Phase 3.1 | Pending |
 | IMG-03 | Phase 3.1 | Pending |
