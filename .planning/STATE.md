@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Executing Phase 02.5
-last_updated: "2026-04-25T03:35:04.356Z"
+last_updated: "2026-04-25T03:44:34.070Z"
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 21
-  completed_plans: 17
+  completed_plans: 18
 ---
 
 # Project State
@@ -22,15 +22,19 @@ See: .planning/PROJECT.md (updated 2026-04-21)
 
 ## Current Phase
 
-**Phase 2.5 — Feedback Loops & Experimentation**
+**Phase 2.5 — Feedback Loops & Experimentation (V2 extension in progress)**
 Goal: Enable continuous optimization by collecting creative/cohort performance feedback, generating experiment hypotheses, and driving weekly A/B testing.
 
-**Status: Phase 2.5 COMPLETE**
+**Status: Phase 2.5 v1 COMPLETE; V2 extension in progress (6/8 plans done)**
 
 - Plan 01 (FeedbackAgent) — COMPLETE
 - Plan 02 (Weekly Slack Alert + Reaction Handler) — COMPLETE (commit c9fc4dd)
 - Plan 03 (ExperimentScientistAgent) — COMPLETE (commits 8c932e1, 444c2f4)
 - Plan 04 (Reanalysis Loop) — COMPLETE (commits 10780b6, c0dad93, f92e0d6)
+- Plan 05 (Full-Funnel Conversion Tracking, V2) — COMPLETE (commits 8d3218f, 6bad53c, f4dbfdf, 5948e60)
+- Plan 06 (Sentiment Miner, V2) — COMPLETE (commits 55ce247, d787c20, 724e1f5, 207c557)
+- Plan 07 (ICP Drift Monitor, V2) — PENDING
+- Plan 08 (Weekly Cron Orchestrator, V2) — PENDING
 
 ## Completed Phases
 
@@ -73,9 +77,14 @@ Goal: Enable continuous optimization by collecting creative/cohort performance f
 - [Phase 02.5-05]: Median-of-stage rates as cohort baseline (robust to outliers); earliest-stage-wins drop classification
 - [Phase 02.5-05]: FUNNEL_DROP_ALERT_THRESHOLD=0.30 default (configurable via .env); 'Funnel Drop Diagnosis:' Slack section header chosen for vocabulary compliance
 - [Phase 02.5-05]: generate_slack_alert extended with optional funnel_diagnosis kwarg (defaults None) — v1 two-arg callers unchanged
+- [Phase 02.5]: [Phase 02.5-06]: Apple App Store + Google Play Store fetchers SKIPPED — Outlier has no native mobile app (RESEARCH-V2 verified 2026-04-24)
+- [Phase 02.5]: [Phase 02.5-06]: sentiment_miner LLM defaults to anthropic/claude-haiku-4-5 with one-time fallback to config.LITELLM_MODEL on model-not-found
+- [Phase 02.5]: [Phase 02.5-06]: Defense-in-depth vocabulary scrub — LLM system prompt enforces CLAUDE.md vocabulary AND _scrub_vocab regex post-process catches leakage before write
+- [Phase 02.5]: [Phase 02.5-06]: PII rule — Zendesk + Intercom ticket bodies truncated to 800 chars in-memory + 400 chars on disk; never persists requester name/email
 
 ## Session Notes
 
+- 2026-04-25 (plan 02.5-06): Sentiment Miner complete. src/sentiment_miner.py (611 lines) with 6 fetchers (Reddit, Trustpilot, Glassdoor, Discourse, Zendesk, Intercom) + LiteLLM theme extractor + JSON writer. Apple/Google Play deliberately skipped (no native mobile app). 5 unit tests passing, all mocked. .env.example created (first in repo). Brief generator agent extended with Sentiment-Driven Copy Inputs section. FEED-17, FEED-18, FEED-19 complete. Plan 06 of Phase 2.5 V2 COMPLETE. Commits: 55ce247, d787c20, 724e1f5, 207c557. Progress: [█████████░] 86%
 - 2026-04-21 (plan 02.5-02): Weekly Slack alert + reaction handler complete. post_weekly_feedback_alert() integrated into scripts/post_weekly_reports.py. SlackReactionHandler class created with parse_cohort_from_message() helper. Config values added (SLACK_REACTION_BOT_USER_ID, SLACK_FEEDBACK_CHANNEL_ID, CPA thresholds, REACTION_EMOJI_MAPPING). FEED-07, FEED-08 complete. Phase 2.5-02 COMPLETE. Commit: c9fc4dd
 - 2026-04-20 (plan 02-04): Lifecycle monitor Slack wiring complete. read_monitor_summary() added to campaign_monitor.py, wired into post_weekly_reports.py as 3rd report section. monitor dry-run verified (exit 0). OBS-04 marked complete. Phase 02 COMPLETE. Progress: [███████░░░] 67%
 - 2026-04-21 (plan 02-02): Drive URL + Sheets write_creative() fix complete. drive_url wired as optional 5th column, GDRIVE_ENABLED guard + try/except, README.md created with Shared Drive admin steps. Requirements DATA-01, DATA-02 marked complete. Progress: [██████░░░░] 58%
@@ -86,16 +95,20 @@ Goal: Enable continuous optimization by collecting creative/cohort performance f
 
 ## Last Session
 
-Completed 03-01 STEM InMail Financial Angle Regen — 2026-04-21
+Completed Phase 02.5 V2 Plan 06 (Sentiment Miner) — 2026-04-25
 
-- scripts/regen_stem_inmail.py created: angle-F regen for campaigns 633412886, 635201096, 634012966
-- StubCohort dataclass + build_inmail_variants(angle_keys=["F"]) wired per plan spec
-- Preflight guards: LINKEDIN_INMAIL_SENDER_URN, LITELLM_API_KEY, LINKEDIN_ACCESS_TOKEN
-- Dry-run verified: exit=0, 3 campaign blocks, all 3 URNs, no banned vocab
-- README.md updated with Scripts section + STEM InMail regen usage
-- EXP-01 marked complete
-- Commits: 038fa99 (script), 7457b8d (README)
+- src/sentiment_miner.py (611 LOC): six per-source fetchers (Reddit JSON, Trustpilot, Glassdoor, Discourse, Zendesk, Intercom) + LiteLLM theme extractor + vocabulary-scrubbed JSON writer
+- Apple App Store + Google Play deliberately skipped (Outlier has no native mobile app per RESEARCH-V2 verification 2026-04-24); module docstring documents the exclusion
+- LLM defaults to anthropic/claude-haiku-4-5 with one-time fallback to config.LITELLM_MODEL on model-not-found
+- Defense-in-depth vocabulary scrub: LLM system prompt embeds CLAUDE.md table verbatim AND _scrub_vocab regex pass before write
+- PII rule: Zendesk + Intercom ticket bodies truncated 800 chars in-memory + 400 chars on disk; never persists requester names/emails
+- Credential gating: empty ZENDESK_* / INTERCOM_ACCESS_TOKEN → log warning + return [] (no raise)
+- 5 unit tests, all HTTP+LLM mocked: fetcher isolation, Zendesk skip, Intercom skip, evidence threshold, vocabulary scrub
+- .env.example created (first in repo); 7 new config constants
+- ad-creative-brief-generator agent extended with Sentiment-Driven Copy Inputs section
+- FEED-17, FEED-18, FEED-19 marked complete
+- Commits: 55ce247 (config + .env.example), d787c20 (module), 724e1f5 (tests), 207c557 (agent docs)
 
 ## Next Step
 
-Phase 03 Plan 01 complete. Next: Phase 03 Plan 02 (Google Drive upload for generated creatives).
+Phase 02.5 V2 Plan 06 complete. Next: Plan 07 (ICP Drift Monitor — src/icp_drift_monitor.py with KL divergence drift detection + auto-trigger reanalysis).
