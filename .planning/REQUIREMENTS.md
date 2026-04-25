@@ -64,8 +64,8 @@
 
 ### Phase 2.5 V2 — Full-Funnel, Sentiment, ICP Drift, Cron (2026-04-24)
 
-- [ ] **FEED-15**: `feedback_agent` reports signup / screening-pass / activation conversion rates per creative × cohort (full-funnel decomposition), not just CTR + CPA
-- [ ] **FEED-16**: `feedback_agent` identifies the funnel stage where each underperforming cohort loses contributors (top-of-funnel vs signup vs screening vs activation) and injects the stage-of-drop into the weekly Slack alert
+- [x] **FEED-15**: `feedback_agent` reports signup / screening-pass / activation conversion rates per creative × cohort (full-funnel decomposition), not just CTR + CPA
+- [x] **FEED-16**: `feedback_agent` identifies the funnel stage where each underperforming cohort loses contributors (top-of-funnel vs signup vs screening vs activation) and injects the stage-of-drop into the weekly Slack alert
 - [ ] **FEED-17**: `sentiment_miner` scrapes public sources weekly — Reddit (r/Outlier_AI, r/BeerMoney, r/WorkOnline), Trustpilot, Glassdoor, Outlier Community (Discourse) — and extracts issue themes via LLM. Apple App Store and Google Play reviews are excluded from V2 scope (Outlier has no native iOS or Android app — verified via WebSearch 2026-04-24); revisit if/when a native app ships
 - [ ] **FEED-18**: `sentiment_miner` ingests internal Zendesk/Intercom tickets (auth-gated via `.env`) for current-contributor issues
 - [ ] **FEED-19**: `sentiment_miner` writes `data/sentiment_callouts.json` — scored issue themes that `ad-creative-brief-generator` consumes as copy directives (address X / avoid Y)
@@ -109,8 +109,8 @@
 | IMG-03 | Phase 3.1 | Pending |
 | EXP-01 | Phase 3 | Pending |
 | EXP-02 | Phase 3 | Pending |
-| FEED-15 | Phase 2.5 V2 | Pending |
-| FEED-16 | Phase 2.5 V2 | Pending |
+| FEED-15 | Phase 2.5 V2 | Complete |
+| FEED-16 | Phase 2.5 V2 | Complete |
 | FEED-17 | Phase 2.5 V2 | Pending |
 | FEED-18 | Phase 2.5 V2 | Pending |
 | FEED-19 | Phase 2.5 V2 | Pending |

@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Milestone complete
-last_updated: "2026-04-21T03:23:39.389Z"
+status: Executing Phase 02.5
+last_updated: "2026-04-25T03:35:04.356Z"
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 14
-  completed_plans: 14
+  total_phases: 5
+  completed_phases: 3
+  total_plans: 21
+  completed_plans: 17
 ---
 
 # Project State
@@ -18,7 +18,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-21)
 
 **Core value:** End-to-end campaign automation from screening data to live LinkedIn campaign — zero manual steps once triggered.
-**Current focus:** Phase 03 — campaign-expansion
+**Current focus:** Phase 02.5 — feedback-loops-experimentation
 
 ## Current Phase
 
@@ -70,6 +70,9 @@ Goal: Enable continuous optimization by collecting creative/cohort performance f
 - [Phase 02.5]: priority_score = impact × confidence (0.9) × feasibility (0.9); 20/80 test/baseline allocation; dedup by (cohort, angle, photo_subject)
 - [Phase 03-campaign-expansion]: MATH bucket added to classify_tg at priority slot 3 (between ML_ENGINEER and MEDICAL); locked regex covers math/statistics/actuary/quantitative/physicist/probability/econometrics/biostatistics (EXP-02)
 - [Phase 03-campaign-expansion]: StubCohort dataclass sufficient for build_inmail_variants; lazy client construction in live mode only; angle-F fallback gap documented as known limitation
+- [Phase 02.5-05]: Median-of-stage rates as cohort baseline (robust to outliers); earliest-stage-wins drop classification
+- [Phase 02.5-05]: FUNNEL_DROP_ALERT_THRESHOLD=0.30 default (configurable via .env); 'Funnel Drop Diagnosis:' Slack section header chosen for vocabulary compliance
+- [Phase 02.5-05]: generate_slack_alert extended with optional funnel_diagnosis kwarg (defaults None) — v1 two-arg callers unchanged
 
 ## Session Notes
 
