@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Executing Phase 02.5
-last_updated: "2026-04-25T03:44:34.070Z"
+last_updated: "2026-04-25T03:52:41.315Z"
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 21
-  completed_plans: 18
+  completed_plans: 19
 ---
 
 # Project State
@@ -25,7 +25,7 @@ See: .planning/PROJECT.md (updated 2026-04-21)
 **Phase 2.5 — Feedback Loops & Experimentation (V2 extension in progress)**
 Goal: Enable continuous optimization by collecting creative/cohort performance feedback, generating experiment hypotheses, and driving weekly A/B testing.
 
-**Status: Phase 2.5 v1 COMPLETE; V2 extension in progress (6/8 plans done)**
+**Status: Phase 2.5 v1 COMPLETE; V2 extension in progress (7/8 plans done)**
 
 - Plan 01 (FeedbackAgent) — COMPLETE
 - Plan 02 (Weekly Slack Alert + Reaction Handler) — COMPLETE (commit c9fc4dd)
@@ -33,7 +33,7 @@ Goal: Enable continuous optimization by collecting creative/cohort performance f
 - Plan 04 (Reanalysis Loop) — COMPLETE (commits 10780b6, c0dad93, f92e0d6)
 - Plan 05 (Full-Funnel Conversion Tracking, V2) — COMPLETE (commits 8d3218f, 6bad53c, f4dbfdf, 5948e60)
 - Plan 06 (Sentiment Miner, V2) — COMPLETE (commits 55ce247, d787c20, 724e1f5, 207c557)
-- Plan 07 (ICP Drift Monitor, V2) — PENDING
+- Plan 07 (ICP Drift Monitor, V2) — COMPLETE (commits 598bbe7, a7aac61, 741dcf5)
 - Plan 08 (Weekly Cron Orchestrator, V2) — PENDING
 
 ## Completed Phases
@@ -81,9 +81,13 @@ Goal: Enable continuous optimization by collecting creative/cohort performance f
 - [Phase 02.5]: [Phase 02.5-06]: sentiment_miner LLM defaults to anthropic/claude-haiku-4-5 with one-time fallback to config.LITELLM_MODEL on model-not-found
 - [Phase 02.5]: [Phase 02.5-06]: Defense-in-depth vocabulary scrub — LLM system prompt enforces CLAUDE.md vocabulary AND _scrub_vocab regex post-process catches leakage before write
 - [Phase 02.5]: [Phase 02.5-06]: PII rule — Zendesk + Intercom ticket bodies truncated to 800 chars in-memory + 400 chars on disk; never persists requester name/email
+- [Phase 02.5]: [Phase 02.5-07]: scipy.stats.entropy for KL divergence (no hand-rolled math); EPSILON=1e-10 on both p and q vectors keeps disjoint distributions finite per Pitfall 4
+- [Phase 02.5]: [Phase 02.5-07]: Strict < 7-day rate-limit comparison so a trigger exactly 7 days after the last is allowed to re-fire; per-project state in data/icp_drift_state.json
+- [Phase 02.5]: [Phase 02.5-07]: _invoke_trigger uses inspect.iscoroutine to handle both sync (current) and async ReanalysisOrchestrator.trigger_reanalysis signatures
 
 ## Session Notes
 
+- 2026-04-25 (plan 02.5-07): ICP Drift Monitor complete. src/icp_drift_monitor.py (264 LOC) with snapshot/compute_drift/check_and_trigger/categorical_kl public API. scipy.stats.entropy for KL divergence with EPSILON=1e-10 zero-bin guard (no hand-rolled math). Drift score = max(categorical KL across worker_source/resume_degree/resume_field/resume_job_title/experience_band) + sum(numeric abs-mean-shifts across total_payout_attempts/task_count_30d). Auto-triggers ReanalysisOrchestrator.trigger_reanalysis(reason="icp_drift") when drift > ICP_DRIFT_THRESHOLD AND n_rows >= ICP_DRIFT_MIN_ROWS AND no reanalysis in past 7d. Per-project last_reanalysis_ts persisted in data/icp_drift_state.json with strict < 7-day comparison (boundary-tested). 5 unit tests (4 required + 1 boundary), all mocked, all green. config.py +3 constants (ICP_DRIFT_THRESHOLD=0.15, ICP_DRIFT_MIN_ROWS=200, ICP_DRIFT_LOOKBACK_WEEKS=4). requirements.txt pinned pyarrow>=23.0.0. FEED-20, FEED-21 complete. Plan 07 of Phase 2.5 V2 COMPLETE. Commits: 598bbe7, a7aac61, 741dcf5. Progress: [█████████░] 90%
 - 2026-04-25 (plan 02.5-06): Sentiment Miner complete. src/sentiment_miner.py (611 lines) with 6 fetchers (Reddit, Trustpilot, Glassdoor, Discourse, Zendesk, Intercom) + LiteLLM theme extractor + JSON writer. Apple/Google Play deliberately skipped (no native mobile app). 5 unit tests passing, all mocked. .env.example created (first in repo). Brief generator agent extended with Sentiment-Driven Copy Inputs section. FEED-17, FEED-18, FEED-19 complete. Plan 06 of Phase 2.5 V2 COMPLETE. Commits: 55ce247, d787c20, 724e1f5, 207c557. Progress: [█████████░] 86%
 - 2026-04-21 (plan 02.5-02): Weekly Slack alert + reaction handler complete. post_weekly_feedback_alert() integrated into scripts/post_weekly_reports.py. SlackReactionHandler class created with parse_cohort_from_message() helper. Config values added (SLACK_REACTION_BOT_USER_ID, SLACK_FEEDBACK_CHANNEL_ID, CPA thresholds, REACTION_EMOJI_MAPPING). FEED-07, FEED-08 complete. Phase 2.5-02 COMPLETE. Commit: c9fc4dd
 - 2026-04-20 (plan 02-04): Lifecycle monitor Slack wiring complete. read_monitor_summary() added to campaign_monitor.py, wired into post_weekly_reports.py as 3rd report section. monitor dry-run verified (exit 0). OBS-04 marked complete. Phase 02 COMPLETE. Progress: [███████░░░] 67%
@@ -95,20 +99,24 @@ Goal: Enable continuous optimization by collecting creative/cohort performance f
 
 ## Last Session
 
-Completed Phase 02.5 V2 Plan 06 (Sentiment Miner) — 2026-04-25
+Completed Phase 02.5 V2 Plan 07 (ICP Drift Monitor) — 2026-04-25
 
-- src/sentiment_miner.py (611 LOC): six per-source fetchers (Reddit JSON, Trustpilot, Glassdoor, Discourse, Zendesk, Intercom) + LiteLLM theme extractor + vocabulary-scrubbed JSON writer
-- Apple App Store + Google Play deliberately skipped (Outlier has no native mobile app per RESEARCH-V2 verification 2026-04-24); module docstring documents the exclusion
-- LLM defaults to anthropic/claude-haiku-4-5 with one-time fallback to config.LITELLM_MODEL on model-not-found
-- Defense-in-depth vocabulary scrub: LLM system prompt embeds CLAUDE.md table verbatim AND _scrub_vocab regex pass before write
-- PII rule: Zendesk + Intercom ticket bodies truncated 800 chars in-memory + 400 chars on disk; never persists requester names/emails
-- Credential gating: empty ZENDESK_* / INTERCOM_ACCESS_TOKEN → log warning + return [] (no raise)
-- 5 unit tests, all HTTP+LLM mocked: fetcher isolation, Zendesk skip, Intercom skip, evidence threshold, vocabulary scrub
-- .env.example created (first in repo); 7 new config constants
-- ad-creative-brief-generator agent extended with Sentiment-Driven Copy Inputs section
-- FEED-17, FEED-18, FEED-19 marked complete
-- Commits: 55ce247 (config + .env.example), d787c20 (module), 724e1f5 (tests), 207c557 (agent docs)
+- src/icp_drift_monitor.py (264 LOC): scipy.stats.entropy KL divergence (no hand-rolled math) with EPSILON=1e-10 on both p and q vectors before normalize (Pitfall 4 fix); disjoint distributions return finite KL ≈ 23.026, not inf
+- Public API: snapshot, compute_drift, check_and_trigger, categorical_kl
+- Drift score = max(categorical KL across 5 features) + sum(numeric abs-mean-shifts across 2 features). Categorical: worker_source, resume_degree, resume_field, resume_job_title, experience_band. Numeric: total_payout_attempts, task_count_30d
+- Snapshots: parquet via pyarrow at data/icp_snapshots/<project_id>/<yyyy-mm-dd>.parquet (versioned indefinitely so trailing 4-week median always available)
+- Auto-trigger gate chain: cold_start → no_score → below_noise_floor → within_threshold → rate_limited → fire ReanalysisOrchestrator.trigger_reanalysis(reason="icp_drift")
+- Cold-start (<2 snapshots): drift_score=None, no orchestrator call, logs "insufficient history, skipping drift"
+- Rate limit: per-project last_reanalysis_ts in data/icp_drift_state.json with strict `<` 7-day comparison (boundary tested — exactly-7d allowed to re-fire)
+- _invoke_trigger uses inspect.iscoroutine to handle both sync (current src/reanalysis_loop.py:16-26) and async orchestrator signatures
+- snapshot() swallows Redash exceptions and writes empty parquet so a single bad fetch doesn't break the weekly cron
+- 5 unit tests, all mocked, all green: synthetic KL (incl. novel category finite check), cold-start, auto-trigger (with kwargs capture for reason="icp_drift"), 7d rate-limit, 7d boundary. tmp_path + monkeypatch — no live Redash, no live orchestrator
+- 43 v1+v2 unit tests still green; no regressions
+- config.py +3 constants: ICP_DRIFT_THRESHOLD=0.15, ICP_DRIFT_MIN_ROWS=200, ICP_DRIFT_LOOKBACK_WEEKS=4
+- requirements.txt: pyarrow>=23.0.0 pinned (was installed unpinned per RESEARCH-V2). scipy>=1.10.0 already pinned, left as-is
+- FEED-20 + FEED-21 marked complete
+- Commits: 598bbe7 (config + pyarrow), a7aac61 (module), 741dcf5 (tests)
 
 ## Next Step
 
-Phase 02.5 V2 Plan 06 complete. Next: Plan 07 (ICP Drift Monitor — src/icp_drift_monitor.py with KL divergence drift detection + auto-trigger reanalysis).
+Phase 02.5 V2 Plan 07 complete. Next: Plan 08 (Weekly Cron Orchestrator — scripts/weekly_feedback_loop.py wiring v1 feedback_agent + V2 funnel + sentiment + drift into one Monday 9 AM IST run with consolidated Slack report and idempotency guard).

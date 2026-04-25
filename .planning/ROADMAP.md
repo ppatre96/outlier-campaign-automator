@@ -259,7 +259,7 @@ Plans:
 Plans:
 - [x] 02.5-05-PLAN.md — Full-funnel conversion tracking (FEED-15, FEED-16)
 - [x] 02.5-06-PLAN.md — Sentiment miner (FEED-17, FEED-18, FEED-19)
-- [ ] 02.5-07-PLAN.md — Automatic ICP drift detector (FEED-20, FEED-21)
+- [x] 02.5-07-PLAN.md — Automatic ICP drift detector (FEED-20, FEED-21)
 - [ ] 02.5-08-PLAN.md — Weekly cron orchestrator (FEED-22, FEED-23)
 
 ---

@@ -69,8 +69,8 @@
 - [x] **FEED-17**: `sentiment_miner` scrapes public sources weekly — Reddit (r/Outlier_AI, r/BeerMoney, r/WorkOnline), Trustpilot, Glassdoor, Outlier Community (Discourse) — and extracts issue themes via LLM. Apple App Store and Google Play reviews are excluded from V2 scope (Outlier has no native iOS or Android app — verified via WebSearch 2026-04-24); revisit if/when a native app ships
 - [x] **FEED-18**: `sentiment_miner` ingests internal Zendesk/Intercom tickets (auth-gated via `.env`) for current-contributor issues
 - [x] **FEED-19**: `sentiment_miner` writes `data/sentiment_callouts.json` — scored issue themes that `ad-creative-brief-generator` consumes as copy directives (address X / avoid Y)
-- [ ] **FEED-20**: `icp_drift_monitor` snapshots Stage 1 ICP output weekly and computes a drift score over key categorical + numeric feature distributions (skills, degree, experience band, job title, pay band)
-- [ ] **FEED-21**: `icp_drift_monitor` auto-triggers `outlier-data-analyst` reanalysis when drift exceeds a configurable threshold — no Slack reaction required
+- [x] **FEED-20**: `icp_drift_monitor` snapshots Stage 1 ICP output weekly and computes a drift score over key categorical + numeric feature distributions (skills, degree, experience band, job title, pay band)
+- [x] **FEED-21**: `icp_drift_monitor` auto-triggers `outlier-data-analyst` reanalysis when drift exceeds a configurable threshold — no Slack reaction required
 - [ ] **FEED-22**: `scripts/weekly_feedback_loop.py` cron orchestrator runs full-funnel + sentiment + ICP drift every Monday 9 AM IST (cron `30 3 * * 1`), idempotent within a 6-day window
 - [ ] **FEED-23**: Consolidated weekly Slack report combines v1 creative/cohort alerts with V2 funnel-drop diagnosis, top sentiment themes, and ICP drift notifications into a single Monday post
 
@@ -114,8 +114,8 @@
 | FEED-17 | Phase 2.5 V2 | Complete |
 | FEED-18 | Phase 2.5 V2 | Complete |
 | FEED-19 | Phase 2.5 V2 | Complete |
-| FEED-20 | Phase 2.5 V2 | Pending |
-| FEED-21 | Phase 2.5 V2 | Pending |
+| FEED-20 | Phase 2.5 V2 | Complete |
+| FEED-21 | Phase 2.5 V2 | Complete |
 | FEED-22 | Phase 2.5 V2 | Pending |
 | FEED-23 | Phase 2.5 V2 | Pending |
 
