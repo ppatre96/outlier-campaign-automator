@@ -378,6 +378,61 @@ GROUP BY 1, 2
 ORDER BY pass_rate DESC NULLS LAST
 """
 
+# -- Full-funnel decomposition for the V2 feedback loop (FEED-15)
+# Source: adapted from src/campaign_feedback_agent.py:60-127 (_METRICS_SQL)
+# + screening leg from src/redash_db.py:264-277 (ScreeningData CTE)
+# FEED-15 full-funnel decomposition: click → signup → screening-pass → activation
+FUNNEL_METRICS_SQL = """
+-- Source: adapted from src/campaign_feedback_agent.py:60-127 (_METRICS_SQL)
+-- + screening leg from src/redash_db.py:264-277 (ScreeningData CTE)
+-- FEED-15 full-funnel decomposition: click → signup → screening-pass → activation
+WITH creatives AS (
+    SELECT cr.ID AS creative_id, cr.CAMPAIGN_ID
+    FROM PC_FIVETRAN_DB.LINKEDIN_ADS.CREATIVE_HISTORY cr
+    JOIN PC_FIVETRAN_DB.LINKEDIN_ADS.CAMPAIGN_HISTORY camp ON cr.CAMPAIGN_ID = camp.ID
+    WHERE cr.ACCOUNT_ID = {account_id}
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY cr.ID ORDER BY cr.LAST_MODIFIED_AT DESC) = 1
+),
+metrics AS (
+    SELECT c.creative_id, camp.NAME AS cohort_name,
+           SUM(aa.IMPRESSIONS) AS impressions,
+           SUM(aa.CLICKS) AS clicks,
+           SUM(aa.COST_IN_USD) AS spend
+    FROM creatives c
+    JOIN PC_FIVETRAN_DB.LINKEDIN_ADS.AD_ANALYTICS_BY_CREATIVE aa ON c.creative_id = aa.CREATIVE_ID
+    JOIN PC_FIVETRAN_DB.LINKEDIN_ADS.CAMPAIGN_HISTORY camp ON c.CAMPAIGN_ID = camp.ID
+    WHERE aa.DAY >= CURRENT_DATE - INTERVAL '{days} days'
+    GROUP BY 1, 2
+),
+funnel AS (
+    SELECT
+        TRY_TO_NUMBER(ac.AD_ID) AS creative_id,
+        COUNT(DISTINCT ac.EMAIL) AS applications,
+        COUNT(DISTINCT CASE WHEN UPPER(g.RESULT) = 'PASS' THEN ac.EMAIL END) AS screening_passes,
+        COUNT(DISTINCT CASE WHEN ac.ACTIVATION_DAY IS NOT NULL THEN ac.EMAIL END) AS activations
+    FROM SCALE_PROD.VIEW.APPLICATION_CONVERSION ac
+    LEFT JOIN PUBLIC.GROWTHRESUMESCREENINGRESULTS g
+        ON ac.EMAIL = g.CANDIDATE_EMAIL
+    WHERE ac.UTM_SOURCE ILIKE '%linkedin%'
+      AND ac.UTM_MEDIUM  = 'paid'
+      AND ac.APPLICATION_DAY >= CURRENT_DATE - INTERVAL '{days} days'
+      AND TRY_TO_NUMBER(ac.AD_ID) IS NOT NULL
+    GROUP BY 1
+)
+SELECT m.cohort_name, m.creative_id,
+       m.impressions, m.clicks, m.spend,
+       COALESCE(f.applications, 0) AS applications,
+       COALESCE(f.screening_passes, 0) AS screening_passes,
+       COALESCE(f.activations, 0) AS activations,
+       ROUND(m.clicks::FLOAT / NULLIF(m.impressions, 0), 4) AS ctr,
+       ROUND(f.applications::FLOAT / NULLIF(m.clicks, 0), 4) AS click_to_signup,
+       ROUND(f.screening_passes::FLOAT / NULLIF(f.applications, 0), 4) AS signup_to_screen,
+       ROUND(f.activations::FLOAT / NULLIF(f.screening_passes, 0), 4) AS screen_to_activate
+FROM metrics m
+LEFT JOIN funnel f ON m.creative_id = f.creative_id
+ORDER BY m.cohort_name, m.impressions DESC
+"""
+
 
 class RedashClient:
     """
@@ -548,6 +603,50 @@ class RedashClient:
             log.warning("query_cohort_metrics returned no rows")
             return pd.DataFrame(columns=_expected_cols)
         log.info("Fetched %d rows from cohort metrics query", len(df))
+        return df
+
+    def query_funnel_metrics(
+        self,
+        days_back: int = 7,
+        account_id: int | None = None,
+    ) -> pd.DataFrame:
+        """
+        FEED-15: Per-creative-per-cohort funnel decomposition.
+
+        Returns DataFrame with columns: cohort_name, creative_id, impressions,
+        clicks, spend, applications, screening_passes, activations, ctr,
+        click_to_signup, signup_to_screen, screen_to_activate.
+        Window = last `days_back` days (default 7).
+
+        Source: FUNNEL_METRICS_SQL — joins
+            PC_FIVETRAN_DB.LINKEDIN_ADS.AD_ANALYTICS_BY_CREATIVE
+            ↔ SCALE_PROD.VIEW.APPLICATION_CONVERSION
+            ↔ PUBLIC.GROWTHRESUMESCREENINGRESULTS (LEFT JOIN on EMAIL = CANDIDATE_EMAIL)
+        """
+        acct = (
+            account_id
+            if account_id is not None
+            else int(config.LINKEDIN_AD_ACCOUNT_ID)
+        )
+        sql = FUNNEL_METRICS_SQL.format(account_id=acct, days=int(days_back))
+        label = f"funnel-metrics-{days_back}d"
+        log.info(
+            "Querying funnel metrics (account_id=%s, days_back=%d)",
+            acct, days_back,
+        )
+        _expected_cols = [
+            "cohort_name", "creative_id", "impressions", "clicks", "spend",
+            "applications", "screening_passes", "activations",
+            "ctr", "click_to_signup", "signup_to_screen", "screen_to_activate",
+        ]
+        df = self._run_query(sql, label=label)
+        if df is None or df.empty:
+            log.warning(
+                "query_funnel_metrics returned no rows for window=%d days",
+                days_back,
+            )
+            return pd.DataFrame(columns=_expected_cols)
+        log.info("Fetched %d funnel rows for window=%d days", len(df), days_back)
         return df
 
     def close(self) -> None:
