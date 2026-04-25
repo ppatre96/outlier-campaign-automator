@@ -380,3 +380,112 @@ class TestFeedbackAgent:
         assert "A/B" in fallback_hypo or "variants" in fallback_hypo.lower(), (
             f"Fallback should suggest A/B test, got: {fallback_hypo}"
         )
+
+
+# ── V2 funnel-decomposition tests (FEED-15, FEED-16) ──────────────────────────
+
+def test_analyze_funnel_by_cohort_returns_stage_rates():
+    """FEED-15: funnel analysis returns per-creative stage counts + rates."""
+    import pandas as pd
+    from unittest.mock import MagicMock
+    from src.feedback_agent import FeedbackAgent
+
+    mock_df = pd.DataFrame([
+        {"cohort_name": "DATA_ANALYST", "creative_id": 100, "impressions": 10000, "clicks": 500,
+         "spend": 250.0, "applications": 100, "screening_passes": 40, "activations": 20,
+         "ctr": 0.05, "click_to_signup": 0.20, "signup_to_screen": 0.40, "screen_to_activate": 0.50},
+        {"cohort_name": "DATA_ANALYST", "creative_id": 101, "impressions": 8000, "clicks": 240,
+         "spend": 180.0, "applications": 80, "screening_passes": 30, "activations": 5,
+         "ctr": 0.03, "click_to_signup": 0.33, "signup_to_screen": 0.375, "screen_to_activate": 0.166},
+    ])
+    mock_rc = MagicMock()
+    mock_rc.query_funnel_metrics.return_value = mock_df
+
+    agent = FeedbackAgent(mock_rc)
+    rows = agent.analyze_funnel_by_cohort(days_back=7)
+
+    assert isinstance(rows, list)
+    assert len(rows) == 2
+    expected_keys = {"cohort_name", "creative_id", "impressions", "clicks", "applications",
+                     "screening_passes", "activations", "ctr", "click_to_signup",
+                     "signup_to_screen", "screen_to_activate"}
+    assert expected_keys.issubset(rows[0].keys())
+    mock_rc.query_funnel_metrics.assert_called_once_with(days_back=7)
+
+
+def test_identify_funnel_drop_stage_classifies_earliest_drop():
+    """FEED-16: identify the earliest stage that drops >= threshold below cohort median."""
+    from src.feedback_agent import FeedbackAgent
+
+    # Cohort A: activation stage drops hard (0.10 vs median 0.50)
+    # Cohort B: signup stage drops (0.05 vs median 0.25) — earlier stage
+    # Cohort C: all rates within threshold → drop_stage == 'none'
+    funnel_rows = [
+        {"cohort_name": "A", "creative_id": 1, "ctr": 0.05, "click_to_signup": 0.20,
+         "signup_to_screen": 0.40, "screen_to_activate": 0.50, "impressions": 10000, "clicks": 500,
+         "applications": 100, "screening_passes": 40, "activations": 20},
+        {"cohort_name": "A", "creative_id": 2, "ctr": 0.05, "click_to_signup": 0.20,
+         "signup_to_screen": 0.40, "screen_to_activate": 0.10, "impressions": 10000, "clicks": 500,
+         "applications": 100, "screening_passes": 40, "activations": 4},
+        {"cohort_name": "B", "creative_id": 3, "ctr": 0.05, "click_to_signup": 0.25,
+         "signup_to_screen": 0.40, "screen_to_activate": 0.50, "impressions": 10000, "clicks": 500,
+         "applications": 125, "screening_passes": 50, "activations": 25},
+        {"cohort_name": "B", "creative_id": 4, "ctr": 0.05, "click_to_signup": 0.05,
+         "signup_to_screen": 0.40, "screen_to_activate": 0.50, "impressions": 10000, "clicks": 500,
+         "applications": 25, "screening_passes": 10, "activations": 5},
+        {"cohort_name": "C", "creative_id": 5, "ctr": 0.05, "click_to_signup": 0.20,
+         "signup_to_screen": 0.40, "screen_to_activate": 0.50, "impressions": 10000, "clicks": 500,
+         "applications": 100, "screening_passes": 40, "activations": 20},
+    ]
+
+    from unittest.mock import MagicMock
+    agent = FeedbackAgent(MagicMock())
+    diag = agent.identify_funnel_drop_stage(funnel_rows)
+
+    assert diag["A"]["drop_stage"] == "activation", f"Cohort A should drop at activation, got {diag['A']}"
+    assert diag["B"]["drop_stage"] == "signup", f"Cohort B should drop at signup, got {diag['B']}"
+    assert diag["C"]["drop_stage"] == "none"
+    # Delta should be negative for drops
+    assert diag["A"]["delta_pct"] < 0
+    assert diag["B"]["delta_pct"] < 0
+
+
+def test_alert_includes_drop_stage():
+    """FEED-16: generate_slack_alert appends Funnel Drop Diagnosis section when provided."""
+    from unittest.mock import MagicMock
+    from src.feedback_agent import FeedbackAgent
+
+    agent = FeedbackAgent(MagicMock())
+    underperformers = [
+        {"cohort_name": "DATA_ANALYST", "current_cpa": 120, "baseline_cpa": 45,
+         "cpa_z_score": 3.2, "ctr_trend": -0.15, "recommendation": "PAUSE"},
+    ]
+    hypothesis_summary = []
+    funnel_diagnosis = {
+        "DATA_ANALYST": {"drop_stage": "screening", "drop_rate": 0.20,
+                         "baseline_rate": 0.50, "delta_pct": -0.60},
+        "ML_ENGINEER":  {"drop_stage": "none", "drop_rate": None,
+                         "baseline_rate": None, "delta_pct": None},
+    }
+
+    # Backwards-compat: two-arg call still works
+    alert_v1 = agent.generate_slack_alert(underperformers, hypothesis_summary)
+    assert isinstance(alert_v1, str)
+    assert "Funnel Drop" not in alert_v1
+
+    # V2 call: funnel section appears
+    alert_v2 = agent.generate_slack_alert(underperformers, hypothesis_summary,
+                                          funnel_diagnosis=funnel_diagnosis)
+    assert "Funnel Drop Diagnosis:" in alert_v2
+    assert "DATA_ANALYST" in alert_v2
+    assert "screening" in alert_v2
+    # ML_ENGINEER has drop_stage="none" → must NOT be in funnel-drop section
+    # (but may appear elsewhere). Check it's not in a "funnel drop at" line:
+    for line in alert_v2.split("\n"):
+        if "ML_ENGINEER" in line and "funnel drop" in line.lower():
+            raise AssertionError(f"ML_ENGINEER with drop_stage=none should not appear: {line!r}")
+
+    # Vocabulary check: no banned tokens in the new section
+    banned = ["compensation", "interview", "project rate"]
+    for b in banned:
+        assert b.lower() not in alert_v2.lower(), f"banned token {b!r} in Slack alert"
