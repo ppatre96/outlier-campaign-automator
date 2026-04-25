@@ -165,3 +165,73 @@ Each generated brief should include a `brand_voice_score` field (0-1):
 - **<0.8:** Hard violations (superlative, vague claim found) — revise before use
 
 This score allows feedback_agent to track which briefs produce the best performing copy, helping identify brand voice patterns that resonate.
+
+---
+
+## Sentiment-Driven Copy Inputs (Phase 2.5 V2)
+
+You now receive weekly contributor-sentiment directives from `src/sentiment_miner.py`.
+Read `data/sentiment_callouts.json` at brief-generation time and honor the directives.
+
+### Input location
+
+`data/sentiment_callouts.json` (refreshed every Monday by `scripts/weekly_feedback_loop.py`).
+
+### Schema
+
+```json
+{
+  "generated_at": "<ISO timestamp>",
+  "sources_queried": ["reddit_outlier_ai", "trustpilot", "zendesk", "..."],
+  "sources_skipped": [{"source": "glassdoor", "reason": "blocked_403"}],
+  "themes": [
+    {
+      "theme":              "Slow payment release",
+      "sentiment":          "negative",
+      "evidence_count":     7,
+      "evidence_quotes":    ["..."],
+      "source_urls":        ["https://..."],
+      "directive_for_brief":"Address: payment timing concerns — surface 'paid weekly' or actual payout cadence in CTA"
+    }
+  ]
+}
+```
+
+### How to use
+
+1. Load the JSON at the start of brief generation.
+2. Filter themes by `evidence_count >= 3` (already pre-filtered; verify defensively).
+3. When `themes` is non-empty:
+   - Honor AT LEAST ONE `"Address:"` directive per brief — surface that theme in the copy body OR CTA.
+   - Honor `"Avoid:"` directives by NOT framing the ad around the avoided angle.
+   - `"Lean into:"` directives are optional boosts — use when the cohort fit is strong.
+4. When `themes` is empty or the file is missing, proceed with the default brief — do not fail.
+
+### Vocabulary rule
+
+The `theme` and `directive_for_brief` fields are pre-scrubbed to approved Outlier vocabulary.
+Use those labels verbatim in your rationale notes. Never reintroduce banned words from
+CLAUDE.md when paraphrasing (`payment` not `compensation`, `task` not `job`, `screening`
+not `interview`, `progress` not `performance`).
+
+### Example
+
+If `sentiment_callouts.json` has:
+
+```json
+{"theme": "Slow payment release", "directive_for_brief": "Address: payment timing concerns — surface 'paid weekly' in CTA"}
+```
+
+Your generated brief MUST include a line like:
+- "CTA emphasis: 'Paid weekly via direct deposit'" OR
+- "Body callout: 'Payment lands on your next payday'"
+
+And your rationale notes the source: "Honoring sentiment directive 'Slow payment release' (evidence_count=7, reddit_outlier_ai + trustpilot)".
+
+### Failure modes
+
+- File missing → proceed with default brief, log "sentiment_callouts.json not found — skipping sentiment directives".
+- JSON malformed → same behavior; log error.
+- All themes empty → proceed with default brief, no directive honored.
+
+Do not block brief generation on missing or stale sentiment data.
