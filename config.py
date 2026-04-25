@@ -145,3 +145,13 @@ ZENDESK_API_TOKEN   = os.getenv("ZENDESK_API_TOKEN", "")
 
 # Intercom Conversations API (Bearer) — empty = skip source
 INTERCOM_ACCESS_TOKEN = os.getenv("INTERCOM_ACCESS_TOKEN", "")
+
+# --- Phase 2.5 V2: ICP Drift Monitor (FEED-20, FEED-21) ---
+ICP_DRIFT_THRESHOLD = float(os.getenv("ICP_DRIFT_THRESHOLD", "0.15"))
+# KL divergence threshold above which auto-reanalysis fires. Default 0.15.
+
+ICP_DRIFT_MIN_ROWS  = int(os.getenv("ICP_DRIFT_MIN_ROWS", "200"))
+# Noise floor — skip drift check if this week's Stage 1 output has fewer rows.
+
+ICP_DRIFT_LOOKBACK_WEEKS = int(os.getenv("ICP_DRIFT_LOOKBACK_WEEKS", "4"))
+# Trailing-N-week median used as the drift baseline.
