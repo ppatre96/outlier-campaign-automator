@@ -250,10 +250,106 @@ class FeedbackAgent:
 
         return underperformers
 
+    # ── V2: Full-funnel decomposition (FEED-15 / FEED-16) ────────────────────
+
+    def analyze_funnel_by_cohort(self, days_back: int = 7) -> list[dict]:
+        """
+        FEED-15: Full-funnel decomposition per (cohort_name, creative_id).
+
+        Returns a list of dicts — one per (cohort_name, creative_id) row — with keys:
+          cohort_name, creative_id,
+          impressions, clicks, applications, screening_passes, activations,
+          ctr, click_to_signup, signup_to_screen, screen_to_activate.
+
+        Empty list if no campaign data in the window.
+        """
+        df = self.redash_client.query_funnel_metrics(days_back=days_back)
+        if df is None or df.empty:
+            log.warning("No funnel rows returned for window=%d days", days_back)
+            return []
+        cohort_count = (
+            df["cohort_name"].nunique() if "cohort_name" in df.columns else 0
+        )
+        log.info(
+            "Analyzed funnel for %d creatives across %d cohorts",
+            len(df), cohort_count,
+        )
+        return df.to_dict(orient="records")
+
+    def identify_funnel_drop_stage(self, funnel_rows: list[dict]) -> dict:
+        """
+        FEED-16: For each cohort, identify the funnel stage where drop occurs.
+
+        Input: funnel_rows from analyze_funnel_by_cohort().
+        Output: dict mapping cohort_name -> {
+            drop_stage: 'top_of_funnel' | 'signup' | 'screening' | 'activation' | 'none',
+            drop_rate: float (the observed rate at the drop stage),
+            baseline_rate: float (cohort-median rate at that stage),
+            delta_pct: float (how far below baseline, signed fraction),
+        }
+
+        Classification logic: for each cohort, compute the cohort-median rate at
+        each of four stages (ctr, click_to_signup, signup_to_screen,
+        screen_to_activate). Pick the EARLIEST stage whose worst observed rate
+        is <= baseline * (1 - FUNNEL_DROP_ALERT_THRESHOLD). If no stage drops
+        far enough, drop_stage = 'none'.
+        """
+        import config as _config
+        import pandas as _pd
+
+        if not funnel_rows:
+            return {}
+
+        df = _pd.DataFrame(funnel_rows)
+        threshold = 1.0 - _config.FUNNEL_DROP_ALERT_THRESHOLD  # 0.70 default
+
+        stage_cols = [
+            ("top_of_funnel", "ctr"),
+            ("signup",        "click_to_signup"),
+            ("screening",     "signup_to_screen"),
+            ("activation",    "screen_to_activate"),
+        ]
+
+        result: dict[str, dict] = {}
+        for cohort, grp in df.groupby("cohort_name"):
+            diagnosis = {
+                "drop_stage":    "none",
+                "drop_rate":     None,
+                "baseline_rate": None,
+                "delta_pct":     None,
+            }
+            for stage_label, col in stage_cols:
+                if col not in grp.columns:
+                    continue
+                series = _pd.to_numeric(grp[col], errors="coerce").dropna()
+                if series.empty:
+                    continue
+                baseline = float(series.median())
+                if baseline == 0:
+                    continue
+                worst = float(series.min())
+                if worst <= baseline * threshold:
+                    diagnosis = {
+                        "drop_stage":    stage_label,
+                        "drop_rate":     round(worst, 4),
+                        "baseline_rate": round(baseline, 4),
+                        "delta_pct":     round((worst - baseline) / baseline, 4),
+                    }
+                    break  # earliest stage wins
+            result[str(cohort)] = diagnosis
+
+        n_drops = sum(1 for d in result.values() if d.get("drop_stage") != "none")
+        log.info(
+            "Funnel drop diagnosis: %d cohorts analyzed, %d with drops",
+            len(result), n_drops,
+        )
+        return result
+
     def generate_slack_alert(
         self,
         underperformers: list[dict],
         hypothesis_summary: list[dict] | dict,
+        funnel_diagnosis: dict | None = None,
     ) -> str:
         """
         Format a weekly Slack alert message per Outlier vocabulary.
@@ -296,6 +392,27 @@ class FeedbackAgent:
             lines.append(f"  Trend: CTR {ctr_trend:+.1%}")
             lines.append(f"  Recommendation: {rec}")
             lines.append("")
+
+        # FEED-16 (V2): Funnel-drop diagnosis block (only if provided AND
+        # at least one cohort has a non-"none" drop_stage). Section header is
+        # "Funnel Drop Diagnosis:" — neutral wording per CLAUDE.md vocabulary.
+        if funnel_diagnosis:
+            drop_lines: list[str] = []
+            for cohort, d in funnel_diagnosis.items():
+                if d.get("drop_stage") in (None, "none"):
+                    continue
+                drop_rate     = d.get("drop_rate")     or 0.0
+                baseline_rate = d.get("baseline_rate") or 0.0
+                delta_pct     = d.get("delta_pct")     or 0.0
+                drop_lines.append(
+                    f"- {cohort}: funnel drop at {d['drop_stage']} stage "
+                    f"(rate {drop_rate:.1%} vs cohort baseline "
+                    f"{baseline_rate:.1%}, delta {delta_pct:+.0%})"
+                )
+            if drop_lines:
+                lines.append("Funnel Drop Diagnosis:")
+                lines.extend(drop_lines)
+                lines.append("")
 
         lines.append("Creative Insights:")
 

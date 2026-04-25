@@ -115,6 +115,10 @@ CPA_BASELINE_PERCENTILE = 50  # Median CPA used as baseline for z-score calc
 CPA_Z_SCORE_THRESHOLD = 2.0   # Number of std devs above baseline to flag underperformance
 CTR_DECLINE_THRESHOLD = 0.10   # 10% week-over-week decline triggers underperformance flag
 
+# FEED-16 (V2): flag a funnel stage as a "drop" when its rate is >= 30% below
+# the cohort's stage-median rate. Configurable via .env.
+FUNNEL_DROP_ALERT_THRESHOLD = float(os.getenv("FUNNEL_DROP_ALERT_THRESHOLD", "0.30"))
+
 # Reaction handler configuration
 REACTION_EMOJI_MAPPING = {
     "thumbsup": "PAUSE",        # 👍 = pause cohort
