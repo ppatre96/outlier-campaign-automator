@@ -162,3 +162,95 @@ print(report.summary())
 python scripts/dry_run.py --flow-id <test_flow>
 # Check console output for inline validation reports
 ```
+
+## Weekly Feedback Loop (Phase 2.5 V2)
+
+`scripts/weekly_feedback_loop.py` runs every Monday 09:00 IST via launchd. It wires
+the v1 creative/cohort alerts + V2 full-funnel analysis + sentiment mining + ICP
+drift detection into one consolidated Slack post.
+
+### Cron setup (macOS) — USER ACTION REQUIRED
+
+The launchd plist at `~/Library/LaunchAgents/com.outlier.weekly-reports.plist` is
+the ONLY scheduled entry. Any `crontab` entry calling `scripts/post_weekly_reports.py`
+should be DELETED — the orchestrator already calls v1 in-process. Currently the
+machine has BOTH a crontab line AND a launchd plist running the v1 script (Pitfall
+1 from RESEARCH-V2). Run these commands to switch over to the new orchestrator:
+
+**1. Update the launchd plist `ProgramArguments`** to point at the orchestrator:
+
+Open the plist:
+
+    open -e ~/Library/LaunchAgents/com.outlier.weekly-reports.plist
+
+Find the `<key>ProgramArguments</key>` block and change:
+
+    <string>/Users/pranavpatre/outlier-campaign-agent/scripts/post_weekly_reports.py</string>
+
+to:
+
+    <string>/Users/pranavpatre/outlier-campaign-agent/scripts/weekly_feedback_loop.py</string>
+
+**2. Reload launchd** so the change takes effect:
+
+    launchctl unload ~/Library/LaunchAgents/com.outlier.weekly-reports.plist
+    launchctl load   ~/Library/LaunchAgents/com.outlier.weekly-reports.plist
+
+**3. Remove the duplicate crontab entry** (the line that calls
+`post_weekly_reports.py`):
+
+    crontab -l | grep -v post_weekly_reports | crontab -
+
+**4. Verify both are correct:**
+
+    crontab -l | grep post_weekly_reports        # MUST return empty
+    launchctl list | grep com.outlier.weekly      # shows the loaded job
+    grep weekly_feedback_loop.py ~/Library/LaunchAgents/com.outlier.weekly-reports.plist
+
+Cron line equivalent: `30 3 * * 1` (Monday 03:30 UTC = 09:00 IST).
+
+### Manual runs
+
+    # Dry run — runs all four steps, writes nothing to Slack, does not trigger reanalysis
+    venv/bin/python3 scripts/weekly_feedback_loop.py --dry-run
+
+    # Force a run even if last_success_ts < 6 days ago
+    venv/bin/python3 scripts/weekly_feedback_loop.py --force
+
+    # Run only one step (debugging)
+    venv/bin/python3 scripts/weekly_feedback_loop.py --only funnel --dry-run
+
+### Logs and state
+
+- Run logs: `logs/weekly_feedback_loop/<yyyy-mm-dd>.log`
+- State file: `data/weekly_feedback_loop_state.json` (idempotency + last_failure_reason)
+- File-lock: `data/weekly_feedback_loop_state.lock` (prevents concurrent runs)
+- ICP snapshots: `data/icp_snapshots/<project_id>/<yyyy-mm-dd>.parquet`
+- Sentiment callouts (consumed by ad-creative-brief-generator): `data/sentiment_callouts.json`
+- Drift state: `data/icp_drift_state.json`
+
+### Active projects for ICP drift
+
+Drift Step D iterates over `data/active_projects.json` (a JSON list of project_id
+strings). If that file does not exist, the orchestrator falls back to the single
+project in `OUTLIER_TRACKING_PROJECT_ID` env var. If neither is set, drift step
+no-ops with a logged warning (other steps still run).
+
+### Env vars to configure
+
+See `.env.example`. The Zendesk and Intercom env vars are optional — without them
+the sentiment miner runs on public sources only.
+
+### Failure handling
+
+Each of the four steps is wrapped in try/except. On any step failure, a minimal
+Slack message is still posted naming the failed step + error class. Check
+`logs/weekly_feedback_loop/<date>.log` for the full traceback.
+
+### Idempotency
+
+The orchestrator persists `last_success_ts` to `data/weekly_feedback_loop_state.json`.
+A re-run within 6 days of a successful run exits cleanly with a "skipping" log
+(unless `--force` is passed). A `filelock.FileLock` with a 10-second timeout
+prevents two concurrent invocations from racing — the second invocation exits
+cleanly with "another instance running".
