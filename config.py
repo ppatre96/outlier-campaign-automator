@@ -130,3 +130,18 @@ CAMPAIGN_UNDERPERFORM_THRESHOLD = float(os.getenv("CAMPAIGN_UNDERPERFORM_THRESHO
 
 # Beam search
 BEAM_CANDIDATES = 12   # generate this many before Stage C
+
+# --- Phase 2.5 V2: Sentiment Miner (FEED-17, FEED-18, FEED-19) ---
+SENTIMENT_THEME_MIN_EVIDENCE = int(os.getenv("SENTIMENT_THEME_MIN_EVIDENCE", "3"))
+SENTIMENT_LOOKBACK_DAYS      = int(os.getenv("SENTIMENT_LOOKBACK_DAYS", "7"))
+SENTIMENT_REDDIT_SUBS        = [s.strip() for s in os.getenv(
+    "SENTIMENT_REDDIT_SUBS", "Outlier_AI,BeerMoney,WorkOnline"
+).split(",") if s.strip()]
+
+# Zendesk Search API (HTTP Basic {email}/token:{api_token}) — empty = skip source
+ZENDESK_SUBDOMAIN   = os.getenv("ZENDESK_SUBDOMAIN", "")
+ZENDESK_EMAIL       = os.getenv("ZENDESK_EMAIL", "")
+ZENDESK_API_TOKEN   = os.getenv("ZENDESK_API_TOKEN", "")
+
+# Intercom Conversations API (Bearer) — empty = skip source
+INTERCOM_ACCESS_TOKEN = os.getenv("INTERCOM_ACCESS_TOKEN", "")
