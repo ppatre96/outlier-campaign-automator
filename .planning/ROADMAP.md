@@ -11,7 +11,7 @@
 
 - [x] **Phase 1: Pipeline Integrity** — Fix all silent skips and hard blockers so a full dry run completes end-to-end
 - [x] **Phase 2: Observability & Storage** — Close the reporting loop with Slack delivery, Drive persistence, and lifecycle monitoring (completed 2026-04-21)
-- [~] **Phase 2.5: Feedback Loops & Experimentation** — v1 shipped 2026-04-21 (creative/cohort CTR+CPA + experiment backlog + Slack reaction reanalysis). V2 re-opened 2026-04-24 to extend with full-funnel conversion (signup → screening pass → activation), social + support sentiment mining, automatic weekly ICP drift detection, and cron-scheduled orchestration.
+- [x] **Phase 2.5: Feedback Loops & Experimentation** — v1 shipped 2026-04-21 (creative/cohort CTR+CPA + experiment backlog + Slack reaction reanalysis). V2 shipped 2026-04-25 with full-funnel conversion (signup → screening pass → activation), public + internal sentiment mining, automatic weekly ICP drift detection, and cron-scheduled orchestration.
 - [ ] **Phase 3.1: Figma Creative Replication Integration** — Integrate completed Figma layer builder into agent pipeline; pass photo_base64 and create editable frames
 - [ ] **Phase 3: Campaign Expansion** — Regenerate STEM InMails with the winning financial angle and extend targeting buckets
 
