@@ -102,6 +102,23 @@ SLACK_BOT_TOKEN   = os.getenv("SLACK_BOT_TOKEN", "")
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
 SLACK_REPORT_USER = "U095J930UEL"   # pranav.patre@scale.com
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 2.6 — Smart Ramp Auto-Trigger (poller + notifier)
+# ─────────────────────────────────────────────────────────────────────────────
+SMART_RAMP_POLL_INTERVAL_SECONDS = int(os.getenv("SMART_RAMP_POLL_INTERVAL_SECONDS", "900"))
+SMART_RAMP_FAILURE_THRESHOLD     = int(os.getenv("SMART_RAMP_FAILURE_THRESHOLD", "5"))
+SMART_RAMP_TEST_REQUESTER_PATTERN = os.getenv("SMART_RAMP_TEST_REQUESTER_PATTERN", r"\btest\b")
+
+SLACK_DIEGO_USER_ID         = os.getenv("SLACK_DIEGO_USER_ID", "U08AW9FCP27")
+SLACK_RAMP_NOTIFY_CHANNEL   = os.getenv("SLACK_RAMP_NOTIFY_CHANNEL", "C0B0NBB986L")
+# Three notification targets per success/escalation message: Pranav DM + Diego DM + shared channel.
+# Each tuple is (kind, id); kind ∈ {"user", "channel"}. Notifier iterates this list.
+SLACK_RAMP_NOTIFY_TARGETS   = [
+    ("user", SLACK_REPORT_USER),
+    ("user", SLACK_DIEGO_USER_ID),
+    ("channel", SLACK_RAMP_NOTIFY_CHANNEL),
+]
+
 # Slack reaction handler configuration (Phase 2.5 feedback loop)
 SLACK_REACTION_BOT_USER_ID = os.getenv("SLACK_REACTION_BOT_USER_ID", "")  # Bot user ID for reaction events
 # NOTE: SLACK_FEEDBACK_CHANNEL_ID is the direct message channel with the feedback alert bot.
