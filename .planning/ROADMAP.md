@@ -314,7 +314,7 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 02.6-01-PLAN.md — Smart Ramp poller + state file + edit detection (SR-01, SR-02, SR-05, SR-08, SR-10)
+- [x] 02.6-01-PLAN.md — Smart Ramp poller + state file + edit detection (SR-01, SR-02, SR-05, SR-08, SR-10) — COMPLETE 2026-04-27 (commits b1d29e8, b3bb228, 3aaef04)
 - [ ] 02.6-02-PLAN.md — Pipeline runner: both InMail + Static per cohort + image-local fallback (SR-03, SR-04)
 - [ ] 02.6-03-PLAN.md — Slack notifier + launchd plist + integration tests (SR-06, SR-07, SR-09)
 
@@ -413,6 +413,7 @@ Plans:
 | 2. Observability & Storage | 4/4 | Complete   | 2026-04-21 |
 | 2.5. Feedback Loops & Experimentation | 4/4 | Complete    | 2026-04-21 |
 | 3.1. Figma Creative Integration | 1/1 | Complete | 2026-04-21 |
+| 2.6. Smart Ramp Auto-Trigger | 1/3 | In Progress | — |
 | 3. Campaign Expansion | 0/2 | Ready | — |
 
 ---
@@ -459,16 +460,16 @@ Plans:
 | FEED-21 | Phase 2.5 V2 | Pending |
 | FEED-22 | Phase 2.5 V2 | Complete |
 | FEED-23 | Phase 2.5 V2 | Complete |
-| SR-01 | Phase 2.6 | Pending |
-| SR-02 | Phase 2.6 | Pending |
+| SR-01 | Phase 2.6 | Complete (code; plist via Plan 03) |
+| SR-02 | Phase 2.6 | Complete |
 | SR-03 | Phase 2.6 | Pending |
 | SR-04 | Phase 2.6 | Pending |
-| SR-05 | Phase 2.6 | Pending |
+| SR-05 | Phase 2.6 | Complete |
 | SR-06 | Phase 2.6 | Pending |
-| SR-07 | Phase 2.6 | Pending |
-| SR-08 | Phase 2.6 | Pending |
+| SR-07 | Phase 2.6 | Pending (gate flipped here; DM in Plan 03) |
+| SR-08 | Phase 2.6 | Complete |
 | SR-09 | Phase 2.6 | Pending |
-| SR-10 | Phase 2.6 | Pending |
+| SR-10 | Phase 2.6 | Complete |
 | IMG-01 | Phase 3.1 | Pending |
 | IMG-02 | Phase 3.1 | Pending |
 | IMG-03 | Phase 3.1 | Pending |

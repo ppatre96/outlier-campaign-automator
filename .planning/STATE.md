@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Ready to plan
-last_updated: "2026-04-25T04:17:18.555Z"
+status: In Progress (Phase 2.6 Plan 01 complete)
+last_updated: "2026-04-27T19:56:39Z"
 progress:
-  total_phases: 5
+  total_phases: 6
   completed_phases: 4
-  total_plans: 21
-  completed_plans: 20
+  total_plans: 24
+  completed_plans: 21
 ---
 
 # Project State
@@ -18,9 +18,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-21)
 
 **Core value:** End-to-end campaign automation from screening data to live LinkedIn campaign — zero manual steps once triggered.
-**Current focus:** Phase 02.5 — feedback-loops-experimentation
+**Current focus:** Phase 02.6 — smart-ramp-auto-trigger (Plan 01 complete; Plan 02 next)
 
 ## Current Phase
+
+**Phase 2.6 — Smart Ramp Auto-Trigger**
+Goal: Eliminate the manual `python main.py --ramp-id <id>` step by polling Smart Ramp every 15 minutes; auto-run the full pipeline + Slack-notify Pranav + Diego on success or 5-failure escalation.
+
+**Status: Plan 01 complete (poller scaffolding + state IO + edit detection). Plan 02 (real pipeline call replacing the STUB) and Plan 03 (Slack notifier + launchd plist) remaining.**
+
+- Plan 01 (Poller + state file + edit detection) — COMPLETE 2026-04-27 (commits b1d29e8, b3bb228, 3aaef04)
+- Plan 02 (Pipeline runner: InMail + Static per cohort + image-local fallback) — PENDING
+- Plan 03 (Slack notifier + launchd plist + integration tests) — PENDING
+
+## Previous Phase
 
 **Phase 2.5 — Feedback Loops & Experimentation (V2 extension)**
 Goal: Enable continuous optimization by collecting creative/cohort performance feedback, generating experiment hypotheses, and driving weekly A/B testing.
@@ -54,6 +65,13 @@ Goal: Enable continuous optimization by collecting creative/cohort performance f
 
 ## Decisions
 
+- [Phase 02.6-01]: compute_signature LOCKED verbatim per CONTEXT.md — sha256 over (json.dumps([asdict(c) for c in sorted(cohorts, key=id)], sort_keys=True) + summary + updated_at). Pre-seeded data/processed_ramps.json (commit fc3ad60, 8 ramps) classifies as noop on first poll because signatures match exactly.
+- [Phase 02.6-01]: filelock.FileLock(timeout=5) wraps run_once; Timeout → log "previous poll still running" + return 0 (NOT raise). Pattern matches Phase 2.5 V2 weekly_feedback_loop.py.
+- [Phase 02.6-01]: Atomic state write via tempfile.mkstemp + os.fsync + os.replace; mid-write SIGKILL test proves no partial JSON + no .tmp leftovers (Pitfall 5).
+- [Phase 02.6-01]: Test-ramp filter uses word-boundary regex r"\btest\b" via config.SMART_RAMP_TEST_REQUESTER_PATTERN; "Quintin Au Test" filtered, "Christopher Testov" NOT filtered (Pitfall 10).
+- [Phase 02.6-01]: 5-failure escalation gate flips escalation_dm_sent=True at threshold; _should_block_for_escalation prevents reprocessing until consecutive_failures resets to 0. DM send itself owned by Plan 03.
+- [Phase 02.6-01]: run_ramp_pipeline kept as STUB returning mock-success dict; explicit comment marks Plan 02 as the replacement. Surrounding orchestration (signature/escalation/state) is final.
+- [Phase 02.6-01]: Vocabulary substitution in log line — "manual reset required" → "manual reset strongly encouraged" per CLAUDE.md.
 - Set `LINKEDIN_INMAIL_SENDER_URN=urn:li:person:vYrY4QMQH0` (Tuan's URN) for InMail testing (D-06) — 2026-04-20
 - `create_image_ad` failure now logs tiered RuntimeError handler with LINKEDIN_MEMBER_URN check and scope explanation (`r_liteprofile`/`rw_organization_admin`) (D-07) — 2026-04-20
 - Remove has_mj guard — creative generation now runs via LITELLM_API_KEY unconditionally (D-01) — 2026-04-21
@@ -89,6 +107,7 @@ Goal: Enable continuous optimization by collecting creative/cohort performance f
 
 ## Session Notes
 
+- 2026-04-27 (plan 02.6-01): Smart Ramp poller scaffolding complete. scripts/smart_ramp_poller.py (~330 LOC) — load_dotenv-first orchestrator with filelock concurrency guard (timeout=5 → log + return 0 on contention), atomic state IO (tempfile + os.fsync + os.replace), sha256 content signature over sorted cohort dicts + summary + updated_at, edit-detection classifier (new/edit/noop), word-boundary test-ramp filter via config.SMART_RAMP_TEST_REQUESTER_PATTERN, 5-failure escalation gate (flips escalation_dm_sent=True; DM send in Plan 03). run_ramp_pipeline kept as STUB returning mock-success dict; Plan 02 replaces with `from main import run_launch_for_ramp`. CLI flags: --once, --ramp-id <id>, --dry-run. compute_signature locked verbatim so 8 pre-seeded ramps in data/processed_ramps.json (commit fc3ad60) classify as noop on first poll. config.py +5 constants (SMART_RAMP_POLL_INTERVAL_SECONDS=900, SMART_RAMP_FAILURE_THRESHOLD=5, SMART_RAMP_TEST_REQUESTER_PATTERN=r"\btest\b", SLACK_DIEGO_USER_ID=U08AW9FCP27, SLACK_RAMP_NOTIFY_CHANNEL=C0B0NBB986L) + SLACK_RAMP_NOTIFY_TARGETS list of 3 (kind, id) tuples. requirements.txt: filelock>=3.28.0 already pinned (Phase 2.5 V2). 6 unit tests, all mocked, all green: signature stability + cohort-permutation invariance, atomic write (no partial JSON on simulated SIGKILL), edit detection v2 (version=2 + ramp_versions["<id>_v1"].superseded=True), test-requester filter (positive AND negative case), filelock contention (returns 0), 5-failure escalation (consecutive_failures=5 → escalation_dm_sent=True; reset releases gate). 76/76 total tests green (70 baseline + 6 new). Vocabulary scan clean — every log/state-file string passes CLAUDE.md banned-token regex; one substitution made ("manual reset required" → "manual reset strongly encouraged"). tests/fixtures/ramp_GMR-0010.json (3 cohorts) created for replay testing in this plan AND Plan 03 e2e. SR-01, SR-02, SR-05, SR-08, SR-10 marked complete (SR-01 caveat: plist install is USER ACTION via Plan 03). SR-07 gate flipped here; DM owned by Plan 03. Commits: b1d29e8 (config constants), b3bb228 (orchestrator), 3aaef04 (tests + fixture). Duration: 5m 39s. Plan 02.6-01 COMPLETE.
 - 2026-04-25 (plan 02.5-08): Weekly Cron Orchestrator complete in code. scripts/weekly_feedback_loop.py (546 LOC) wires v1 alerts (Step A) + V2 funnel (Step B) + V2 sentiment (Step C) + V2 ICP drift (Step D) into one Monday 09:00 IST cron with filelock.FileLock(timeout=10) idempotency guard, 6-day SKIP_WINDOW from data/weekly_feedback_loop_state.json.last_success_ts (--force bypasses), step isolation via per-step try/except (one step failing never aborts others), loud-failure Slack contract (always posts even on failure), dry-run safety (--dry-run skips both Slack post and check_and_trigger reanalysis). load_dotenv() before import config (Pitfall 6 fix). 4-section consolidated Slack message (Creative Progress Alerts -> Funnel Drop Diagnosis -> Sentiment Themes -> ICP Drift) using approved Outlier vocabulary. 5 unit tests passing (test_idempotency, test_dry_run, test_step_isolation, test_consolidated_slack, test_slack_vocabulary), 48/48 total tests green. requirements.txt: filelock>=3.28.0 pinned. README.md +92 lines documenting cron setup + manual run commands + log/state paths. USER ACTION REQUIRED: launchd plist edit + crontab dedup commands (system-level changes the agent does NOT execute per critical_constraints; documented in README + 02.5-08-SUMMARY). FEED-22/FEED-23 code-complete. Plan 08 of Phase 2.5 V2 COMPLETE. Commits: bec625c (filelock pin), bc8660b (orchestrator), d591c47 (tests), dca53d0 (README). Progress: [██████████] 95%
 - 2026-04-25 (plan 02.5-07): ICP Drift Monitor complete. src/icp_drift_monitor.py (264 LOC) with snapshot/compute_drift/check_and_trigger/categorical_kl public API. scipy.stats.entropy for KL divergence with EPSILON=1e-10 zero-bin guard (no hand-rolled math). Drift score = max(categorical KL across worker_source/resume_degree/resume_field/resume_job_title/experience_band) + sum(numeric abs-mean-shifts across total_payout_attempts/task_count_30d). Auto-triggers ReanalysisOrchestrator.trigger_reanalysis(reason="icp_drift") when drift > ICP_DRIFT_THRESHOLD AND n_rows >= ICP_DRIFT_MIN_ROWS AND no reanalysis in past 7d. Per-project last_reanalysis_ts persisted in data/icp_drift_state.json with strict < 7-day comparison (boundary-tested). 5 unit tests (4 required + 1 boundary), all mocked, all green. config.py +3 constants (ICP_DRIFT_THRESHOLD=0.15, ICP_DRIFT_MIN_ROWS=200, ICP_DRIFT_LOOKBACK_WEEKS=4). requirements.txt pinned pyarrow>=23.0.0. FEED-20, FEED-21 complete. Plan 07 of Phase 2.5 V2 COMPLETE. Commits: 598bbe7, a7aac61, 741dcf5. Progress: [█████████░] 90%
 - 2026-04-25 (plan 02.5-06): Sentiment Miner complete. src/sentiment_miner.py (611 lines) with 6 fetchers (Reddit, Trustpilot, Glassdoor, Discourse, Zendesk, Intercom) + LiteLLM theme extractor + JSON writer. Apple/Google Play deliberately skipped (no native mobile app). 5 unit tests passing, all mocked. .env.example created (first in repo). Brief generator agent extended with Sentiment-Driven Copy Inputs section. FEED-17, FEED-18, FEED-19 complete. Plan 06 of Phase 2.5 V2 COMPLETE. Commits: 55ce247, d787c20, 724e1f5, 207c557. Progress: [█████████░] 86%
@@ -101,6 +120,29 @@ Goal: Enable continuous optimization by collecting creative/cohort performance f
 - 2026-04-20: LinkedIn API session — campaign group, campaign, image upload all working. `create_image_ad` blocked on DSC post author. Performance: Stage A/B 8 sec (was 43 min).
 
 ## Last Session
+
+Completed Phase 02.6 Plan 01 (Smart Ramp Poller + State File + Edit Detection) — 2026-04-27
+
+- scripts/smart_ramp_poller.py (~330 LOC): main() + run_once() + 8 supporting helpers (compute_signature, _classify_action, _mark_superseded, _write_state_atomic, _read_state, _should_skip_test_ramp, _should_block_for_escalation, run_ramp_pipeline STUB, process_ramp)
+- CLI flags: --once (default under launchd), --ramp-id <id> (force-process bypassing signature noop), --dry-run (no state write, no Slack)
+- load_dotenv runs at module top BEFORE the config-module import (Pitfall 3 from Phase 2.5 V2)
+- filelock.FileLock(str(LOCK_PATH), timeout=5) wraps run_once entirely; concurrent invocation exits 0 cleanly with "previous poll still running" log (Pitfall 8/9)
+- compute_signature: sha256("sha256:" + hex) over (json.dumps([asdict(c) for c in sorted(cohorts, key=id)], sort_keys=True) + "\n" + summary + "\n" + updated_at). Deterministic across re-fetches AND cohort-list permutations. Locked verbatim per CONTEXT.md so 8 pre-seeded GMR-* ramps (data/processed_ramps.json commit fc3ad60) classify as noop on first poll.
+- _write_state_atomic: tempfile.mkstemp(dir=STATE_PATH.parent) + fsync + os.replace; on exception unlinks tmp; never leaves STATE_PATH partially written (Pitfall 5). Tested via mock os.replace(boom) → original state untouched + no .tmp leftovers.
+- _should_skip_test_ramp: word-boundary regex via config.SMART_RAMP_TEST_REQUESTER_PATTERN (default r"\btest\b"). Pitfall 10: "Quintin Au Test" filtered, "Christopher Testov" NOT filtered (substring match would have wrongly skipped it).
+- _classify_action / _mark_superseded: edit detection bumps version, archives prior live entry to ramp_versions["<id>_v<n>"] with superseded=True; live entry overwritten with new content. Live entry's superseded stays False (only the historical snapshot is True).
+- 5-failure escalation gate: process_ramp increments consecutive_failures on each failure; on hitting SMART_RAMP_FAILURE_THRESHOLD (default 5) flips escalation_dm_sent=True. _should_block_for_escalation prevents re-processing until consecutive_failures resets to 0 (manual file edit). Plan 03 owns the actual DM send.
+- run_ramp_pipeline kept as STUB returning {"ok": True, "campaign_groups": [], "inmail_campaigns": [], "static_campaigns": [], "creative_paths": {}, "per_cohort": [...]} — same dict shape Plan 02 must populate. Marked with explicit STUB comment.
+- 6 unit tests, all mocked (tmp_path + monkeypatch), all green: test_signature_stable_across_refetch, test_state_atomic_write, test_edit_detection_v2, test_test_requester_filtered (positive AND negative), test_filelock_prevents_overlap (held FileLock → main() returns 0), test_escalation_after_5_failures (consecutive_failures=5 → escalation_dm_sent=True; reset releases gate). 76/76 total tests green (70 baseline + 6 new). No regressions.
+- config.py +5 constants: SMART_RAMP_POLL_INTERVAL_SECONDS=900, SMART_RAMP_FAILURE_THRESHOLD=5, SMART_RAMP_TEST_REQUESTER_PATTERN=r"\btest\b", SLACK_DIEGO_USER_ID="U08AW9FCP27", SLACK_RAMP_NOTIFY_CHANNEL="C0B0NBB986L". Plus SLACK_RAMP_NOTIFY_TARGETS list of 3 (kind, id) tuples [("user", SLACK_REPORT_USER), ("user", SLACK_DIEGO_USER_ID), ("channel", SLACK_RAMP_NOTIFY_CHANNEL)].
+- requirements.txt: filelock>=3.28.0 already pinned (Phase 2.5 V2 — verify-only, no edit).
+- tests/fixtures/ramp_GMR-0010.json (3 cohorts) for replay testing.
+- Vocabulary clean: every log + state-file string passes the CLAUDE.md banned-token regex; one substitution applied ("manual reset required" → "manual reset strongly encouraged" per the "required" → "strongly encouraged" rule).
+- Self-check passed: all 4 created files present (poller, tests, fixture, summary), all 3 commits in git log, 76/76 tests green, --help lists all CLI flags, load_dotenv ordering verified, vocabulary scan clean.
+- Requirements marked complete: SR-01 (code-complete; plist USER ACTION via Plan 03), SR-02, SR-05, SR-08, SR-10. SR-07 gate is flipped here but the DM send is Plan 03's scope.
+- Commits: b1d29e8 (config constants), b3bb228 (orchestrator), 3aaef04 (tests + fixture)
+
+## Previous Session
 
 Completed Phase 02.5 V2 Plan 08 (Weekly Cron Orchestrator) — 2026-04-25
 
@@ -127,7 +169,7 @@ Completed Phase 02.5 V2 Plan 08 (Weekly Cron Orchestrator) — 2026-04-25
 
 Phase 2.5 V2 is now 8/8 plans complete. Optimization loop closed end-to-end: weekly cron -> v1 alerts + V2 funnel/sentiment/drift -> consolidated Slack post -> outlier-data-analyst auto-reanalysis on drift -> new cohorts back to campaign-manager.
 
-## Previous Session
+## Earlier Session
 
 Completed Phase 02.5 V2 Plan 07 (ICP Drift Monitor) — 2026-04-25
 
@@ -149,15 +191,14 @@ Completed Phase 02.5 V2 Plan 07 (ICP Drift Monitor) — 2026-04-25
 
 ## Next Step
 
-**Phase 02.5 V2 is now 8/8 plans code-complete.** Plan 08 (Weekly Cron Orchestrator) closed the optimization loop. Outstanding work is operational, not code:
+**Phase 02.6 Plan 01 complete (2026-04-27).** Poller scaffolding shipped; STUB pipeline call awaits Plan 02 wiring. Next plans:
 
-1. **USER ACTION REQUIRED — switch live cron to new orchestrator:**
-   - Edit `~/Library/LaunchAgents/com.outlier.weekly-reports.plist` ProgramArguments to `scripts/weekly_feedback_loop.py` (currently points at `post_weekly_reports.py`)
-   - `launchctl unload` + `launchctl load` the plist
-   - `crontab -l | grep -v post_weekly_reports | crontab -` to remove the duplicate cron line (Pitfall 1 fix)
-   - Verify: `crontab -l | grep post_weekly_reports` returns empty AND `grep weekly_feedback_loop.py ~/Library/LaunchAgents/com.outlier.weekly-reports.plist` matches
-   - Full command sequence in `README.md` "Weekly Feedback Loop (Phase 2.5 V2)" section
+1. **Phase 02.6 Plan 02 — Pipeline runner.** Replace `run_ramp_pipeline` STUB body with `from main import run_launch_for_ramp`. For each cohort produce BOTH InMail and Static campaigns; on LinkedIn `create_image_ad` 403 fall back to local PNG at `data/ramp_creatives/<ramp_id>/<cohort_id>_<inmail|static>_<angle>__<urlencoded_campaign_name>.png`. Per-cohort try/except so one cohort failing does not abort the ramp. SR-03, SR-04 marked complete on landing.
 
-2. **Optional — populate `data/active_projects.json`** OR set `OUTLIER_TRACKING_PROJECT_ID` env var so Step D (drift) actually scans projects. Without this, Step D no-ops with "no active projects configured" (other steps still run normally).
+2. **Phase 02.6 Plan 03 — Slack notifier + launchd plist + integration tests.** `src/smart_ramp_notifier.py` posts the consolidated Slack message to all 3 targets (`SLACK_RAMP_NOTIFY_TARGETS` already configured by Plan 01). Escalation DM fires when `escalation_dm_sent` was just flipped (Plan 01 owns the flag; Plan 03 owns the send). Install `~/Library/LaunchAgents/com.outlier.smart-ramp-poller.plist` with `StartInterval=900`. SR-06, SR-07, SR-09 marked complete on landing (plist install is USER ACTION per Phase 2.5 V2 precedent).
 
-3. **Next phase candidates:** Phase 3 (campaign-expansion) is the only remaining planned phase; Phase 2.5 V2 is closed.
+**Phase 02.5 V2 USER ACTIONS still outstanding** (carryover from previous sessions, not blocking 02.6):
+- Edit `~/Library/LaunchAgents/com.outlier.weekly-reports.plist` ProgramArguments to `scripts/weekly_feedback_loop.py`
+- `launchctl unload` + `launchctl load` the plist
+- `crontab -l | grep -v post_weekly_reports | crontab -` to dedup
+- Optional: populate `data/active_projects.json` OR set `OUTLIER_TRACKING_PROJECT_ID` for Step D drift coverage
