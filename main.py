@@ -9,10 +9,13 @@ import argparse
 import json
 import logging
 import os
+import shutil
 import sys
 import tempfile
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
 
@@ -26,7 +29,7 @@ from src.linear_client import LinearClient
 from src.features import engineer_features, build_frequency_maps, binary_features
 from src.analysis import stage_a, stage_b   # stage_a is now a dispatcher (support vs lift)
 from src.linkedin_urn import UrnResolver
-from src.linkedin_api import LinkedInClient
+from src.linkedin_api import LinkedInClient, ImageAdResult
 from src.stage_c import stage_c
 from src.figma_creative import (
     FigmaCreativeClient,
@@ -1572,6 +1575,744 @@ def _apply_geo_overrides(
     return facet_urns
 
 
+# ── Phase 2.6: Smart Ramp dual-arm pipeline ──────────────────────────────────
+#
+# These helpers expose run_launch_for_ramp(...) — the programmatic entry point
+# the Smart Ramp poller (scripts/smart_ramp_poller.py) calls in-process. They
+# are ADDITIVE — the legacy `_process_row` flow (used by the manual
+# `python main.py --ramp-id <id>` CLI) keeps working unchanged.
+#
+# Locked design (CONTEXT.md):
+#   - Stage A/B/C cohort discovery runs ONCE per row (Pitfall 1) via
+#     _resolve_cohorts(...).
+#   - For every cohort, BOTH _process_inmail_campaigns(...) AND
+#     _process_static_campaigns(...) fire (SR-03).
+#   - LinkedIn create_image_ad 403 / LINKEDIN_MEMBER_URN errors translate to
+#     ImageAdResult(status="local_fallback") and the PNG is copied to
+#     data/ramp_creatives/<ramp_id>/<cohort_id>_<mode>_<angle>__<safe_name>.png
+#     (SR-04). One cohort's failure NEVER aborts other cohorts.
+
+
+@dataclass
+class ResolvedCohorts:
+    """Output of _resolve_cohorts() — Stage A/B/C done; ready for both arms."""
+    selected: list = field(default_factory=list)
+    group_name: str = ""
+    exclude_pairs: list = field(default_factory=list)
+    project_id: str | None = None
+    tg_cat: str = ""
+    ad_type_hint: str = ""  # "INMAIL" or "STATIC" or "" — for compat with legacy callers
+    geo_overrides_applied: bool = False
+    # Pass-through context the campaign-creation arms need that we already
+    # resolved (so we don't re-fetch the project meta or rebuild exclude URNs):
+    family_exclude_pairs: list = field(default_factory=list)
+    data_driven_exclude_pairs: list = field(default_factory=list)
+    flow_id: str = ""
+    location: str = ""
+
+
+def _resolve_cohorts(
+    row: dict,
+    *,
+    sheets,
+    snowflake,
+    li_client,
+    urn_res,
+    claude_key: str,
+    flow_id: str = "",
+    config_name: str = "",
+    project_id: str | None = None,
+    location: str = "",
+    dry_run: bool = False,
+) -> ResolvedCohorts:
+    """Run Stage 1 → Stage A → Stage B → Stage C cohort discovery for a single
+    row. Returns a ResolvedCohorts dataclass with `selected` populated.
+
+    CRITICAL invariant (Pitfall 1): this MUST be called ONCE per row, even when
+    both InMail and Static arms run for the same row. Calling it twice would
+    double the ~30s of Snowflake/Stage work per ramp.
+
+    Mirrors the cohort-discovery block in `_process_row` (lines 240-490). Kept
+    independent from `_process_row` so the dual-arm `_process_row_both_modes`
+    flow can call it once and dispatch BOTH arms with the same result.
+    """
+    from src.analysis import (
+        pick_target_tier,
+        small_sample_signals,
+        stage_a_negative,
+        MIN_POSITIVES_FOR_STATS,
+        MIN_POSITIVES_FOR_SIGNALS,
+    )
+    from src.icp_exemplars import build_exemplars
+    from src.linkedin_urn import feature_col_to_exclude_pair
+    from src.icp_from_jobpost import (
+        extract_base_role_candidates,
+        base_role_feature_columns,
+        required_skill_feature_columns,
+        family_exclusions_for,
+        derive_icp_from_job_post,
+    )
+
+    # 1. Stage 1 data pull (mirrors _process_row).
+    if project_id:
+        df_raw = snowflake.fetch_stage1_contributors(project_id)
+    else:
+        df_raw = snowflake.fetch_screenings(
+            flow_id, config_name,
+            project_id=project_id,
+            end_date=date.today().isoformat(),
+        )
+    if df_raw.empty:
+        log.warning(
+            "_resolve_cohorts: no Stage 1 data for project=%s flow=%s — empty result",
+            project_id, flow_id,
+        )
+        return ResolvedCohorts(flow_id=flow_id, location=location, project_id=project_id)
+
+    log.info("_resolve_cohorts: raw data %d rows", len(df_raw))
+
+    # 2. Feature engineering
+    df       = engineer_features(df_raw)
+    freqs    = build_frequency_maps(df, min_freq=5)
+    df_bin   = binary_features(df, freqs)
+    bin_cols = [
+        c for c in df_bin.columns
+        if c.startswith((
+            "skills__", "job_titles_norm__", "fields_of_study__",
+            "highest_degree_level__", "accreditations_norm__", "experience_band__",
+        ))
+    ]
+    log.info("_resolve_cohorts: %d binary features", len(bin_cols))
+
+    # 2b. Tiered ICP target selection
+    job_post_meta: dict = {}
+    project_meta: dict = {}
+    try:
+        if flow_id:
+            job_post_meta = snowflake.fetch_job_post_meta(flow_id) or {}
+        if project_id:
+            project_meta = snowflake.fetch_project_meta(project_id) or {}
+    except Exception as exc:
+        log.warning("_resolve_cohorts: meta fetch failed (non-fatal): %s", exc)
+
+    derived_icp: dict = {}
+    description = (job_post_meta.get("description") or project_meta.get("description") or "").strip()
+    if description:
+        try:
+            derived_icp = derive_icp_from_job_post(description) or {}
+        except Exception as exc:
+            log.warning("_resolve_cohorts: derive_icp_from_job_post failed: %s", exc)
+
+    base_role_titles = extract_base_role_candidates(
+        job_post_meta=job_post_meta,
+        project_meta=project_meta,
+        signup_flow_name=config_name or job_post_meta.get("job_name"),
+        derived_tg_label=derived_icp.get("derived_tg_label"),
+    )
+    family_exclude_pairs = family_exclusions_for(
+        job_post_meta=job_post_meta,
+        project_meta=project_meta,
+        signup_flow_name=config_name or job_post_meta.get("job_name"),
+        derived_tg_label=derived_icp.get("derived_tg_label"),
+    )
+
+    target_tier, target_col, n_icp = pick_target_tier(df_bin)
+    log.info("_resolve_cohorts: target tier=%s col=%s n_icp=%d", target_tier, target_col, n_icp)
+
+    if n_icp == 0:
+        log.warning("_resolve_cohorts: zero positives — no cohorts to resolve")
+        return ResolvedCohorts(flow_id=flow_id, location=location, project_id=project_id)
+
+    # Mode = stats vs sparse
+    if n_icp < MIN_POSITIVES_FOR_STATS:
+        log.warning(
+            "_resolve_cohorts: only %d positives (< %d) — sparse mode; no cohorts mined.",
+            n_icp, MIN_POSITIVES_FOR_STATS,
+        )
+        return ResolvedCohorts(flow_id=flow_id, location=location, project_id=project_id)
+
+    # Data-driven exclusions (negative signal)
+    data_driven_exclude_pairs: list = []
+    neg_hits = stage_a_negative(df_bin, bin_cols, target_col)
+    for h in neg_hits:
+        pair = feature_col_to_exclude_pair(h["feature"])
+        if pair:
+            data_driven_exclude_pairs.append(pair)
+
+    # Stage A
+    title_anchor_cols = base_role_feature_columns(base_role_titles, list(df_bin.columns))
+    skill_anchor_cols = required_skill_feature_columns(
+        derived_icp.get("required_skills", []), list(df_bin.columns),
+    )
+    base_role_cols = title_anchor_cols + [c for c in skill_anchor_cols if c not in title_anchor_cols]
+    cohorts_a = stage_a(df_bin, bin_cols, target_col=target_col, base_role_cols=base_role_cols)
+    if not cohorts_a:
+        log.warning("_resolve_cohorts: Stage A returned no cohorts")
+        return ResolvedCohorts(flow_id=flow_id, location=location, project_id=project_id)
+
+    # Stage B (skip when Stage A came from support mode)
+    from_support_mode = any(getattr(c, "support", 0) > 0 for c in cohorts_a)
+    cohorts_b = cohorts_a if from_support_mode else stage_b(df_bin, cohorts_a, target_col=target_col)
+
+    # Stage C with graceful bypass
+    try:
+        selected = stage_c(cohorts_b, urn_res, li_client)
+    except Exception as exc:
+        log.warning("_resolve_cohorts: Stage C unavailable (%s) — falling back to Stage B top cohorts", exc)
+        selected = []
+    if not selected:
+        selected = cohorts_b[:config.MAX_CAMPAIGNS]
+
+    if not selected:
+        log.warning("_resolve_cohorts: no cohorts survived Stage A/B")
+        return ResolvedCohorts(flow_id=flow_id, location=location, project_id=project_id)
+
+    log.info("_resolve_cohorts: %d cohorts selected", len(selected))
+
+    # Persist stg_id / display name on each cohort so downstream arms can use them
+    for cohort in selected:
+        if not getattr(cohort, "_stg_id", None):
+            cohort._stg_id = make_stg_id()
+        if not getattr(cohort, "_stg_name", None):
+            cohort._stg_name = _cohort_display_name(cohort, flow_id, location)
+        if not getattr(cohort, "_facet", None):
+            facet, criteria = _cohort_to_targeting_json(cohort)
+            cohort._facet = facet
+            cohort._criteria = criteria
+
+    group_name = f"Outlier {flow_id} {location}".strip()
+    return ResolvedCohorts(
+        selected=list(selected),
+        group_name=group_name,
+        exclude_pairs=family_exclude_pairs + data_driven_exclude_pairs,
+        project_id=project_id,
+        tg_cat="",  # cohort-level, not row-level — set per-arm via classify_tg
+        ad_type_hint="",
+        geo_overrides_applied=False,
+        family_exclude_pairs=family_exclude_pairs,
+        data_driven_exclude_pairs=data_driven_exclude_pairs,
+        flow_id=flow_id,
+        location=location,
+    )
+
+
+def _save_creative_locally(
+    png_path,
+    ramp_id: str,
+    cohort_id: str,
+    mode: str,            # "inmail" or "static"
+    angle: str,           # "A", "B", "C", "F", etc.
+    campaign_name: str,
+) -> str:
+    """Copy a generated PNG to data/ramp_creatives/<ramp_id>/<cohort>_<mode>_<angle>__<safe_name>.png.
+
+    SR-04: LinkedIn upload-blocked fallback. The PNG already exists at png_path
+    (created by gemini_creative.py); we just copy it under a deterministic name
+    so manual upload knows which campaign it belongs to. Original PNG is
+    preserved (shutil.copy2, NOT shutil.move).
+
+    The campaign_name is URL-encoded via urllib.parse.quote_plus to make it
+    filesystem-safe. Group/campaign names are auto-prefixed with `agent_`
+    upstream (LinkedInClient._prefixed) and are vocabulary-clean per CLAUDE.md.
+
+    Returns the absolute target path as a string.
+    """
+    target_dir = Path("data/ramp_creatives") / ramp_id
+    target_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = quote_plus(campaign_name or "unnamed")
+    target = target_dir / f"{cohort_id}_{mode}_{angle}__{safe_name}.png"
+    shutil.copy2(str(png_path), str(target))
+    log.info("Creative saved locally: %s", target)
+    return str(target)
+
+
+def _process_static_campaigns(
+    selected,
+    *,
+    flow_id: str,
+    location: str,
+    sheets,
+    li_client,
+    urn_res,
+    claude_key: str,
+    figma_file: str = "",
+    figma_node: str = "",
+    mj_token: str = "",
+    dry_run: bool = False,
+    family_exclude_pairs: list | None = None,
+    data_driven_exclude_pairs: list | None = None,
+    destination_url_override: str | None = None,
+    included_geos: list[str] | None = None,
+    ramp_id: str | None = None,
+    cohort_id_override: str | None = None,
+) -> dict:
+    """Static-ad arm — symmetric counterpart to _process_inmail_campaigns.
+
+    For each cohort: generate copy variants → render image (Figma or Gemini) →
+    create LinkedIn campaign → attach image creative (with SR-04 local-fallback
+    if create_image_ad returns ImageAdResult(status="local_fallback")).
+
+    Per-cohort isolation: each cohort's loop body wrapped in try/except so one
+    cohort's failure NEVER aborts the others.
+
+    Returns a dict with the shape Plan 03 / scripts/smart_ramp_poller.py expects:
+      {
+        "campaigns": [campaign_urn, ...],
+        "campaigns_by_cohort": {cohort_id: campaign_urn, ...},
+        "creative_paths": {cohort_id: <urn or local path>, ...},
+      }
+    """
+    family_exclude_pairs = family_exclude_pairs or []
+    data_driven_exclude_pairs = data_driven_exclude_pairs or []
+    included_geos = included_geos or []
+
+    out_campaigns: list[str] = []
+    by_cohort: dict[str, str] = {}
+    creative_paths: dict[str, str] = {}
+
+    if not selected:
+        return {"campaigns": [], "campaigns_by_cohort": {}, "creative_paths": {}}
+
+    # Generate creatives per cohort (mirrors _process_row lines 540-619)
+    has_figma = bool(figma_file and figma_node and claude_key)
+    figma_client = FigmaCreativeClient() if has_figma else None
+    creative_pngs: list[Path | None] = []
+    all_variants_per_cohort: list[list[dict]] = []
+
+    for i, cohort in enumerate(selected):
+        angle_idx = i % 3
+        angle_label = ["A", "B", "C"][angle_idx]
+        variants: list[dict] = []
+        png_path: Path | None = None
+
+        try:
+            layer_map = (
+                figma_client.get_text_layer_map(figma_file, figma_node)
+                if has_figma else {}
+            )
+            variants = build_copy_variants(cohort, layer_map)
+        except Exception as exc:
+            log.warning("Static copy generation failed for '%s': %s", cohort.name, exc)
+
+        all_variants_per_cohort.append(variants)
+        selected_variant = variants[angle_idx] if angle_idx < len(variants) else {}
+
+        if dry_run:
+            creative_pngs.append(None)
+            continue
+
+        # Figma clone path
+        if has_figma and variants:
+            try:
+                tg_label = variants[0].get("tg_label", cohort.name) if variants else cohort.name
+                clone_ids = apply_plugin_logic(figma_file, figma_node, variants, tg_label, claude_key)
+                if clone_ids:
+                    selected_id = clone_ids[angle_idx % len(clone_ids)]
+                    pngs = figma_client.export_clone_pngs(figma_file, [selected_id])
+                    png_path = pngs[0] if pngs else None
+            except Exception as exc:
+                log.warning("Static Figma path failed for '%s': %s — falling back to Gemini", cohort.name, exc)
+
+        # Gemini path
+        if png_path is None and selected_variant:
+            try:
+                from src.figma_creative import rewrite_variant_copy
+                png_path, _qc = generate_imagen_creative_with_qc(
+                    variant=selected_variant,
+                    max_retries=2,
+                    copy_rewriter=rewrite_variant_copy,
+                )
+            except Exception as exc:
+                log.warning("Static Gemini path failed for '%s': %s", cohort.name, exc)
+
+        creative_pngs.append(png_path)
+
+    if dry_run:
+        log.info("[dry-run] _process_static_campaigns: skipping LinkedIn calls (%d cohorts)", len(selected))
+        return {"campaigns": [], "campaigns_by_cohort": {}, "creative_paths": {}}
+
+    # Create campaign group + campaigns
+    group_name = f"Outlier {flow_id} {location} Static".strip()
+    group_urn = li_client.create_campaign_group(group_name)
+    out_groups = [group_urn]
+    log.debug("_process_static_campaigns: group=%s", group_urn)
+
+    default_exclude_urns = urn_res.resolve_default_excludes()
+    family_exclude_urns = urn_res.resolve_facet_pairs(family_exclude_pairs)
+    data_driven_exclude_urns = urn_res.resolve_facet_pairs(data_driven_exclude_pairs)
+    shared_exclude_urns = _merge_urn_dicts(
+        default_exclude_urns, family_exclude_urns, data_driven_exclude_urns,
+    )
+
+    for i, cohort in enumerate(selected):
+        # Per-cohort isolation: wrap each cohort's body in try/except so one
+        # cohort's failure NEVER aborts the others (SR-04 contract).
+        try:
+            facet_urns = urn_res.resolve_cohort_rules(cohort.rules)
+            if included_geos:
+                facet_urns = _apply_geo_overrides(facet_urns, included_geos, urn_res)
+
+            cohort_add_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_add", []) or [])
+            cohort_remove_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_remove", []) or [])
+            cohort_exclude_urns = _subtract_urn_dicts(
+                _merge_urn_dicts(shared_exclude_urns, cohort_add_urns),
+                cohort_remove_urns,
+            )
+
+            campaign_urn = li_client.create_campaign(
+                name=cohort._stg_name,
+                campaign_group_urn=group_urn,
+                facet_urns=facet_urns,
+                exclude_facet_urns=cohort_exclude_urns,
+            )
+            campaign_id = campaign_urn.rsplit(":", 1)[-1]
+            sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
+            out_campaigns.append(campaign_urn)
+            by_cohort_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
+            by_cohort[by_cohort_id] = campaign_urn
+            log.info("_process_static_campaigns: campaign %s for cohort %s", campaign_urn, by_cohort_id)
+
+            # Image attach — sentinel-aware (SR-04).
+            png_path = creative_pngs[i] if i < len(creative_pngs) else None
+            if not (png_path and Path(str(png_path)).exists()):
+                log.info("_process_static_campaigns: no PNG for cohort '%s' — skipping creative attach", cohort.name)
+                continue
+
+            angle_idx = i % 3
+            angle_label = ["A", "B", "C"][angle_idx]
+            variants = all_variants_per_cohort[i] if i < len(all_variants_per_cohort) else []
+            variant = variants[angle_idx] if angle_idx < len(variants) else {}
+            headline = variant.get("headline") or f"Your {_cohort_headline(cohort)} expertise is in demand."
+            subhead = variant.get("subheadline") or "Earn payment doing remote AI tasks on your schedule."
+
+            try:
+                image_urn = li_client.upload_image(png_path)
+                ad_result = li_client.create_image_ad(
+                    campaign_urn=campaign_urn,
+                    image_urn=image_urn,
+                    headline=headline,
+                    description=subhead,
+                    intro_text=variant.get("intro_text", "") if variant else "",
+                    ad_headline=variant.get("ad_headline", "") if variant else "",
+                    ad_description=variant.get("ad_description", "") if variant else "",
+                    cta_button=variant.get("cta_button", "APPLY") if variant else "APPLY",
+                    destination_url=destination_url_override,
+                )
+            except Exception as exc:
+                # upload_image (or other unexpected error) → record as fallback.
+                log.warning("_process_static_campaigns: upload/attach raised for '%s': %s", cohort.name, exc)
+                creative_paths[by_cohort_id] = ""
+                continue
+
+            if ad_result.status == "ok":
+                creative_urn = ad_result.creative_urn
+                sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
+                creative_paths[by_cohort_id] = creative_urn
+                log.info("_process_static_campaigns: creative %s attached", creative_urn)
+            elif ad_result.status == "local_fallback":
+                # SR-04: copy the PNG locally + continue.
+                local_path = _save_creative_locally(
+                    png_path=png_path,
+                    ramp_id=ramp_id or "manual",
+                    cohort_id=by_cohort_id,
+                    mode="static",
+                    angle=angle_label,
+                    campaign_name=cohort._stg_name,
+                )
+                creative_paths[by_cohort_id] = local_path
+                log.warning(
+                    "_process_static_campaigns: creative for cohort %s angle %s saved locally at %s "
+                    "(reason: %s — %s)",
+                    by_cohort_id, angle_label, local_path,
+                    ad_result.error_class, ad_result.error_message,
+                )
+            else:  # status == "error"
+                log.error(
+                    "_process_static_campaigns: create_image_ad hard error for cohort %s: %s — %s",
+                    by_cohort_id, ad_result.error_class, ad_result.error_message,
+                )
+                creative_paths[by_cohort_id] = ""
+        except Exception as exc:
+            # Per-cohort isolation: log + continue with next cohort.
+            log.exception(
+                "_process_static_campaigns: cohort %d '%s' failed — continuing with next cohort: %s",
+                i, getattr(cohort, "name", "?"), exc,
+            )
+            continue
+
+    return {
+        "campaigns": out_campaigns,
+        "campaigns_by_cohort": by_cohort,
+        "creative_paths": creative_paths,
+        "campaign_groups": out_groups,
+        "group_name": group_name,
+    }
+
+
+def _process_row_both_modes(
+    row: dict,
+    *,
+    ramp_id: str,
+    dry_run: bool = False,
+    modes: tuple[str, ...] = ("inmail", "static"),
+    sheets=None,
+    snowflake=None,
+    li_client=None,
+    urn_res=None,
+    claude_key: str = "",
+    inmail_sender: str = "",
+    brand_voice_validator=None,
+    mj_token: str = "",
+    figma_file: str = "",
+    figma_node: str = "",
+) -> dict:
+    """Phase 2.6: run cohort discovery ONCE per row, then dispatch BOTH InMail
+    + Static arms.
+
+    Per-arm isolation: each arm wrapped in try/except so one arm's crash never
+    aborts the other. Per-cohort isolation lives inside each arm.
+    """
+    flow_id = row.get("flow_id", "")
+    location = row.get("location", "")
+    config_name = row.get("config_name") or flow_id
+    project_id = row.get("project_id")
+    cohort_id_override = row.get("cohort_id")
+    destination_url_override = row.get("selected_lp_url")
+    included_geos = row.get("included_geos", []) or []
+
+    resolved = _resolve_cohorts(
+        row,
+        sheets=sheets, snowflake=snowflake, li_client=li_client, urn_res=urn_res,
+        claude_key=claude_key,
+        flow_id=flow_id, config_name=config_name, project_id=project_id,
+        location=location, dry_run=dry_run,
+    )
+
+    if not resolved.selected:
+        log.warning("_process_row_both_modes: no cohorts resolved for row %s — skipping both arms",
+                    cohort_id_override or flow_id or "?")
+        return {
+            "ok": True,
+            "campaign_groups": [],
+            "inmail_campaigns": [],
+            "static_campaigns": [],
+            "creative_paths": {},
+            "per_cohort": [],
+        }
+
+    inmail_result: dict = {"campaigns": [], "campaigns_by_cohort": {}, "creative_paths": {}, "campaign_groups": []}
+    static_result: dict = {"campaigns": [], "campaigns_by_cohort": {}, "creative_paths": {}, "campaign_groups": []}
+
+    if "inmail" in modes:
+        try:
+            r = _process_inmail_campaigns(
+                selected=resolved.selected,
+                flow_id=flow_id,
+                location=location,
+                sheets=sheets,
+                li_client=li_client,
+                urn_res=urn_res,
+                claude_key=claude_key,
+                inmail_sender=inmail_sender,
+                brand_voice_validator=brand_voice_validator,
+                dry_run=dry_run,
+                family_exclude_pairs=resolved.family_exclude_pairs,
+                data_driven_exclude_pairs=resolved.data_driven_exclude_pairs,
+                destination_url_override=destination_url_override,
+                included_geos=included_geos,
+            )
+            # Legacy _process_inmail_campaigns returns None and writes to sheets directly;
+            # to keep backwards compat we synthesize an empty dict if r is None.
+            if isinstance(r, dict):
+                inmail_result.update(r)
+        except Exception:
+            log.exception("_process_row_both_modes: InMail arm aborted — Static arm will still run")
+
+    if "static" in modes:
+        try:
+            r = _process_static_campaigns(
+                selected=resolved.selected,
+                flow_id=flow_id,
+                location=location,
+                sheets=sheets,
+                li_client=li_client,
+                urn_res=urn_res,
+                claude_key=claude_key,
+                figma_file=figma_file,
+                figma_node=figma_node,
+                mj_token=mj_token,
+                dry_run=dry_run,
+                family_exclude_pairs=resolved.family_exclude_pairs,
+                data_driven_exclude_pairs=resolved.data_driven_exclude_pairs,
+                destination_url_override=destination_url_override,
+                included_geos=included_geos,
+                ramp_id=ramp_id,
+                cohort_id_override=cohort_id_override,
+            )
+            if isinstance(r, dict):
+                static_result.update(r)
+        except Exception:
+            log.exception("_process_row_both_modes: Static arm aborted — InMail arm result preserved")
+
+    # Aggregate the per-cohort view.
+    per_cohort = []
+    for c in resolved.selected:
+        cid = cohort_id_override or getattr(c, "id", None) or getattr(c, "_stg_id", "")
+        per_cohort.append({
+            "cohort_id": cid,
+            "cohort_description": getattr(c, "cohort_description", "") or getattr(c, "name", ""),
+            "inmail_urn": inmail_result.get("campaigns_by_cohort", {}).get(cid),
+            "static_urn": static_result.get("campaigns_by_cohort", {}).get(cid),
+            "inmail_creative": inmail_result.get("creative_paths", {}).get(cid),
+            "static_creative": static_result.get("creative_paths", {}).get(cid),
+        })
+
+    return {
+        "ok": True,
+        "campaign_groups": (
+            list(inmail_result.get("campaign_groups") or [])
+            + list(static_result.get("campaign_groups") or [])
+        ),
+        "inmail_campaigns": list(inmail_result.get("campaigns", [])),
+        "static_campaigns": list(static_result.get("campaigns", [])),
+        "creative_paths": {
+            **{f"{k}_inmail": v for k, v in inmail_result.get("creative_paths", {}).items()},
+            **{f"{k}_static": v for k, v in static_result.get("creative_paths", {}).items()},
+        },
+        "per_cohort": per_cohort,
+    }
+
+
+def _ramp_to_rows(ramp) -> list[dict]:
+    """Convert a RampRecord into the row-dict shape `_process_row_both_modes`
+    consumes. Mirrors the logic in run_launch() lines ~120-138 — kept in one
+    place so the CLI and run_launch_for_ramp don't drift.
+    """
+    rows = []
+    for cohort in ramp.cohorts:
+        rows.append({
+            "flow_id": cohort.signup_flow_id or "",
+            "location": "",
+            "ad_type": "",  # Phase 2.6 ignores ad_type — both arms always run
+            "figma_file": "",
+            "figma_node": "",
+            "config_name": ramp.project_name or "",
+            "ramp_id": ramp.id,
+            "cohort_id": cohort.id,
+            "cohort_description": cohort.cohort_description,
+            "selected_lp_url": cohort.selected_lp_url,
+            "included_geos": cohort.included_geos,
+            "matched_locales": cohort.matched_locales,
+            "target_activations": cohort.target_activations,
+            "linear_issue_id": ramp.linear_issue_id,
+            "project_id": ramp.project_id,
+        })
+    return rows
+
+
+def run_launch_for_ramp(
+    ramp_id: str,
+    modes: tuple[str, ...] = ("inmail", "static"),
+    dry_run: bool = False,
+) -> dict:
+    """Programmatic entry point for the Smart Ramp poller (Plan 01).
+
+    Fetches the ramp from Smart Ramp, iterates cohort rows, dispatches BOTH
+    InMail + Static arms per cohort. Returns the aggregated result dict the
+    poller's state file needs.
+
+    Per-row isolation: a single row raising never aborts the rest. Per-cohort
+    isolation lives inside _process_static_campaigns / _process_inmail_campaigns.
+
+    Backwards compat note: this is ADDITIVE. The legacy `python main.py
+    --ramp-id <id>` CLI continues to use the original `_process_row` flow via
+    `run_launch()` — both paths coexist.
+    """
+    client = SmartRampClient()
+    ramp = client.fetch_ramp(ramp_id)
+    if not ramp:
+        return {
+            "ok": False,
+            "error": f"Could not fetch ramp {ramp_id}",
+            "campaign_groups": [],
+            "inmail_campaigns": [],
+            "static_campaigns": [],
+            "creative_paths": {},
+            "per_cohort": [],
+        }
+
+    # Resolve shared dependencies once (sheets / snowflake / li_client / etc.)
+    sheets = SheetsClient()
+    sheet_cfg = sheets.read_config()
+    li_token = (
+        sheet_cfg.get("LINKEDIN_TOKEN")
+        or os.getenv("LINKEDIN_ACCESS_TOKEN")
+        or os.getenv("LINKEDIN_TOKEN")
+        or config.LINKEDIN_TOKEN
+    )
+    if not li_token:
+        return {
+            "ok": False,
+            "error": "LINKEDIN_TOKEN not set",
+            "campaign_groups": [],
+            "inmail_campaigns": [],
+            "static_campaigns": [],
+            "creative_paths": {},
+            "per_cohort": [],
+        }
+    li_client = LinkedInClient(li_token)
+    urn_res = UrnResolver(sheets)
+    snowflake = RedashClient()
+    claude_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY", "")
+    mj_token = sheet_cfg.get("MIDJOURNEY_API_TOKEN") or os.getenv("MIDJOURNEY_API_TOKEN", "")
+    inmail_sender = (
+        sheet_cfg.get("LINKEDIN_INMAIL_SENDER_URN")
+        or os.getenv("LINKEDIN_INMAIL_SENDER_URN", config.LINKEDIN_INMAIL_SENDER_URN)
+    )
+    brand_voice_validator = BrandVoiceValidator()
+
+    aggregated = {
+        "ok": True,
+        "campaign_groups": [],
+        "inmail_campaigns": [],
+        "static_campaigns": [],
+        "creative_paths": {},
+        "per_cohort": [],
+    }
+
+    for row in _ramp_to_rows(ramp):
+        try:
+            outcome = _process_row_both_modes(
+                row,
+                ramp_id=ramp_id,
+                dry_run=dry_run,
+                modes=modes,
+                sheets=sheets,
+                snowflake=snowflake,
+                li_client=li_client,
+                urn_res=urn_res,
+                claude_key=claude_key,
+                inmail_sender=inmail_sender,
+                brand_voice_validator=brand_voice_validator,
+                mj_token=mj_token,
+                figma_file=row.get("figma_file", ""),
+                figma_node=row.get("figma_node", ""),
+            )
+            aggregated["campaign_groups"].extend(outcome.get("campaign_groups", []) or [])
+            aggregated["inmail_campaigns"].extend(outcome.get("inmail_campaigns", []) or [])
+            aggregated["static_campaigns"].extend(outcome.get("static_campaigns", []) or [])
+            aggregated["creative_paths"].update(outcome.get("creative_paths", {}) or {})
+            aggregated["per_cohort"].extend(outcome.get("per_cohort", []) or [])
+        except Exception:
+            log.exception(
+                "run_launch_for_ramp: row failed for ramp=%s cohort=%s — continuing with next row",
+                ramp_id, row.get("cohort_id"),
+            )
+            continue
+
+    return aggregated
+
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def main():
@@ -1601,6 +2342,15 @@ def main():
         help="Post cohort summaries to the Smart Ramp's Linear issue (requires --ramp-id)",
     )
     parser.add_argument(
+        "--modes", nargs="+", default=None, choices=["inmail", "static"],
+        help=(
+            "Phase 2.6 dual-arm dispatch (with --ramp-id). Default = both arms via "
+            "run_launch_for_ramp. Pass `--modes inmail` or `--modes static` for a "
+            "single arm. Without this flag, the legacy single-arm `_process_row` "
+            "flow runs (backwards-compatible)."
+        ),
+    )
+    parser.add_argument(
         "--log-level", default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
@@ -1609,6 +2359,18 @@ def main():
 
     if args.mode == "monitor":
         run_monitor(dry_run=args.dry_run)
+    elif args.ramp_id and args.modes:
+        # Phase 2.6 programmatic dual-arm path — same code the poller uses.
+        modes_tuple = tuple(args.modes)
+        result = run_launch_for_ramp(args.ramp_id, modes=modes_tuple, dry_run=args.dry_run)
+        log.info(
+            "Ramp %s processed via run_launch_for_ramp: ok=%s inmail=%d static=%d cohorts=%d",
+            args.ramp_id, result.get("ok"),
+            len(result.get("inmail_campaigns", [])),
+            len(result.get("static_campaigns", [])),
+            len(result.get("per_cohort", [])),
+        )
+        sys.exit(0 if result.get("ok") else 1)
     else:
         run_launch(dry_run=args.dry_run, flow_id=args.flow_id, project_id=args.project_id, ramp_id=args.ramp_id)
 
