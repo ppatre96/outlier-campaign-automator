@@ -9,13 +9,38 @@ import logging
 import mimetypes
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal, Optional
 
 import requests
 
 import config
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class ImageAdResult:
+    """Result of LinkedIn create_image_ad call.
+
+    Phase 2.6 (SR-04): 403 / LINKEDIN_MEMBER_URN errors return
+    status="local_fallback" so callers can save the PNG locally and continue
+    (instead of aborting the cohort). Other unexpected errors surface as
+    status="error" — caller decides whether to log + skip or re-raise.
+
+    Fields:
+        creative_urn: The LinkedIn adCreative URN on success; None otherwise.
+        local_save_path: Caller populates after `shutil.copy2(png, target)`.
+        status: One of "ok" | "local_fallback" | "error".
+        error_class: Exception class name when not ok.
+        error_message: str(exc) trimmed for logs/state-file display.
+    """
+    creative_urn: Optional[str] = None
+    local_save_path: Optional[str] = None
+    status: Literal["ok", "local_fallback", "error"] = "ok"
+    error_class: Optional[str] = None
+    error_message: Optional[str] = None
 
 _LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
@@ -143,23 +168,68 @@ class LinkedInClient:
 
     # ── Campaign group ─────────────────────────────────────────────────────────
 
+    # Prefix applied automatically to every campaign + campaign-group + creative name
+    # so resources created by this pipeline are easy to find in Campaign Manager.
+    AGENT_NAME_PREFIX = "agent_"
+
+    def _prefixed(self, name: str) -> str:
+        """Return name with AGENT_NAME_PREFIX prepended (idempotent)."""
+        if name.startswith(self.AGENT_NAME_PREFIX):
+            return name
+        return f"{self.AGENT_NAME_PREFIX}{name}"
+
     def create_campaign_group(self, name: str) -> str:
         """
         Create a sponsored content campaign group.
-        Returns the campaign group URN.
+        Returns the campaign group URN. Name auto-prefixed with "agent_".
         """
+        name = self._prefixed(name)
+        # Always create as DRAFT — user-configured default so nothing launches
+        # without an explicit human approval step in LinkedIn Campaign Manager.
         payload = {
             "account":  f"urn:li:sponsoredAccount:{config.LINKEDIN_AD_ACCOUNT_ID}",
             "name":     name,
-            "status":   "ACTIVE",
+            "status":   "DRAFT",
             "runSchedule": {"start": _now_ms()},
         }
         resp = self._req("POST", self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/adCampaignGroups"), json=payload)
         self._raise_for_status(resp, "createCampaignGroup")
         group_id = resp.headers.get("x-linkedin-id") or _id_from_location(resp)
         urn = f"urn:li:sponsoredCampaignGroup:{group_id}"
-        log.info("Created campaign group %s", urn)
+        log.info("Created campaign group %s (name=%s)", urn, name)
         return urn
+
+    def rename_campaign_group(self, group_id_or_urn: str, new_name: str) -> None:
+        """
+        Rename an existing campaign group via PATCH. Auto-prefixes the new name.
+        """
+        new_name = self._prefixed(new_name)
+        group_id = group_id_or_urn.rsplit(":", 1)[-1]
+        payload = {"patch": {"$set": {"name": new_name}}}
+        resp = self._req(
+            "POST",
+            self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/adCampaignGroups/{group_id}"),
+            json=payload,
+            headers={"X-RestLi-Method": "PARTIAL_UPDATE", "Content-Type": "application/json"},
+        )
+        self._raise_for_status(resp, "renameCampaignGroup")
+        log.info("Renamed campaign group %s → %s", group_id, new_name)
+
+    def rename_campaign(self, campaign_id_or_urn: str, new_name: str) -> None:
+        """
+        Rename an existing campaign via PATCH. Auto-prefixes the new name.
+        """
+        new_name = self._prefixed(new_name)
+        campaign_id = campaign_id_or_urn.rsplit(":", 1)[-1]
+        payload = {"patch": {"$set": {"name": new_name}}}
+        resp = self._req(
+            "POST",
+            self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/adCampaigns/{campaign_id}"),
+            json=payload,
+            headers={"X-RestLi-Method": "PARTIAL_UPDATE", "Content-Type": "application/json"},
+        )
+        self._raise_for_status(resp, "renameCampaign")
+        log.info("Renamed campaign %s → %s", campaign_id, new_name)
 
     # ── Campaign ───────────────────────────────────────────────────────────────
 
@@ -169,12 +239,18 @@ class LinkedInClient:
         campaign_group_urn: str,
         facet_urns: dict[str, list[str]],
         daily_budget_cents: int = 5000,
+        exclude_facet_urns: dict[str, list[str]] | None = None,
     ) -> str:
         """
         Create a Sponsored Content campaign with the given targeting.
-        Returns the campaign URN.
+        Returns the campaign URN. Name auto-prefixed with "agent_".
+
+        `exclude_facet_urns` is an optional `{facet: [urns]}` map of negation
+        targeting (recruiters/sales/etc.) — emitted as the `exclude` block of
+        targetingCriteria. See `config.DEFAULT_EXCLUDE_FACETS`.
         """
-        targeting = _build_targeting_criteria(facet_urns)
+        name = self._prefixed(name)
+        targeting = _build_targeting_criteria(facet_urns, exclude_facet_urns)
         payload = {
             "account":       f"urn:li:sponsoredAccount:{config.LINKEDIN_AD_ACCOUNT_ID}",
             "campaignGroup": campaign_group_urn,
@@ -184,7 +260,7 @@ class LinkedInClient:
             "dailyBudget":   {"currencyCode": "USD", "amount": str(daily_budget_cents / 100)},
             "unitCost":      {"currencyCode": "USD", "amount": "10.00"},
             "targetingCriteria": targeting,
-            "status":                 "PAUSED",
+            "status":                 "DRAFT",
             "locale":                 {"country": "US", "language": "en"},
             "objectiveType":          "WEBSITE_VISIT",
             "offsiteDeliveryEnabled": False,
@@ -208,11 +284,13 @@ class LinkedInClient:
         image_path = Path(image_path)
 
         # Step 1: initialize upload
-        # Use sponsoredAccount as owner (covered by rw_ads scope).
-        # urn:li:organization requires r_organization_social which we don't have.
+        # The image owner MUST match the DSC post author (create_image_ad uses
+        # LINKEDIN_MEMBER_URN as the author). LinkedIn rejects the post creation
+        # with INVALID_CONTENT_OWNERSHIP if the image owner is different from the
+        # post author — so we use the member URN here, not the sponsored account.
         init_payload = {
             "initializeUploadRequest": {
-                "owner": f"urn:li:sponsoredAccount:{config.LINKEDIN_AD_ACCOUNT_ID}",
+                "owner": config.LINKEDIN_MEMBER_URN,
             }
         }
         resp = self._req("POST", self._url("images?action=initializeUpload"), json=init_payload)
@@ -244,13 +322,16 @@ class LinkedInClient:
         campaign_group_urn: str,
         facet_urns: dict[str, list[str]],
         daily_budget_cents: int = 5000,
+        exclude_facet_urns: dict[str, list[str]] | None = None,
     ) -> str:
         """
         Create a Sponsored InMail (Message Ad) campaign.
         facet_urns keys must be full facet URNs (urn:li:adTargetingFacet:titles, etc.)
-        Returns the campaign URN.
+        Returns the campaign URN. `exclude_facet_urns` is the negation analog —
+        see `create_campaign` and `config.DEFAULT_EXCLUDE_FACETS`.
         """
-        targeting = _build_targeting_criteria(facet_urns)
+        name = self._prefixed(name)
+        targeting = _build_targeting_criteria(facet_urns, exclude_facet_urns)
         payload = {
             "account":               f"urn:li:sponsoredAccount:{config.LINKEDIN_AD_ACCOUNT_ID}",
             "campaignGroup":         campaign_group_urn,
@@ -260,7 +341,7 @@ class LinkedInClient:
             "dailyBudget":           {"currencyCode": "USD", "amount": str(daily_budget_cents / 100)},
             "unitCost":              {"currencyCode": "USD", "amount": "0.40"},
             "targetingCriteria":     targeting,
-            "status":                "PAUSED",
+            "status":                "DRAFT",
             "locale":                {"country": "US", "language": "en"},
             "objectiveType":         "LEAD_GENERATION",
             "offsiteDeliveryEnabled": False,
@@ -340,10 +421,82 @@ class LinkedInClient:
         headline: str,
         description: str,
         destination_url: str | None = None,
-    ) -> str:
+        intro_text: str = "",
+        ad_headline: str = "",
+        ad_description: str = "",
+        cta_button: str = "APPLY",
+    ) -> ImageAdResult:
         """
         Create a Single Image Ad creative and attach it to a campaign.
-        Returns the adCreative URN.
+
+        Returns ImageAdResult — NEVER raises for the LINKEDIN_MEMBER_URN /
+        DSC-403 cases (those return status="local_fallback" so callers can
+        fall back to saving the PNG locally and continue). Other unexpected
+        errors return status="error" — caller decides whether to log + skip
+        or re-raise.
+
+        Backwards compat: callers that previously bound the result as a
+        string MUST migrate to `.creative_urn`.
+
+        See _create_image_ad_impl for the underlying API logic.
+        """
+        try:
+            urn = self._create_image_ad_impl(
+                campaign_urn=campaign_urn,
+                image_urn=image_urn,
+                headline=headline,
+                description=description,
+                destination_url=destination_url,
+                intro_text=intro_text,
+                ad_headline=ad_headline,
+                ad_description=ad_description,
+                cta_button=cta_button,
+            )
+            return ImageAdResult(creative_urn=urn, status="ok")
+        except RuntimeError as exc:
+            msg = str(exc)
+            if "LINKEDIN_MEMBER_URN" in msg:
+                return ImageAdResult(
+                    status="local_fallback",
+                    error_class="RuntimeError",
+                    error_message=msg,
+                )
+            return ImageAdResult(
+                status="error",
+                error_class="RuntimeError",
+                error_message=msg,
+            )
+        except Exception as exc:
+            msg = str(exc)
+            upper = msg.upper()
+            if "403" in msg or "FORBIDDEN" in upper:
+                return ImageAdResult(
+                    status="local_fallback",
+                    error_class=type(exc).__name__,
+                    error_message=msg,
+                )
+            return ImageAdResult(
+                status="error",
+                error_class=type(exc).__name__,
+                error_message=msg,
+            )
+
+    def _create_image_ad_impl(
+        self,
+        campaign_urn: str,
+        image_urn: str,
+        headline: str,
+        description: str,
+        destination_url: str | None = None,
+        intro_text: str = "",
+        ad_headline: str = "",
+        ad_description: str = "",
+        cta_button: str = "APPLY",
+    ) -> str:
+        """
+        Inner raise-based implementation of create_image_ad. Returns the
+        adCreative URN on success; raises RuntimeError or HTTPError on
+        failure. Public wrapper translates exceptions into ImageAdResult.
 
         Flow:
         1. Create a Direct Sponsored Content (DSC) post via /rest/posts.
@@ -367,9 +520,17 @@ class LinkedInClient:
         # Step 1 — create DSC post via /rest/posts (LinkedIn API 202510).
         # lifecycleState=DRAFT + adContext.dscAdAccount = Direct Sponsored Content.
         # feedDistribution=NONE ensures it never appears organically.
+        # Field priority for what shows to the user:
+        #   commentary  = intro_text (above the image in feed, ≤140 chars preferred)
+        #                 Falls back to `description` if intro_text is empty.
+        #   media.title = ad_headline (bold text BELOW image in feed, ≤70 chars)
+        #                 Falls back to `headline` if ad_headline is empty.
+        # ad_description and cta_button are attached on the creative payload (Step 2).
+        commentary = (intro_text or description)[:700]
+        media_title = (ad_headline or headline)[:200]
         dsc_payload = {
             "author":        member_urn,
-            "commentary":    description[:700],
+            "commentary":    commentary,
             "visibility":    "PUBLIC",
             "lifecycleState": "DRAFT",
             "adContext": {
@@ -383,7 +544,7 @@ class LinkedInClient:
             "content": {
                 "media": {
                     "id":    image_urn,
-                    "title": headline[:200],
+                    "title": media_title,
                 }
             },
         }
@@ -403,13 +564,27 @@ class LinkedInClient:
         log.info("Created DSC post %s", post_urn)
 
         # Step 2 — create creative referencing the DSC post.
+        # The creative holds the CTA button + destination URL + optional description.
+        # The DSC post (Step 1) holds commentary + media; the creative overlays the
+        # click-through spec on top of that post.
+        creative_content = {"reference": post_urn}
+        # LinkedIn creative API accepts `callToAction` + `landingPage` + `description`
+        # at the creative level (not in the DSC post) for Sponsored Content image ads.
+        creative_extras: dict = {}
+        if cta_button:
+            creative_extras["callToAction"] = {"label": cta_button.upper()}
+        if dest:
+            creative_extras["landingPage"] = {"url": dest}
+        if ad_description:
+            creative_extras["description"] = ad_description[:100]
+
         payload = {
             "campaign":       campaign_urn,
             "intendedStatus": "ACTIVE",
-            "content": {
-                "reference": post_urn,
-            },
+            "content":        creative_content,
         }
+        if creative_extras:
+            payload["content"]["inlineContent"] = creative_extras
         resp = self._req("POST", self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/creatives"), json=payload)
         self._raise_for_status(resp, "createAdCreative")
         creative_id = resp.headers.get("x-linkedin-id") or _id_from_location(resp)
@@ -420,7 +595,10 @@ class LinkedInClient:
 
 # ── Targeting helpers ──────────────────────────────────────────────────────────
 
-def _build_targeting_criteria(facet_urns: dict[str, list[str]]) -> dict:
+def _build_targeting_criteria(
+    facet_urns: dict[str, list[str]],
+    exclude_facet_urns: dict[str, list[str]] | None = None,
+) -> dict:
     """
     Convert { facetKey: [urn, ...] } to a LinkedIn targetingCriteria object.
     The campaign API (adCampaigns) requires full URN keys
@@ -431,6 +609,10 @@ def _build_targeting_criteria(facet_urns: dict[str, list[str]]) -> dict:
 
     LinkedIn also requires at least one location facet (profileLocations, locations,
     or ipLocations). If none is present, we add a worldwide fallback.
+
+    Negation facets (`exclude_facet_urns`) are emitted as a peer `exclude` block.
+    Per LinkedIn semantics, an audience matches the campaign IFF it satisfies
+    `include` AND does not match any value in `exclude` (exclude is OR-of-OR).
     """
     _LOCATION_FACETS = {
         "urn:li:adTargetingFacet:profileLocations",
@@ -464,7 +646,19 @@ def _build_targeting_criteria(facet_urns: dict[str, list[str]]) -> dict:
         })
         log.debug("No location facet in targeting — added worldwide fallback")
 
-    return {"include": {"and": include}}
+    out: dict = {"include": {"and": include}}
+
+    if exclude_facet_urns:
+        exclude_or = []
+        for facet, urns in exclude_facet_urns.items():
+            if not urns:
+                continue
+            full_key = _FACET_SHORT_TO_URN.get(facet, facet)
+            exclude_or.append({"or": {full_key: urns}})
+        if exclude_or:
+            out["exclude"] = {"or": exclude_or}
+
+    return out
 
 
 _FACET_SHORT_TO_URN = {
