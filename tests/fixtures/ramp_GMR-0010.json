@@ -1,0 +1,44 @@
+{
+  "id": "GMR-0010",
+  "project_id": "outlier-coders-india-en",
+  "project_name": "Outlier Coders India - English",
+  "requester_name": "Pranav Patre",
+  "summary": "Ramp Hindi-speaking software contributors. Target: 1500 activations across 3 geo cohorts.",
+  "submitted_at": "2026-04-22T10:00:00Z",
+  "updated_at": "2026-04-22T10:00:00Z",
+  "status": "submitted",
+  "linear_issue_id": "lin_abc123",
+  "linear_url": "https://linear.app/scale/issue/GEN-9999",
+  "cohorts": [
+    {
+      "id": "bn-in",
+      "cohort_description": "Bengali speakers in India, 2+ years backend",
+      "signup_flow_id": "flow_bn_in_001",
+      "selected_lp_url": "https://outlier.ai/coders-bn-in",
+      "included_geos": ["IN"],
+      "matched_locales": ["bn-IN"],
+      "target_activations": 500,
+      "job_post_id": null
+    },
+    {
+      "id": "hi-in",
+      "cohort_description": "Hindi speakers in India, 3+ years frontend",
+      "signup_flow_id": "flow_hi_in_001",
+      "selected_lp_url": "https://outlier.ai/coders-hi-in",
+      "included_geos": ["IN"],
+      "matched_locales": ["hi-IN"],
+      "target_activations": 700,
+      "job_post_id": null
+    },
+    {
+      "id": "ta-in",
+      "cohort_description": "Tamil speakers in India, 2+ years fullstack",
+      "signup_flow_id": "flow_ta_in_001",
+      "selected_lp_url": "https://outlier.ai/coders-ta-in",
+      "included_geos": ["IN"],
+      "matched_locales": ["ta-IN"],
+      "target_activations": 300,
+      "job_post_id": null
+    }
+  ]
+}
