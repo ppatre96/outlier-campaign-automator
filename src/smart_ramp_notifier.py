@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+import requests
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
@@ -177,23 +178,71 @@ def _send_to_target(client: WebClient, target: tuple[str, str], text: str) -> bo
         return False
 
 
+def _post_via_webhook(text: str) -> bool:
+    """Degraded-mode fallback: post once via SLACK_WEBHOOK_URL.
+
+    Used when ALL bot-token targets fail (e.g., expired token). The webhook
+    posts to a single fixed destination (configured when the webhook was
+    minted) — typically Pranav's DM. Diego DM and the C0B0NBB986L channel
+    are NOT covered by this fallback and remain silent until the bot token
+    is refreshed.
+
+    Returns True on success, False on any error.
+    """
+    webhook_url = getattr(config, "SLACK_WEBHOOK_URL", None)
+    if not webhook_url:
+        log.error(
+            "All Slack targets failed and no SLACK_WEBHOOK_URL configured — "
+            "this notification is silently dropped. Refresh SLACK_BOT_TOKEN "
+            "or set SLACK_WEBHOOK_URL in .env to recover."
+        )
+        return False
+    try:
+        resp = requests.post(webhook_url, json={"text": text}, timeout=10)
+        if resp.ok:
+            log.warning(
+                "Degraded mode: all 3 Slack bot targets failed; fell back to "
+                "webhook. Diego DM and channel C0B0NBB986L SKIPPED — refresh "
+                "SLACK_BOT_TOKEN to restore full delivery."
+            )
+            return True
+        log.error(
+            "Webhook fallback also failed: %s %s — notification silently dropped",
+            resp.status_code, resp.text[:200],
+        )
+        return False
+    except Exception as e:
+        log.error("Webhook fallback raised %s: %s", type(e).__name__, e)
+        return False
+
+
 def _send_to_all_targets(text: str) -> dict:
     """Send `text` to every target in config.SLACK_RAMP_NOTIFY_TARGETS.
 
     Returns a dict {target_str: success_bool} so callers (and tests) can verify
-    EXACTLY 3 sends were attempted, with per-target outcome.
+    EXACTLY 3 sends were attempted, with per-target outcome. The reserved key
+    `webhook_fallback` is populated only when ALL three primary targets failed
+    AND `SLACK_WEBHOOK_URL` was attempted.
     """
     if not config.SLACK_BOT_TOKEN:
         log.error(
-            "SLACK_BOT_TOKEN not set — cannot send Smart Ramp notification."
+            "SLACK_BOT_TOKEN not set — attempting webhook fallback for at least Pranav DM."
         )
-        return {f"{kind}:{tid}": False for kind, tid in config.SLACK_RAMP_NOTIFY_TARGETS}
+        outcomes = {f"{kind}:{tid}": False for kind, tid in config.SLACK_RAMP_NOTIFY_TARGETS}
+        outcomes["webhook_fallback"] = _post_via_webhook(text)
+        return outcomes
 
     client = WebClient(token=config.SLACK_BOT_TOKEN)
     outcomes: dict[str, bool] = {}
     for target in config.SLACK_RAMP_NOTIFY_TARGETS:
         kind, tid = target
         outcomes[f"{kind}:{tid}"] = _send_to_target(client, target, text)
+
+    # Degraded-mode fallback: if EVERY primary target failed, try the webhook
+    # so Pranav at least sees the notification while the bot token is broken.
+    if not any(outcomes.values()):
+        outcomes["webhook_fallback"] = _post_via_webhook(text)
+
     return outcomes
 
 

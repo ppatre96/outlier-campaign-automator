@@ -226,3 +226,80 @@ def test_one_target_failure_does_not_block_others(monkeypatch, fake_ramp):
     # 2 chat_postMessage calls (Pranav DM + channel post; Diego skipped after open failure)
     post_calls = [c for c in calls if c["method"] == "chat_postMessage"]
     assert len(post_calls) == 2, f"expected 2 successful posts (Diego skipped), got {len(post_calls)}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Degraded-mode webhook fallback — when ALL bot-token targets fail
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_webhook_fallback_when_all_targets_fail(monkeypatch, fake_ramp):
+    """When all 3 bot-token targets fail (e.g., expired token), notifier falls
+    back to SLACK_WEBHOOK_URL so Pranav still gets the message. Diego DM and
+    C0B0NBB986L stay silent — webhook only covers one destination."""
+    import config
+    from src import smart_ramp_notifier as N
+    from slack_sdk.errors import SlackApiError
+
+    # Make every bot-token call fail with token_expired
+    instance = MagicMock()
+    instance.conversations_open.side_effect = SlackApiError(
+        "token_expired", response={"error": "token_expired"}
+    )
+    instance.chat_postMessage.side_effect = SlackApiError(
+        "token_expired", response={"error": "token_expired"}
+    )
+    monkeypatch.setattr(N, "WebClient", lambda token=None: instance)
+    monkeypatch.setattr(config, "SLACK_BOT_TOKEN", "xoxe.xoxp-expired")
+    monkeypatch.setattr(config, "SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/T/B/X")
+
+    # Capture webhook POST
+    webhook_calls = []
+
+    class FakeResp:
+        ok = True
+        status_code = 200
+        text = "ok"
+
+    def fake_post(url, json=None, timeout=None):
+        webhook_calls.append({"url": url, "json": json})
+        return FakeResp()
+
+    monkeypatch.setattr(N.requests, "post", fake_post)
+
+    outcomes = N.notify_success(fake_ramp, _fake_result(), version=1)
+
+    # All 3 primary targets failed
+    assert outcomes["user:U095J930UEL"] is False
+    assert outcomes["user:U08AW9FCP27"] is False
+    assert outcomes["channel:C0B0NBB986L"] is False
+    # Webhook fallback fired and succeeded
+    assert outcomes["webhook_fallback"] is True
+    # Webhook called exactly once with the same body
+    assert len(webhook_calls) == 1
+    assert webhook_calls[0]["url"] == "https://hooks.slack.com/services/T/B/X"
+    assert "GMR-0010" in webhook_calls[0]["json"]["text"]
+
+
+def test_webhook_fallback_skipped_when_any_target_succeeds(monkeypatch, fake_ramp):
+    """Partial failure (e.g., Diego cannot_dm_bot but Pranav + channel succeed)
+    must NOT trigger the webhook fallback — that would double-post to Pranav."""
+    import config
+    from src import smart_ramp_notifier as N
+
+    fake_client, _calls = _make_fake_webclient(open_fail_for_uid="U08AW9FCP27")
+    monkeypatch.setattr(N, "WebClient", lambda token=None: fake_client)
+    monkeypatch.setattr(config, "SLACK_BOT_TOKEN", "xoxb-fake")
+    monkeypatch.setattr(config, "SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/T/B/X")
+
+    webhook_calls = []
+    monkeypatch.setattr(N.requests, "post",
+                        lambda *a, **kw: webhook_calls.append((a, kw)) or MagicMock(ok=True))
+
+    outcomes = N.notify_success(fake_ramp, _fake_result(), version=1)
+
+    # Pranav + channel succeeded → no fallback
+    assert outcomes["user:U095J930UEL"] is True
+    assert outcomes["channel:C0B0NBB986L"] is True
+    assert "webhook_fallback" not in outcomes
+    assert len(webhook_calls) == 0, "webhook must NOT fire when any primary target succeeds"
