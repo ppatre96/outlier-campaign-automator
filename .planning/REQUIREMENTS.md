@@ -136,10 +136,10 @@
 | SR-03 | Phase 2.6 | Complete |
 | SR-04 | Phase 2.6 | Complete |
 | SR-05 | Phase 2.6 | Complete |
-| SR-06 | Phase 2.6 | Pending |
-| SR-07 | Phase 2.6 | Pending (gate flipped here; DM owned by Plan 03) |
+| SR-06 | Phase 2.6 | Complete |
+| SR-07 | Phase 2.6 | Complete |
 | SR-08 | Phase 2.6 | Complete |
-| SR-09 | Phase 2.6 | Pending |
+| SR-09 | Phase 2.6 | Complete (code; awaiting user-side launchd plist install) |
 | SR-10 | Phase 2.6 | Complete |
 
 **Coverage:**
