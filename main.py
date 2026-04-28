@@ -1660,7 +1660,10 @@ def _resolve_cohorts(
     # via `resolve_project_to_flow` and returns the legacy RESUME_SQL screening data.
     # TODO: implement STAGE1_SQL properly to capture activators not in screening data.
     if project_id:
-        df_raw, resolved_flow_id, resolved_config = snowflake.fetch_screenings_by_project(project_id)
+        df_raw, resolved_flow_id, resolved_config = snowflake.fetch_screenings_by_project(
+            project_id,
+            end_date=date.today().isoformat(),  # PIPE-03: don't trust stale .env SCREENING_END_DATE
+        )
         flow_id = flow_id or resolved_flow_id
         config_name = config_name or resolved_config
     else:
