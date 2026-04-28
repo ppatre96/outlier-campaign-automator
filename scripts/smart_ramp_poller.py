@@ -214,47 +214,32 @@ def _should_block_for_escalation(prior: Optional[dict]) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Pipeline call — STUB
+# Pipeline call — Plan 03 wired the real impl in 02.6-03
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def run_ramp_pipeline(record: RampRecord, dry_run: bool = False, version: int = 1) -> dict:
-    """STUB: replaced by Plan 02 with real implementation from main.run_launch_for_ramp.
+    """Run the real pipeline for a single ramp. Calls main.run_launch_for_ramp.
 
-    Returns the same dict shape Plan 02 will produce so downstream code is stable:
+    Returns the dict shape Plan 02 produces:
       {
         "ok": bool,
         "campaign_groups": [urn, ...],
         "inmail_campaigns": [urn, ...],
         "static_campaigns": [urn, ...],
-        "creative_paths": {<cohort>_<mode>_<angle>: <urn or local path>, ...},
+        "creative_paths": {<key>: <urn-or-local-path>, ...},
         "per_cohort": [ {cohort_id, cohort_description, inmail_urn, static_urn,
                           inmail_creative, static_creative}, ... ],
       }
     """
-    log.warning(
-        "run_ramp_pipeline STUB called for ramp=%s version=%s dry_run=%s — "
-        "Plan 02 will replace this with main.run_launch_for_ramp",
+    from main import run_launch_for_ramp
+    log.info(
+        "Running pipeline for ramp=%s version=%s dry_run=%s",
         record.id, version, dry_run,
     )
-    return {
-        "ok": True,
-        "campaign_groups": [],
-        "inmail_campaigns": [],
-        "static_campaigns": [],
-        "creative_paths": {},
-        "per_cohort": [
-            {
-                "cohort_id": c.id,
-                "cohort_description": c.cohort_description,
-                "inmail_urn": None,
-                "static_urn": None,
-                "inmail_creative": None,
-                "static_creative": None,
-            }
-            for c in record.cohorts
-        ],
-    }
+    return run_launch_for_ramp(
+        record.id, modes=("inmail", "static"), dry_run=dry_run,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -268,12 +253,14 @@ def process_ramp(
     """Process a single ramp; update state[ramps][record.id]; return pipeline result.
 
     Honors the 5-failure escalation gate: when consecutive_failures hits the
-    SMART_RAMP_FAILURE_THRESHOLD, escalation_dm_sent flips to True (Plan 03's
-    notifier sends the actual escalation DM; this plan only flips the flag).
+    SMART_RAMP_FAILURE_THRESHOLD, escalation_dm_sent flips to True. The actual
+    Slack DM send happens OUTSIDE process_ramp (driven by `notify_kind` in the
+    return dict) so Slack errors stay isolated from state-write paths.
     """
     now = datetime.now(timezone.utc).isoformat()
     ramps = state.setdefault("ramps", {})
     prior = ramps.get(record.id)
+    prior_escalation = bool((prior or {}).get("escalation_dm_sent", False))
 
     # Compute version for this run
     if action == "edit":
@@ -322,11 +309,72 @@ def process_ramp(
         entry["escalation_dm_sent"] = True
         log.warning(
             "Ramp %s reached escalation threshold (%d consecutive failures) — "
-            "escalation_dm_sent flipped to True; Plan 03 notifier will fire.",
+            "escalation_dm_sent flipped to True; notifier will fire.",
             record.id, consecutive,
         )
     ramps[record.id] = entry
-    return {"ok": ok, "result": result, "err_class": err_class, "tb": tb_text, "version": version}
+
+    # Decide whether (and how) to notify. Caller drives the actual Slack send so
+    # state-write paths stay isolated from Slack errors. Escalation fires ONCE
+    # per threshold trip (gated on prior_escalation transition).
+    notify_kind: Optional[str] = None
+    if ok and not dry_run:
+        notify_kind = "success"
+    elif (
+        not ok
+        and entry["escalation_dm_sent"]
+        and not prior_escalation
+        and not dry_run
+    ):
+        notify_kind = "escalation"
+
+    return {
+        "ok": ok,
+        "result": result,
+        "err_class": err_class,
+        "tb": tb_text,
+        "version": version,
+        "notify_kind": notify_kind,
+        "record": record,
+    }
+
+
+def _drive_notifier(outcome: dict, dry_run: bool) -> None:
+    """Fire the success or escalation Slack DM based on `outcome["notify_kind"]`.
+
+    Slack failures are caught + logged; they NEVER break the poll. In --dry-run
+    mode no Slack call is issued (logs "would notify" instead).
+    """
+    kind = outcome.get("notify_kind")
+    record = outcome.get("record")
+    if dry_run:
+        log.info(
+            "[DRY-RUN] would notify (kind=%s) for ramp=%s",
+            kind, getattr(record, "id", "?"),
+        )
+        return
+    if kind == "success":
+        try:
+            from src.smart_ramp_notifier import notify_success
+            notify_success(record, outcome["result"], version=outcome["version"])
+        except Exception:
+            log.exception(
+                "notify_success failed for ramp=%s — continuing",
+                getattr(record, "id", "?"),
+            )
+    elif kind == "escalation":
+        try:
+            from src.smart_ramp_notifier import notify_escalation
+            notify_escalation(
+                record,
+                error_class=outcome.get("err_class") or "UnknownError",
+                traceback_text=outcome.get("tb"),
+            )
+        except Exception:
+            log.exception(
+                "notify_escalation failed for ramp=%s — continuing",
+                getattr(record, "id", "?"),
+            )
 
 
 def run_once(args: argparse.Namespace) -> int:
@@ -344,6 +392,7 @@ def run_once(args: argparse.Namespace) -> int:
             log.error("Could not fetch ramp %s", args.ramp_id)
             return 1
         outcome = process_ramp(full, action="retry", state=state, dry_run=args.dry_run)
+        _drive_notifier(outcome, dry_run=args.dry_run)
         if not args.dry_run:
             _write_state_atomic(state)
         return 0 if outcome["ok"] else 1
@@ -378,7 +427,8 @@ def run_once(args: argparse.Namespace) -> int:
                 log.info("Ramp %s unchanged (sig %s) — skipping", full.id, sig[:14])
                 continue
             log.info("Ramp %s action=%s sig=%s", full.id, action, sig[:14])
-            process_ramp(full, action=action, state=state, dry_run=args.dry_run)
+            outcome = process_ramp(full, action=action, state=state, dry_run=args.dry_run)
+            _drive_notifier(outcome, dry_run=args.dry_run)
         except Exception:
             # Per-ramp isolation: one ramp's failure NEVER aborts the rest of the poll
             log.exception("Unhandled error processing %s — continuing", summary.id)
