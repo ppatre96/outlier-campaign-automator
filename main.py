@@ -612,10 +612,18 @@ def _process_row(
                     "retry_target": qc_report.get("retry_target", "none"),
                 }
                 if qc_report.get("verdict") == "FAIL":
-                    log.warning(
-                        "Cohort '%s' angle %s shipped despite QC FAIL after retries — violations: %s",
-                        cohort.name, angle_label, qc_report.get("violations", []),
+                    # Hard-reject. Previously logged a warning and shipped anyway, which
+                    # produced creatives with duplicate logos / em dashes / banned tokens
+                    # in production (GMR-0005, 2026-04-28). Better to ship a campaign with
+                    # no creative attached and a loud Slack note than to ship a bad one.
+                    log.error(
+                        "Cohort '%s' angle %s — QC FAIL after %d attempts; REJECTING creative. "
+                        "Campaign will be created without an image. Violations: %s",
+                        cohort.name, angle_label,
+                        qc_report.get("attempts", 1),
+                        qc_report.get("violations", []),
                     )
+                    png_path = None  # downstream `if png_path and png_path.exists()` skips upload
             except Exception as exc:
                 log.warning("Gemini creative failed for '%s': %s", cohort.name, exc)
 
@@ -1926,13 +1934,27 @@ def _process_static_campaigns(
         if png_path is None and selected_variant:
             try:
                 from src.figma_creative import rewrite_variant_copy
-                png_path, _qc = generate_imagen_creative_with_qc(
+                png_path, qc_report = generate_imagen_creative_with_qc(
                     variant=selected_variant,
                     max_retries=2,
                     copy_rewriter=rewrite_variant_copy,
                 )
+                # Hard-reject on QC FAIL — Phase 2.6 path was silently shipping bad
+                # creatives until 2026-04-28. The campaign is still created, just with
+                # no image attached. Diego sees the empty draft + the loud Slack alert
+                # and can intervene manually.
+                if qc_report and qc_report.get("verdict") == "FAIL":
+                    log.error(
+                        "Static QC FAIL for '%s' after %d attempts; REJECTING creative. "
+                        "Campaign will be created without an image. Violations: %s",
+                        cohort.name,
+                        qc_report.get("attempts", 1),
+                        qc_report.get("violations", []),
+                    )
+                    png_path = None
             except Exception as exc:
                 log.warning("Static Gemini path failed for '%s': %s", cohort.name, exc)
+                png_path = None
 
         creative_pngs.append(png_path)
 
