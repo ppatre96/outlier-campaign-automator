@@ -315,7 +315,7 @@ Plans:
 
 Plans:
 - [x] 02.6-01-PLAN.md — Smart Ramp poller + state file + edit detection (SR-01, SR-02, SR-05, SR-08, SR-10) — COMPLETE 2026-04-27 (commits b1d29e8, b3bb228, 3aaef04)
-- [ ] 02.6-02-PLAN.md — Pipeline runner: both InMail + Static per cohort + image-local fallback (SR-03, SR-04)
+- [x] 02.6-02-PLAN.md — Pipeline runner: both InMail + Static per cohort + image-local fallback (SR-03, SR-04)
 - [ ] 02.6-03-PLAN.md — Slack notifier + launchd plist + integration tests (SR-06, SR-07, SR-09)
 
 ---

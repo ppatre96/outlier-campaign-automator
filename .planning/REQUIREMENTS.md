@@ -78,8 +78,8 @@
 
 - [x] **SR-01**: `scripts/smart_ramp_poller.py` polls Smart Ramp every 15 minutes via launchd (`StartInterval=900`), separate from the weekly feedback-loop job — code-complete (Plan 01); plist install is USER ACTION (Plan 03)
 - [x] **SR-02**: Poller persists ramp state in `data/processed_ramps.json` with per-ramp `first_seen_at`, `last_processed_at`, `last_signature` (sha256 over cohorts + summary + updated_at), `consecutive_failures`, `campaign_groups`, `inmail_campaigns`, `static_campaigns`, `creative_paths`, `superseded` boolean, `version` integer
-- [ ] **SR-03**: For every cohort in a triggered ramp, the pipeline produces BOTH an InMail campaign and a Static-ad campaign (currently `main.py --ramp-id` runs one path per cohort — Phase 2.6 ensures both run)
-- [ ] **SR-04**: When LinkedIn `create_image_ad` fails (currently 403 due to LINKEDIN_MEMBER_URN blocker), the generated PNG is saved to `data/ramp_creatives/<ramp_id>/<cohort_id>_<inmail|static>_<angle>.png` with the campaign name embedded — so manual upload can complete the loop
+- [x] **SR-03**: For every cohort in a triggered ramp, the pipeline produces BOTH an InMail campaign and a Static-ad campaign (currently `main.py --ramp-id` runs one path per cohort — Phase 2.6 ensures both run)
+- [x] **SR-04**: When LinkedIn `create_image_ad` fails (currently 403 due to LINKEDIN_MEMBER_URN blocker), the generated PNG is saved to `data/ramp_creatives/<ramp_id>/<cohort_id>_<inmail|static>_<angle>.png` with the campaign name embedded — so manual upload can complete the loop
 - [x] **SR-05**: When a ramp's content signature changes between polls, the poller re-runs the pipeline producing `_v2`/`_v3`/... suffixed campaign names; prior versions tagged `superseded: true` in `processed_ramps.json` (NOT deleted from LinkedIn)
 - [ ] **SR-06**: On successful processing, `src/smart_ramp_notifier.py` posts a single consolidated Slack message to THREE targets — solo DM to Pranav (`U095J930UEL`), solo DM to Diego (`U08AW9FCP27`), and the shared channel (`C0B0NBB986L`) — listing ramp ID, project name, requester, per-cohort campaign URNs, creative paths (LinkedIn URNs + local fallback), and a "review and activate" CTA. Identical body for all three; failure on one target does not block the others.
 - [ ] **SR-07**: After 5 consecutive failed processing attempts on the same ramp, an escalation Slack message fires to all three notification targets (Pranav DM + Diego DM + `C0B0NBB986L`) with the last error class + traceback summary + manual recovery command; the poller stops retrying that ramp until the user clears its state file entry
@@ -133,8 +133,8 @@
 | FEED-23 | Phase 2.5 V2 | Complete |
 | SR-01 | Phase 2.6 | Complete (code; plist USER ACTION via Plan 03) |
 | SR-02 | Phase 2.6 | Complete |
-| SR-03 | Phase 2.6 | Pending |
-| SR-04 | Phase 2.6 | Pending |
+| SR-03 | Phase 2.6 | Complete |
+| SR-04 | Phase 2.6 | Complete |
 | SR-05 | Phase 2.6 | Complete |
 | SR-06 | Phase 2.6 | Pending |
 | SR-07 | Phase 2.6 | Pending (gate flipped here; DM owned by Plan 03) |

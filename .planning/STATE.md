@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: In Progress (Phase 2.6 Plan 01 complete)
-last_updated: "2026-04-27T19:56:39Z"
+status: In Progress (Phase 2.6 Plan 02 complete)
+last_updated: "2026-04-27T20:16:14.595Z"
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 24
-  completed_plans: 21
+  completed_plans: 22
 ---
 
 # Project State
@@ -18,17 +18,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-21)
 
 **Core value:** End-to-end campaign automation from screening data to live LinkedIn campaign — zero manual steps once triggered.
-**Current focus:** Phase 02.6 — smart-ramp-auto-trigger (Plan 01 complete; Plan 02 next)
+**Current focus:** Phase 02.6 — smart-ramp-auto-trigger (Plan 01 + Plan 02 complete; Plan 03 next)
 
 ## Current Phase
 
 **Phase 2.6 — Smart Ramp Auto-Trigger**
 Goal: Eliminate the manual `python main.py --ramp-id <id>` step by polling Smart Ramp every 15 minutes; auto-run the full pipeline + Slack-notify Pranav + Diego on success or 5-failure escalation.
 
-**Status: Plan 01 complete (poller scaffolding + state IO + edit detection). Plan 02 (real pipeline call replacing the STUB) and Plan 03 (Slack notifier + launchd plist) remaining.**
+**Status: Plan 01 + Plan 02 complete. Plan 03 (Slack notifier + launchd plist + integration tests) remaining; Plan 03 will swap the STUB run_ramp_pipeline body for `from main import run_launch_for_ramp` (one-line change).**
 
 - Plan 01 (Poller + state file + edit detection) — COMPLETE 2026-04-27 (commits b1d29e8, b3bb228, 3aaef04)
-- Plan 02 (Pipeline runner: InMail + Static per cohort + image-local fallback) — PENDING
+- Plan 02 (Pipeline runner: InMail + Static per cohort + image-local fallback) — COMPLETE 2026-04-27 (commits 75d8092, 158f5a8, 5edeffc); duration 7m 28s; 81 tests passing (76 baseline + 5 new)
 - Plan 03 (Slack notifier + launchd plist + integration tests) — PENDING
 
 ## Previous Phase
@@ -104,6 +104,10 @@ Goal: Enable continuous optimization by collecting creative/cohort performance f
 - [Phase 02.5]: [Phase 02.5-07]: _invoke_trigger uses inspect.iscoroutine to handle both sync (current) and async ReanalysisOrchestrator.trigger_reanalysis signatures
 - [Phase 02.5]: [Phase 02.5-08]: scripts/weekly_feedback_loop.py orchestrator wires v1 alerts + V2 funnel/sentiment/drift into one Monday cron with filelock idempotency, 6-day skip window, step isolation, dry-run safety. FEED-22/FEED-23 code-complete; system-level launchd+crontab edits documented as USER ACTION REQUIRED in README.
 - [Phase 02.5]: [Phase 02.5-08]: load_dotenv() runs before import config (Pitfall 6 fix); filelock.FileLock(timeout=10) wraps run_once (Pitfall 5 fix); --dry-run skips both Slack post AND check_and_trigger reanalysis trigger.
+- [Phase 02.6-02]: ADDITIVE refactor — _resolve_cohorts and _process_static_campaigns are independent module-level functions (NOT extracted from _process_row). Legacy CLI flow on _process_row keeps working byte-for-byte. ~70 LOC of intentional duplication; gain: zero risk to proven manual CLI.
+- [Phase 02.6-02]: ImageAdResult sentinel covers both 403 AND LINKEDIN_MEMBER_URN. Wrapper translates exceptions to status='local_fallback' (NEVER raise); other errors → status='error' (also never raise). Belt-and-suspenders try/except retained around upload_image (still raises) for unexpected errors.
+- [Phase 02.6-02]: Three layers of fault isolation: per-cohort try/except inside _process_static_campaigns; per-arm try/except inside _process_row_both_modes; per-row try/except inside run_launch_for_ramp. One failure can never propagate past its scope.
+- [Phase 02.6-02]: Image-local-fallback path: data/ramp_creatives/<ramp_id>/<cohort_id>_<mode>_<angle>__<urllib.parse.quote_plus(campaign_name)>.png. shutil.copy2 (NOT move). Locked format from CONTEXT.md.
 
 ## Session Notes
 
@@ -198,6 +202,7 @@ Completed Phase 02.5 V2 Plan 07 (ICP Drift Monitor) — 2026-04-25
 2. **Phase 02.6 Plan 03 — Slack notifier + launchd plist + integration tests.** `src/smart_ramp_notifier.py` posts the consolidated Slack message to all 3 targets (`SLACK_RAMP_NOTIFY_TARGETS` already configured by Plan 01). Escalation DM fires when `escalation_dm_sent` was just flipped (Plan 01 owns the flag; Plan 03 owns the send). Install `~/Library/LaunchAgents/com.outlier.smart-ramp-poller.plist` with `StartInterval=900`. SR-06, SR-07, SR-09 marked complete on landing (plist install is USER ACTION per Phase 2.5 V2 precedent).
 
 **Phase 02.5 V2 USER ACTIONS still outstanding** (carryover from previous sessions, not blocking 02.6):
+
 - Edit `~/Library/LaunchAgents/com.outlier.weekly-reports.plist` ProgramArguments to `scripts/weekly_feedback_loop.py`
 - `launchctl unload` + `launchctl load` the plist
 - `crontab -l | grep -v post_weekly_reports | crontab -` to dedup
