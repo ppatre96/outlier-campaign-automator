@@ -294,82 +294,210 @@ _SUBHEAD_MAX_WORDS  = 7
 _SUBHEAD_MAX_CHARS  = 48
 
 
+# Banned-token replacements (CLAUDE.md vocabulary table). Applied as deterministic
+# post-processing after every LLM rewrite — LLMs reliably ignore vocab rules even when
+# the prompt says not to (verified GMR-0005 dry run 2026-04-28: 'training' shipped 4
+# times in a row despite explicit "BANNED" instruction). Only context-safe substitutions
+# go here; `work` / `schedule` / `job` / `role` are context-sensitive and stay LLM-only.
+_BANNED_TOKEN_REPLACEMENTS = {
+    "compensation": "payment",
+    "interview":    "screening",
+    "interviews":   "screenings",
+    "interviewing": "screening",
+    "bonus":        "reward",
+    "bonuses":      "rewards",
+    "performance":  "progress",
+    "training":     "project guidelines",
+    "instructions": "project guidelines",
+    "discourse":    "Outlier Community",
+    "assign":       "match",
+    "assigned":     "matched",
+    "promote":      "eligible to work on review-level tasks",
+}
+
+# Em + en dashes — banned in contributor copy per CLAUDE.md. LLMs love these and will
+# slip them in even with explicit "NO EM DASHES" rules in the prompt. Spaced versions
+# matched first so " — " doesn't leave a stranded comma.
+_DASH_REPLACEMENTS = [
+    (" — ", " "),    # em dash with surrounding spaces
+    (" – ", " "),    # en dash with surrounding spaces
+    ("—", ","),      # bare em dash
+    ("–", ","),      # bare en dash
+]
+
+# Copy fields the rewriter knows how to operate on. Order matches downstream usage.
+_REWRITABLE_COPY_FIELDS = (
+    "headline", "subheadline", "intro_text", "ad_headline", "ad_description",
+)
+
+# Per-field hard char limits — used for last-resort truncation if LLM still overshoots.
+# Match copy_design_qc.py validate_copy_lengths constants.
+_FIELD_MAX_CHARS = {
+    "headline":       _HEADLINE_MAX_CHARS,
+    "subheadline":    _SUBHEAD_MAX_CHARS,
+    "intro_text":     140,
+    "ad_headline":    70,
+    "ad_description": 100,
+}
+
+# Detect which copy fields a violation message names. \b ensures `headline` doesn't
+# match inside `subheadline` or `ad_headline` (underscore is a word char, so \b before
+# `headline` requires a non-word char immediately to the left).
+_FIELD_DETECTOR = re.compile(
+    r"\b(?:Headline|Subheadline|headline|subheadline|intro_text|ad_headline|ad_description|cta_button)\b",
+)
+
+
+def _scrub_banned_tokens_and_dashes(text: str) -> str:
+    """Strip em/en dashes and replace context-safe banned tokens.
+
+    Deterministic, idempotent. Run after every LLM rewrite to catch the cases the
+    LLM ignored. Banned tokens are matched as whole words (case-insensitive) so we
+    don't break legitimate substrings (e.g. 'compensate' won't be scrubbed by the
+    'compensation' rule because of \b boundaries).
+    """
+    if not text:
+        return text
+    for old, new in _DASH_REPLACEMENTS:
+        text = text.replace(old, new)
+    for banned, replacement in _BANNED_TOKEN_REPLACEMENTS.items():
+        text = re.sub(r"\b" + re.escape(banned) + r"\b", replacement, text, flags=re.IGNORECASE)
+    # Collapse the double-space that can result from " — " → " " replacement
+    text = re.sub(r"  +", " ", text).strip()
+    return text
+
+
+def _violated_fields_from_messages(violations: list[str]) -> set[str]:
+    """Parse violation strings to identify which copy fields had violations.
+
+    QC validator emits violations in two shapes:
+      - validate_copy_lengths: 'Headline has 7 words ...' or 'Headline wraps to 3 lines ...'
+      - banned-token / em-dash checks: "intro_text contains em dash ..." (lowercase)
+    Both shapes are covered by _FIELD_DETECTOR.
+    """
+    fields: set[str] = set()
+    for v in violations or []:
+        for match in _FIELD_DETECTOR.findall(v):
+            # Normalize "Headline" → "headline" etc.
+            fields.add(match.lower())
+    return fields
+
+
 def rewrite_variant_copy(variant: dict, violations: list[str]) -> dict:
     """
-    Rewrite a single variant's headline/subheadline when it exceeds the hard limits.
-    Used by `generate_imagen_creative_with_qc` as the copy_rewriter callback.
+    Rewrite the violated copy fields when QC flags issues. Handles all 5 image+ad
+    copy fields (headline, subheadline, intro_text, ad_headline, ad_description),
+    not just headline+subheadline (the GMR-0005 dry run 2026-04-28 demonstrated
+    this is required — em-dash violations on intro_text loop forever otherwise).
 
-    Returns a new variant dict with the original fields preserved except headline and
-    subheadline, which are regenerated to fit the limits.
+    Two-stage fix:
+      1. LLM rewrite of every field that has a flagged violation.
+      2. Deterministic post-process — strip em/en dashes and swap banned tokens —
+         on EVERY field, including ones the LLM didn't touch (LLMs ignore vocab
+         rules even with explicit "BANNED" instructions in the prompt).
+      3. Last-resort hard truncation if rewrite still overshoots character limits.
     """
-    angle    = variant.get("angle", "?")
+    angle = variant.get("angle", "?")
     angle_label = variant.get("angleLabel", "")
-    headline = variant.get("headline", "")
-    subhead  = variant.get("subheadline", "")
     photo_subject = variant.get("photo_subject", "")
 
-    violation_bullets = "\n".join(f"- {v}" for v in violations) or "(no details)"
+    flagged = _violated_fields_from_messages(violations)
+    # Back-compat: if violations don't name a field (or violations list is empty), default
+    # to the legacy behavior of rewriting headline + subheadline.
+    if not flagged:
+        flagged = {"headline", "subheadline"}
 
-    prompt = f"""\
-Rewrite the headline and subheadline for an Outlier LinkedIn ad variant. The current copy \
-violates the hard length limits and would get cut off in the final creative.
+    fields_to_rewrite = [f for f in _REWRITABLE_COPY_FIELDS if f in flagged]
+    # If nothing rewritable was flagged (e.g., only `cta_button`), fall through with no LLM call.
+
+    current_values = {f: (variant.get(f) or "").strip() for f in _REWRITABLE_COPY_FIELDS}
+    violation_bullets = "\n".join(f"- {v}" for v in violations) or "(no details)"
+    field_block = "\n".join(
+        f"- {f}: {current_values[f]!r}"
+        for f in fields_to_rewrite if current_values[f]
+    ) or "(no current values for the fields to rewrite)"
+    return_schema = "{" + ", ".join(f'"{f}": "<rewritten>"' for f in fields_to_rewrite) + "}"
+
+    parsed: dict = {}
+    if fields_to_rewrite:
+        prompt = f"""\
+Rewrite the violating copy fields for an Outlier LinkedIn ad variant. Fix all violations.
+Return ONLY the fields you were asked to rewrite.
 
 VIOLATIONS:
 {violation_bullets}
 
 HARD LIMITS:
-- Headline: MAX 6 words AND MAX 40 characters. MUST fit in 1–2 lines when rendered.
-- Subheadline: MAX 7 words AND MAX 48 characters. MUST fit in 1–2 lines.
+- headline: MAX {_HEADLINE_MAX_WORDS} words AND MAX {_HEADLINE_MAX_CHARS} characters. MUST fit in 1-2 lines.
+- subheadline: MAX {_SUBHEAD_MAX_WORDS} words AND MAX {_SUBHEAD_MAX_CHARS} characters. MUST fit in 1-2 lines.
+- intro_text: MAX 140 characters. Feed text above the image.
+- ad_headline: MAX 70 characters. Bold text below the image.
+- ad_description: MAX 100 characters. Small text under ad_headline.
 
-CURRENT COPY (rewrite these):
-- Angle: {angle} — {angle_label}
-- Headline: {headline!r}
-- Subheadline: {subhead!r}
-- Photo subject (DO NOT CHANGE, context only): {photo_subject!r}
+RESTRICTED VOCABULARY (BANNED — never use, in ANY field):
+- "compensation" -> use "payment"
+- "interview" -> use "screening"
+- "bonus" -> use "reward"
+- "performance" -> use "progress"
+- "training" -> use "project guidelines"
+- "promote" -> use "eligible to work on review-level tasks"
+- "Discourse" -> use "Outlier Community"
+- "assign" -> use "match"
+- "instructions" -> use "project guidelines"
+- "work", "schedule", "job", "role", "required" -> use NEUTRAL synonyms (task, availability, opportunity)
+- NO em dashes (-) or en dashes. Use commas, periods, or colons.
 
-RULES FOR THE REWRITE:
-- Preserve the emotional angle (Expertise / Earnings / Flexibility) — do not change what \
-  the copy is selling, only tighten the language.
-- Same professional/cohort specificity as the original — keep any mention of PhD, research, \
-  lab, academic, etc.
-- No corporate jargon, no filler, no adjective stacks.
-- Follow Outlier vocabulary: "payment" not "compensation", "opportunity" not "job", \
-  "screening" not "interview", "reward" not "bonus".
-- Do not add earnings figures unless they were in the original.
-- Do not include the word "Outlier" in the text — branding is composited separately.
+CONTEXT (DO NOT CHANGE, tone alignment only):
+- Angle: {angle} - {angle_label}
+- Photo subject: {photo_subject!r}
 
-Return ONLY valid JSON, no other text:
-{{"headline": "<new short headline>", "subheadline": "<new short subheadline>"}}
+CURRENT FIELD VALUES (rewrite to fix violations, preserve angle/specificity):
+{field_block}
+
+Return ONLY valid JSON, no markdown fences:
+{return_schema}
 """
+        try:
+            client = _llm_client()
+            resp = client.chat.completions.create(
+                model=config.LITELLM_MODEL,
+                max_tokens=600,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = resp.choices[0].message.content.strip()
+            parsed = _extract_json(raw) or {}
+            if not isinstance(parsed, dict):
+                parsed = {}
+        except Exception as exc:
+            log.warning("rewrite_variant_copy LLM call failed (%s) - falling back to deterministic scrub-only", exc)
 
-    try:
-        client = _llm_client()
-        resp = client.chat.completions.create(
-            model=config.LITELLM_MODEL,
-            max_tokens=400,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        raw = resp.choices[0].message.content.strip()
-        parsed = _extract_json(raw)
-        new_head = parsed.get("headline", headline).strip()
-        new_sub  = parsed.get("subheadline", subhead).strip()
-    except Exception as exc:
-        log.warning("rewrite_variant_copy LLM call failed (%s) — falling back to truncation", exc)
-        new_head = headline
-        new_sub  = subhead
-
-    # Defensive truncation so we don't loop forever if the rewrite still overshoots
-    if len(new_head) > 40:
-        new_head = new_head[:40].rsplit(" ", 1)[0].rstrip(",.:;")
-    if len(new_sub) > 48:
-        new_sub = new_sub[:48].rsplit(" ", 1)[0].rstrip(",.:;")
-
-    log.info("Copy rewritten (angle %s): head %r → %r, sub %r → %r",
-             angle, headline, new_head, subhead, new_sub)
-
+    # Apply LLM rewrites (where present) on top of original variant.
     updated = dict(variant)
-    updated["headline"]    = new_head
-    updated["subheadline"] = new_sub
+    for field in fields_to_rewrite:
+        if field in parsed and isinstance(parsed[field], str):
+            updated[field] = parsed[field].strip()
+
+    # Deterministic post-process on EVERY rewritable field — LLM ignored vocab rules
+    # in the GMR-0005 run despite explicit "BANNED" instructions; we cannot rely on it.
+    for field in _REWRITABLE_COPY_FIELDS:
+        val = updated.get(field)
+        if val:
+            updated[field] = _scrub_banned_tokens_and_dashes(val)
+
+    # Last-resort hard truncation. Drops final word, strips trailing punctuation.
+    for field, max_c in _FIELD_MAX_CHARS.items():
+        val = updated.get(field) or ""
+        if len(val) > max_c:
+            truncated = val[:max_c].rsplit(" ", 1)[0].rstrip(",.:;")
+            log.warning("rewrite_variant_copy: hard-truncated %s from %d to %d chars: %r",
+                        field, len(val), len(truncated), truncated)
+            updated[field] = truncated
+
+    log.info(
+        "Copy rewritten (angle %s, fields=%s): %s",
+        angle, fields_to_rewrite,
+        {f: updated.get(f) for f in fields_to_rewrite},
+    )
     return updated
 
 
