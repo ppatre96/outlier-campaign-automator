@@ -1654,12 +1654,18 @@ def _resolve_cohorts(
     )
 
     # 1. Stage 1 data pull (mirrors _process_row).
+    # NOTE 2026-04-28: `fetch_stage1_contributors` was referenced but never implemented
+    # (planned as project-scoped CESF+CBPR query — see _process_row docstring). Stopgap:
+    # delegate to `fetch_screenings_by_project` which auto-resolves flow_id+config_name
+    # via `resolve_project_to_flow` and returns the legacy RESUME_SQL screening data.
+    # TODO: implement STAGE1_SQL properly to capture activators not in screening data.
     if project_id:
-        df_raw = snowflake.fetch_stage1_contributors(project_id)
+        df_raw, resolved_flow_id, resolved_config = snowflake.fetch_screenings_by_project(project_id)
+        flow_id = flow_id or resolved_flow_id
+        config_name = config_name or resolved_config
     else:
         df_raw = snowflake.fetch_screenings(
             flow_id, config_name,
-            project_id=project_id,
             end_date=date.today().isoformat(),
         )
     if df_raw.empty:
