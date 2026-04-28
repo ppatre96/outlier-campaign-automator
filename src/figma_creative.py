@@ -177,7 +177,7 @@ def _walk_text_layers(node: dict, out: dict) -> None:
 #     - layerUpdates                → Figma MCP path (currently out of scope)
 #
 # Stage 2 — Image generation: LiteLLM → Gemini /images/generations
-#   Defined in: src/midjourney_creative.py  generate_midjourney_creative()
+#   Defined in: src/midjourney_creative.py  generate_imagen_creative()
 #   Input: photo_subject + hard-coded template (portrait framing, plant background,
 #          warm window light, 85mm lens, angle-specific expression)
 #   Output: background PNG, composited by compose_ad() with gradient + text overlay
@@ -245,23 +245,155 @@ def build_copy_variants(
         log.warning("No signals for copy gen — LLM will use generic copy")
 
     client = _llm_client()
-    resp = client.chat.completions.create(
-        model=config.LITELLM_MODEL,
-        max_tokens=2048,
-        messages=[{"role": "user", "content": prompt}],
-    )
 
-    raw = resp.choices[0].message.content.strip()
+    # Retry loop: LLM sometimes overshoots hard limits. Retry with explicit violation list.
+    variants: list[dict] = []
+    last_violations: list[str] = []
+    for attempt in range(3):
+        if attempt > 0 and last_violations:
+            retry_note = (
+                "\n\nRETRY — your previous output violated the hard limits:\n"
+                + "\n".join(f"- {v}" for v in last_violations)
+                + "\nREWRITE so every headline is ≤6 words AND ≤40 chars, every subheadline is "
+                  "≤7 words AND ≤48 chars. No exceptions."
+            )
+            messages = [{"role": "user", "content": prompt + retry_note}]
+        else:
+            messages = [{"role": "user", "content": prompt}]
 
-    try:
-        parsed = _extract_json(raw)
-        variants = parsed.get("variants", [])
-    except Exception as exc:
-        log.error("Failed to parse copy variants JSON: %s\n%s", exc, raw[:500])
-        variants = []
+        resp = client.chat.completions.create(
+            model=config.LITELLM_MODEL,
+            max_tokens=2048,
+            messages=messages,
+        )
+        raw = resp.choices[0].message.content.strip()
+        try:
+            parsed = _extract_json(raw)
+            variants = parsed.get("variants", [])
+        except Exception as exc:
+            log.error("Failed to parse copy variants JSON (attempt %d): %s\n%s", attempt + 1, exc, raw[:500])
+            variants = []
+            continue
+
+        last_violations = _validate_copy_limits(variants)
+        if not last_violations:
+            break
+        log.warning("Copy limits violated (attempt %d): %s", attempt + 1, last_violations)
+
+    if last_violations:
+        log.warning("Proceeding with copy that still has violations after 3 attempts: %s", last_violations)
 
     log.info("Generated %d copy variants for '%s'", len(variants), cohort.name)
     return variants
+
+
+# ── Copy length validation ────────────────────────────────────────────────────
+_HEADLINE_MAX_WORDS = 6
+_HEADLINE_MAX_CHARS = 40
+_SUBHEAD_MAX_WORDS  = 7
+_SUBHEAD_MAX_CHARS  = 48
+
+
+def rewrite_variant_copy(variant: dict, violations: list[str]) -> dict:
+    """
+    Rewrite a single variant's headline/subheadline when it exceeds the hard limits.
+    Used by `generate_imagen_creative_with_qc` as the copy_rewriter callback.
+
+    Returns a new variant dict with the original fields preserved except headline and
+    subheadline, which are regenerated to fit the limits.
+    """
+    angle    = variant.get("angle", "?")
+    angle_label = variant.get("angleLabel", "")
+    headline = variant.get("headline", "")
+    subhead  = variant.get("subheadline", "")
+    photo_subject = variant.get("photo_subject", "")
+
+    violation_bullets = "\n".join(f"- {v}" for v in violations) or "(no details)"
+
+    prompt = f"""\
+Rewrite the headline and subheadline for an Outlier LinkedIn ad variant. The current copy \
+violates the hard length limits and would get cut off in the final creative.
+
+VIOLATIONS:
+{violation_bullets}
+
+HARD LIMITS:
+- Headline: MAX 6 words AND MAX 40 characters. MUST fit in 1–2 lines when rendered.
+- Subheadline: MAX 7 words AND MAX 48 characters. MUST fit in 1–2 lines.
+
+CURRENT COPY (rewrite these):
+- Angle: {angle} — {angle_label}
+- Headline: {headline!r}
+- Subheadline: {subhead!r}
+- Photo subject (DO NOT CHANGE, context only): {photo_subject!r}
+
+RULES FOR THE REWRITE:
+- Preserve the emotional angle (Expertise / Earnings / Flexibility) — do not change what \
+  the copy is selling, only tighten the language.
+- Same professional/cohort specificity as the original — keep any mention of PhD, research, \
+  lab, academic, etc.
+- No corporate jargon, no filler, no adjective stacks.
+- Follow Outlier vocabulary: "payment" not "compensation", "opportunity" not "job", \
+  "screening" not "interview", "reward" not "bonus".
+- Do not add earnings figures unless they were in the original.
+- Do not include the word "Outlier" in the text — branding is composited separately.
+
+Return ONLY valid JSON, no other text:
+{{"headline": "<new short headline>", "subheadline": "<new short subheadline>"}}
+"""
+
+    try:
+        client = _llm_client()
+        resp = client.chat.completions.create(
+            model=config.LITELLM_MODEL,
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = resp.choices[0].message.content.strip()
+        parsed = _extract_json(raw)
+        new_head = parsed.get("headline", headline).strip()
+        new_sub  = parsed.get("subheadline", subhead).strip()
+    except Exception as exc:
+        log.warning("rewrite_variant_copy LLM call failed (%s) — falling back to truncation", exc)
+        new_head = headline
+        new_sub  = subhead
+
+    # Defensive truncation so we don't loop forever if the rewrite still overshoots
+    if len(new_head) > 40:
+        new_head = new_head[:40].rsplit(" ", 1)[0].rstrip(",.:;")
+    if len(new_sub) > 48:
+        new_sub = new_sub[:48].rsplit(" ", 1)[0].rstrip(",.:;")
+
+    log.info("Copy rewritten (angle %s): head %r → %r, sub %r → %r",
+             angle, headline, new_head, subhead, new_sub)
+
+    updated = dict(variant)
+    updated["headline"]    = new_head
+    updated["subheadline"] = new_sub
+    return updated
+
+
+def _validate_copy_limits(variants: list[dict]) -> list[str]:
+    """
+    Return a list of human-readable violations for headline/subheadline length limits.
+    Empty list = all variants pass.
+    """
+    violations: list[str] = []
+    for v in variants:
+        angle = v.get("angle", "?")
+        h = (v.get("headline") or "").strip()
+        s = (v.get("subheadline") or "").strip()
+        h_words = len(h.split())
+        s_words = len(s.split())
+        if h_words > _HEADLINE_MAX_WORDS:
+            violations.append(f"Angle {angle} headline has {h_words} words (max {_HEADLINE_MAX_WORDS}): {h!r}")
+        if len(h) > _HEADLINE_MAX_CHARS:
+            violations.append(f"Angle {angle} headline has {len(h)} chars (max {_HEADLINE_MAX_CHARS}): {h!r}")
+        if s_words > _SUBHEAD_MAX_WORDS:
+            violations.append(f"Angle {angle} subheadline has {s_words} words (max {_SUBHEAD_MAX_WORDS}): {s!r}")
+        if len(s) > _SUBHEAD_MAX_CHARS:
+            violations.append(f"Angle {angle} subheadline has {len(s)} chars (max {_SUBHEAD_MAX_CHARS}): {s!r}")
+    return violations
 
 
 def _build_copy_prompt(cohort_name: str, signals: list[str], layer_map: dict) -> str:
@@ -290,12 +422,23 @@ Write all 3 copy variants for the specific person you've identified — not a ge
 ## TEXT LAYERS IN THE BASE CREATIVE
 {layers_summary}
 
-## AD FORMAT CONSTRAINTS
-These are 1:1 square LinkedIn/Instagram feed ads. Text is overlaid on a background photo.
-- **Headline**: MAX 8 words, 2 lines max. Bold white text.
-- **Subheadline**: MAX 10 words. Regular white text.
-- Every word must earn its place. Short, punchy, specific.
+## AD FORMAT CONSTRAINTS (HARD LIMITS — text is rejected if violated)
+
+You are producing TWO TEXT SETS per variant:
+
+### (I) IMAGE OVERLAY TEXT (baked into the 1200×1200 creative PNG)
+- **headline**: MAX 6 words AND MAX 40 characters. 1–2 lines. Bold white text over the photo.
+- **subheadline**: MAX 7 words AND MAX 48 characters. 1–2 lines. Regular white text over the photo.
+- Every word must earn its place. Short, punchy, specific. Cut filler.
 - No logo or CTA text in the image itself.
+
+### (II) LINKEDIN AD COPY (shown around the image in the LinkedIn feed)
+- **intro_text**: MAX 140 characters. The text that appears ABOVE the image in the feed. Must land the hook in the first line — feed preview cuts off after ~140 chars. Start with a question, bold claim, or specific pain point. NOT a restating of the headline.
+- **ad_headline**: MAX 70 characters. Bold text that appears BELOW the image in the feed. Should complement the overlay headline (don't duplicate it verbatim — reinforce or extend the angle).
+- **ad_description**: MAX 100 characters. Small text under ad_headline. OPTIONAL (can be empty string) but recommended for stronger conversion — use to reinforce earnings/flexibility or add a specific proof point.
+- **cta_button**: ALWAYS "APPLY" (Outlier's funnel = screening application). Do not pick anything else.
+
+No variant ships if ANY of the 5 text fields above violates its length limit. The copy rewriter will kick the variant back to you with a list of violations.
 
 ## 3 COPY ANGLES
 
@@ -321,14 +464,69 @@ These are 1:1 square LinkedIn/Instagram feed ads. Text is overlaid on a backgrou
 1. **NEVER start a headline with the audience name as a label** — "DNA Researchers:" is wrong. The profession can appear naturally mid-sentence.
 2. Each variant must have a COMPLETELY DIFFERENT opening structure — question vs. statement vs. bold claim.
 3. Do NOT invent earnings figures — only use numbers if the layer text already contains them.
-4. Use Outlier's mandatory vocabulary:
-   - Say "payment" not "compensation" or "salary"
-   - Say "opportunity" not "job" or "role" (when referring to Outlier tasks; "in between [their] jobs" referring to external work is fine)
-   - Say "screening" not "interview"
-   - Say "reward" not "bonus"
-   - Say "current tasking rate" not "project rate"
-5. Headline and subheadline are separate fields — never merge them.
-6. Human and specific, not corporate. Write how a sharp, friendly colleague would put it.
+4. Headline and subheadline are separate fields — never merge them. Same for intro_text and ad_headline (they carry different angles on the same value prop — never duplicate).
+5. Human and specific, not corporate. Write how a sharp, friendly colleague would put it.
+
+## OUTLIER BRAND VOICE — MANDATORY (copy is rejected if violated)
+
+### Restricted Vocabulary (banned — use alternative)
+The following words are BANNED in every field (headline, subheadline, intro_text, ad_headline, ad_description). Scan every field before returning.
+
+| Banned | Use Instead |
+|---|---|
+| work, job | contribute, contributing, tasks, projects, opportunity |
+| performance | progress (or rephrase) |
+| assign | match, matching |
+| bonus | reward, extra |
+| role, position | opportunity |
+| training, learning, growth | session, walk through, get familiar with project guidelines |
+| employee, worker | contributor |
+| schedule, shift | rephrase completely — these words imply employment |
+| team (as org membership) | rephrase — "part of this project" if needed |
+| Mango, MultiMango | Aether |
+| Discourse | Outlier Community |
+| sprint | window, push |
+| compensation, salary | payment |
+| required | strongly encouraged |
+| interview | screening |
+| instructions | project guidelines |
+| remove from project | release from project |
+| promote | eligible to work on review-level tasks |
+
+### Banned Filler + AI Vocabulary
+ZERO tolerance for any of these tokens anywhere in any field:
+- Filler: genuinely, honestly, truly, actually, really, very, so, just
+- AI vocabulary: delve, landscape, leverage, foster, robust, holistic, dive into, unpack, game-changer, cutting-edge, revolutionary, seamless, transformative, tapestry, realm, journey, testament, at the end of the day
+- Corporate openers: "we're excited to," "we'd love to," "we wanted to reach out," "as you may be aware," "Great news:", "Good news:", "We're thrilled," "We can't wait!", "I'm excited to announce"
+
+### Structure Rules
+- No throat-clearing ("here's the thing," "quick pitch:", "let me be clear", "excited to share")
+- No fake discovery arcs ("But here's what surprised me," "That's when it hit me")
+- No bait questions at end ("What do you think?")
+- No weird urgency ("this is your moment", "don't miss this", "now's your chance")
+- Lead with the concrete thing — the artifact, number, story, or example — then explain
+
+### Formatting Rules
+- Sentence case everywhere. First word + proper nouns only. NO ALL CAPS anywhere.
+- "Outlier" always capitalized
+- Spell out numbers under ten in prose (one, five, seven). Numerals for money ($25), percentages (5%), thresholds.
+- NO em dashes in contributor content. Use commas, periods, colons, or parentheses.
+- Oxford commas
+- Contractions throughout (we're, it's, they're) — no formal expansions
+- NO hashtags
+- Start some sentences with "And," "But," "So," "Because" — sounds human
+
+### Calibrated Warmth
+- Don't overstate emotional stakes
+- Exclamation points: 0–1 per variant. NEVER on deadlines or facts.
+- Stress test: would this feel strange to say out loud to a friend? If yes, it's wrong.
+
+### AI/LLM References
+- NEVER name specific models (ChatGPT, Claude, Gemini, Grok, DeepSeek)
+- Use instead: "AI tools", "AI models", "frontier models"
+
+### Read-Aloud Test
+Before returning, mentally read each field out loud. Does it sound like a ChatGPT response, a keynote speech, or a LinkedIn announcement? → rewrite. Does it sound like a sharp friend in this profession talking to peers? → keep it.
 
 ## PHOTO SUBJECT (one per variant)
 Each variant needs a `photo_subject` — a SHORT, specific scene description for the background photo generator.
@@ -349,7 +547,7 @@ Bad examples (never do these):
 The photo generator will add: close-up portrait framing, plant-filled home interior, natural window light, warm film aesthetic.
 
 ## RESPONSE FORMAT
-Return ONLY valid JSON, no other text:
+Return ONLY valid JSON, no other text. Every variant MUST contain all 8 fields below:
 ```json
 {{
   "tg_label": "<your derived human-readable label for this TG, e.g. 'European DNA sequencing researcher'>",
@@ -357,10 +555,13 @@ Return ONLY valid JSON, no other text:
     {{
       "angle": "A",
       "angleLabel": "Expertise Hook",
-      "headline": "...",
-      "subheadline": "...",
-      "cta": "Apply Now",
-      "photo_subject": "...",
+      "headline": "<≤6 words, ≤40 chars — image overlay>",
+      "subheadline": "<≤7 words, ≤48 chars — image overlay>",
+      "intro_text": "<≤140 chars — feed text ABOVE image>",
+      "ad_headline": "<≤70 chars — bold text BELOW image>",
+      "ad_description": "<≤100 chars — small text, optional but recommended>",
+      "cta_button": "APPLY",
+      "photo_subject": "<[gender] [ethnicity] [profession], [activity]>",
       "layerUpdates": {{"<node_id_from_layers>": "new text"}}
     }},
     {{
@@ -368,7 +569,10 @@ Return ONLY valid JSON, no other text:
       "angleLabel": "Earnings Hook",
       "headline": "...",
       "subheadline": "...",
-      "cta": "Start Earning",
+      "intro_text": "...",
+      "ad_headline": "...",
+      "ad_description": "...",
+      "cta_button": "APPLY",
       "photo_subject": "...",
       "layerUpdates": {{"<node_id_from_layers>": "new text"}}
     }},
@@ -377,7 +581,10 @@ Return ONLY valid JSON, no other text:
       "angleLabel": "Flexibility Hook",
       "headline": "...",
       "subheadline": "...",
-      "cta": "Get Matched Today",
+      "intro_text": "...",
+      "ad_headline": "...",
+      "ad_description": "...",
+      "cta_button": "APPLY",
       "photo_subject": "...",
       "layerUpdates": {{"<node_id_from_layers>": "new text"}}
     }}

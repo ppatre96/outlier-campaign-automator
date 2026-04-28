@@ -13,17 +13,23 @@ Visual style — ground-truth from Outlier Static Ads v2 reference analysis:
   - Background: plant-dense home interior (this is Outlier's brand signature)
   - Gradient: soft LEFT-SIDE wash — pink/coral cloud top-left + teal cloud bottom-left
     Covers ~50% of image width, fading toward right. Right half mostly unaffected.
-  - Headline: very large (~8.5% canvas), Avenir Next Bold, white, centered, no shadow
-  - Subheadline: smaller (~4.4% canvas), Avenir Next Regular, white, centered
+  - Headline: very large (~8.5% canvas), Inter Bold, white, centered, no shadow
+  - Subheadline: smaller (~4.4% canvas), Inter Regular, white, centered
   - Bottom strip: white, earnings claim bold left + "Outlier" wordmark right
   - White border on all 4 sides, photo inset with rounded corners
+  - Reference image + Outlier logo SVG embedded inline in Gemini prompt (not Drive URL)
 """
 import base64
 import logging
+import os
 import re
 import tempfile
 from io import BytesIO
 from pathlib import Path
+
+# cairosvg needs libcairo from Homebrew on macOS — set the search path before import
+if Path("/opt/homebrew/lib").exists():
+    os.environ.setdefault("DYLD_FALLBACK_LIBRARY_PATH", "/opt/homebrew/lib")
 
 import requests
 from PIL import Image, ImageDraw, ImageFont
@@ -32,6 +38,69 @@ import numpy as np
 import config
 
 log = logging.getLogger(__name__)
+
+# ── Reference assets (inlined for Gemini — avoids Drive URL that Gemini cannot fetch) ──
+# These are resolved once at import time from known local paths.
+# Fall back gracefully if running outside the standard dev environment.
+
+def _load_reference_image_b64() -> str:
+    """Return base64-encoded Finance-Branded-BankerMale-Futureproof-1x1.png."""
+    candidates = [
+        Path("/Users/pranavpatre/Outlier Creatives/Outlier - Static Ads v2/Finance-Branded-BankerMale-Futureproof-1x1.png"),
+        Path("/Users/pranavpatre/Desktop/Outlier Creatives/Outlier - Static Ads v2/Finance-Branded-BankerMale-Futureproof-1x1.png"),
+        Path("/Users/pranavpatre/Downloads/Outlier - Static Ads v2/Finance-Branded-BankerMale-Futureproof-1x1.png"),
+    ]
+    for p in candidates:
+        if p.exists():
+            data = base64.b64encode(p.read_bytes()).decode("utf-8")
+            log.debug("Reference image loaded from %s (%d chars base64)", p, len(data))
+            return data
+    log.warning("Reference image Finance-Branded-BankerMale-Futureproof-1x1.png not found locally — prompt will omit inline image")
+    return ""
+
+
+def _load_outlier_logo_svg() -> str:
+    """Return the Outlier logo SVG as a string."""
+    candidates = [
+        Path("/Users/pranavpatre/Downloads/outlier logo.svg"),
+        Path("/Users/pranavpatre/Desktop/outlier logo.svg"),
+    ]
+    for p in candidates:
+        if p.exists():
+            return p.read_text()
+    log.warning("outlier logo.svg not found locally — prompt will omit inline SVG")
+    return ""
+
+
+def _rasterize_outlier_logo(target_width: int = 800) -> Image.Image | None:
+    """
+    Rasterize the Outlier SVG logo to a PIL image, tinted to Outlier brown (#3D1A00).
+    Returns None if cairosvg or the SVG file isn't available.
+    """
+    svg_path = None
+    for p in (Path("/Users/pranavpatre/Downloads/outlier logo.svg"),
+              Path("/Users/pranavpatre/Desktop/outlier logo.svg")):
+        if p.exists():
+            svg_path = p
+            break
+    if svg_path is None:
+        return None
+    try:
+        import cairosvg
+        png_bytes = cairosvg.svg2png(url=str(svg_path), output_width=target_width)
+        logo = Image.open(BytesIO(png_bytes)).convert("RGBA")
+        # Tint the black logo to Outlier brown while preserving alpha
+        r, g, b, a = logo.split()
+        brown = Image.new("RGB", logo.size, OUTLIER_BROWN)
+        tinted = Image.merge("RGBA", (*brown.split(), a))
+        return tinted
+    except Exception as exc:
+        log.warning("Could not rasterize Outlier logo SVG: %s", exc)
+        return None
+
+
+_REFERENCE_IMAGE_B64: str = _load_reference_image_b64()
+_OUTLIER_LOGO_SVG: str = _load_outlier_logo_svg()
 
 # ── Output size ───────────────────────────────────────────────────────────────
 AD_SIZE = 1200   # 1200×1200 px for high-res LinkedIn 1:1
@@ -62,75 +131,95 @@ _ANGLE_EXPRESSIONS = {
 }
 
 # ── Gemini prompt template ────────────────────────────────────────────────────────
-# Full spec document (used by outlier-creative-generator agent for context + design reference)
+# Full spec document (used by outlier-creative-generator agent for context + design reference).
 GEMINI_PROMPT_TEMPLATE = """\
-IMAGE COMPOSITION REQUIREMENTS (CRITICAL — TEXT PLACEMENT):
-- Top 25%: COMPLETELY CLEAR (no face, no subject) — headline text ONLY
-- Middle 50%: Subject centered, empty left/right sides — subheadline text beside subject
-- Bottom 20%: Logo + earnings text zone (subject ends at shoulders)
-- TEXT MUST NOT APPEAR ON SUBJECT'S FACE OR BODY AT ALL
-
 PHOTO GENERATION PROMPT:
-A close-up environmental portrait of a {photo_subject}, positioned with at least 25% \
-clear space ABOVE the head (no subject face visible in top quarter). Face centered \
-vertically with breathing room. Body and torso clearly visible below shoulders. Subject \
-occupies center frame with EMPTY SPACE on sides — text will overlay beside/below subject, \
-NOT on them. Lush plant-filled home interior: bookshelves, potted plants, wall art, \
-warm natural window light. 85mm prime lens, shallow depth of field. {expression}. \
-Shot on film, analog color grade, authentic lifestyle photo. NOT stock photo. NOT corporate headshot.\
+
+A close-up environmental portrait of a {photo_subject}. HEAD PLACEMENT (CRITICAL): the \
+TOP of the subject's hair must sit at approximately 28% from the top of the frame — \
+NOT higher (text would clip hair), NOT lower (creates excessive empty gap). The top \
+~25% of the frame is a text-safe strip (no subject pixels, no hair, no flyaways); the \
+top of the hair then appears at ~28%, with a small clean 3-5% visible gap between the \
+bottom of the future headline overlay and the hairline. Subject's face centered \
+vertically in the MIDDLE THIRD of the frame. Body/torso clearly visible below shoulders. \
+EMPTY SPACE on the left and right sides of the subject — text will overlay beside/below \
+subject, NOT on them. Lush plant-filled home interior: bookshelves, potted plants, wall \
+art, warm natural window light. 85mm prime lens, shallow depth of field. {expression}. \
+Shot on film, analog color grade, authentic lifestyle photo. NOT stock photo. NOT \
+corporate headshot.
+
+GRADIENT WASH — EXACTLY MATCH THE REFERENCE IMAGE (attached). Two specific corner washes only:
+
+1. TOP-LEFT corner: soft pastel PINK/CORAL wash. Must originate in the TOP-LEFT quadrant \
+   of the frame. Must NOT appear in the top-right, bottom-left, or bottom-right. Must be \
+   CENTRED around roughly (x=15%, y=15%) and fade outward from there.
+
+2. BOTTOM-LEFT corner: soft pastel TEAL/BLUE wash. Must originate in the BOTTOM-LEFT \
+   quadrant of the frame. Must NOT appear in the top-left, top-right, or bottom-right. \
+   Must be CENTRED around roughly (x=15%, y=85%) and fade outward from there.
+
+EXPLICIT NEGATIVES (these are the most common failure modes):
+- DO NOT place pink/coral in the top-right, bottom-left, or anywhere else besides the top-left quadrant.
+- DO NOT place teal/blue in the top-left, top-right, or anywhere else besides the bottom-left quadrant.
+- DO NOT spread the washes across the entire top or entire bottom — they stay in the LEFT half.
+- DO NOT produce a symmetric or radial pattern — the washes are ONLY on the left side.
+- The ENTIRE RIGHT HALF of the frame must remain neutral (natural photo tones, no colored washes).
+
+EDGE RULE: The gradient washes must FADE COMPLETELY TO NEUTRAL before reaching the outer \
+5% of any edge. The outermost 5% of every edge (top, bottom, left, right) must show \
+natural photo content with NO colored line, NO gradient band, NO graphic stripe. \
+Colored washes NEVER touch the frame edge.
+
+These washes are PART OF THE PHOTO — baked into the lighting. Do NOT draw separate overlay \
+graphics or border stripes.
+
+TEXT-SAFE ZONE CONTRAST (CRITICAL for white text overlay readability):
+- Top 30% of the frame MUST be a mid-tone to dark background (warm wood shelves, deeper plant \
+  foliage, shadowed walls). Combined with the pink/coral wash, this gives white headline text \
+  enough contrast to read. NO white walls, NO bright windows in the top band.
+- Bottom third around subject's waist/desk area must also be mid-tone / darker — the teal wash \
+  sits here. White subheadline text will overlay this zone.
+
+CRITICAL OUTPUT CONSTRAINTS:
+- DO NOT render any text, words, letters, logos, or wordmarks in the image
+- DO NOT add the Outlier logo, earnings strip, or any branding — these are composited separately in post-processing
+- OUTPUT ONLY THE PHOTOGRAPH — no overlays, no text, no graphics, no solid-color borders
+- The headline + subheadline text will be limited to MAX 2 LINES each (≤6 words headline, \
+  ≤7 words subheadline) — compose the photo assuming this text will fit in the top/bottom \
+  safe zones without overlapping the subject's face.
+
+The attached reference image shows the target COMPOSITION LAYOUT ONLY (subject framing, \
+top-clear space, side margins, background color tones). Match that composition exactly. \
+Ignore any text, logos, or branding visible in the reference — generate ONLY the clean \
+background photograph.\
 """
 
-# Just the photo generation section (the string sent to Gemini)
-# Extracted from GEMINI_PROMPT_TEMPLATE, with exact composition constraints
-_GEMINI_PHOTO_PROMPT = (
-    "A close-up environmental portrait of a {photo_subject}, positioned with at least 25% "
-    "clear space ABOVE the head (no subject face visible in top quarter). Face centered "
-    "vertically with breathing room. Body and torso clearly visible below shoulders. Subject "
-    "occupies center frame with EMPTY SPACE on sides — text will overlay beside/below subject, "
-    "NOT on them. Lush plant-filled home interior: bookshelves, potted plants, wall art, "
-    "warm natural window light. 85mm prime lens, shallow depth of field. {expression}. "
-    "Shot on film, analog color grade, authentic lifestyle photo. NOT stock photo. NOT corporate headshot."
-)
-
-# Reference image URL for composition guidance (Finance-Branded-BankerMale from Figma)
-# Used by Gemini to match the exact composition layout: top 25% clear, subject centered, bottom 20% earnings zone
-_REFERENCE_IMAGE_URL = "https://www.figma.com/api/mcp/asset/8b38a2e1-f303-4cc4-abd4-455cb8ccaab5"
+# Reference image URL (Google Drive folder with reference PNG + logo SVG)
+_REFERENCE_IMAGE_URL = "https://drive.google.com/drive/folders/1EYVpR40lXOiZFPBV-HkZ3Jx0CImjsHvV?usp=drive_link"
 
 
-def _build_imagen_prompt(photo_subject: str, angle: str) -> str:
+def _build_imagen_prompt(photo_subject: str, angle: str) -> tuple[str, str]:
     """
     Build Gemini image prompt matching Outlier Static Ads v2 aesthetic.
 
-    Returns the full GEMINI_PROMPT_TEMPLATE with preamble that makes clear to Gemini
-    that composition requirements are layout specifications, not content to render.
+    Returns a (prompt_text, reference_image_b64) tuple:
+      - prompt_text: full formatted prompt
+      - reference_image_b64: base64-encoded Finance-Branded-BankerMale-Futureproof-1x1.png
+        (attached as image part in direct Gemini API calls; empty string if not found)
 
     Args:
         photo_subject: Specific description of the subject (gender, ethnicity, profession, activity)
         angle: Copy variant angle ("A", "B", or "C") — determines expression in the prompt
-
-    Returns:
-        Gemini image generation prompt string with full template structure
     """
     expression = _ANGLE_EXPRESSIONS.get(angle, _ANGLE_EXPRESSIONS["A"])
 
-    # Preamble: clarify to Gemini that the following is layout specification
-    preamble = (
-        "COMPOSITION SPECIFICATION (Layout guidance — do NOT render this text as content):\n\n"
-    )
-
     # Format the full template with actual values
-    formatted_template = GEMINI_PROMPT_TEMPLATE.format(
+    prompt_text = GEMINI_PROMPT_TEMPLATE.format(
         photo_subject=photo_subject,
         expression=expression,
     )
 
-    # Append reference image instruction
-    reference_note = (
-        f"\n\nREFERENCE IMAGE for composition style: {_REFERENCE_IMAGE_URL}\n"
-        "(This is a style reference only — generate a new, original photo with the subject specified above)"
-    )
-
-    return preamble + formatted_template + reference_note
+    return prompt_text, _REFERENCE_IMAGE_B64
 
 
 # ── Reference image handling ────────────────────────────────────────────────
@@ -158,7 +247,7 @@ def _fetch_and_encode_image(image_url: str) -> str:
 
 # ── Gemini Imagen API call (via LiteLLM proxy) ────────────────────────────────
 
-def _generate_imagen(prompt: str, gemini_api_key: str = "", reference_image_url: str = "") -> Image.Image:
+def _generate_imagen(prompt: str, gemini_api_key: str = "", reference_image_b64: str = "") -> Image.Image:
     """
     Generate an image via the Scale LiteLLM proxy using Gemini image models.
 
@@ -170,12 +259,23 @@ def _generate_imagen(prompt: str, gemini_api_key: str = "", reference_image_url:
     Falls back to the direct Google API (GEMINI_API_KEY) if LiteLLM is unavailable.
 
     Args:
-        prompt: The image generation prompt (may include reference image instruction)
+        prompt: The image generation prompt (SVG already inlined in prompt text)
         gemini_api_key: Optional override for Gemini API key (falls back to config)
-        reference_image_url: Optional URL to a reference image for style guidance
+        reference_image_b64: Base64-encoded Finance-Branded-BankerMale-Futureproof-1x1.png
+            (inline local file — not a URL). Sent as an image part in the Gemini
+            multipart request so the model can directly see the reference composition.
+            Empty string = no reference image attached (degrades gracefully).
     """
-    # ── Primary: LiteLLM proxy ────────────────────────────────────────────────
-    if config.LITELLM_API_KEY:
+    # ── Primary: direct Google Gemini API (supports multipart with reference image) ──
+    # Preferred when GEMINI_API_KEY is available because it can accept the reference
+    # image as inline_data — which dramatically improves composition adherence.
+    api_key = gemini_api_key or config.GEMINI_API_KEY
+    if not api_key and not config.LITELLM_API_KEY:
+        raise RuntimeError("No image generation available: LITELLM_API_KEY and GEMINI_API_KEY are both unset")
+
+    # ── Fallback: LiteLLM proxy (text-only, no reference image attachment) ──
+    # Only used when GEMINI_API_KEY is unavailable since it cannot attach images.
+    if not api_key and config.LITELLM_API_KEY:
         url = f"{config.LITELLM_BASE_URL}/images/generations"
         headers = {
             "Authorization": f"Bearer {config.LITELLM_API_KEY}",
@@ -192,37 +292,25 @@ def _generate_imagen(prompt: str, gemini_api_key: str = "", reference_image_url:
             if imgs and "b64_json" in imgs[0]:
                 return Image.open(BytesIO(base64.b64decode(imgs[0]["b64_json"]))).convert("RGBA")
             raise RuntimeError(f"LiteLLM image response missing b64_json: {resp.text[:300]}")
-        log.warning("LiteLLM image generation failed (%d), falling back to direct API", resp.status_code)
-
-    # ── Fallback: direct Google Gemini API ────────────────────────────────────
-    api_key = gemini_api_key or config.GEMINI_API_KEY
-    if not api_key:
-        raise RuntimeError("No image generation available: LITELLM_API_KEY and GEMINI_API_KEY are both unset")
+        raise RuntimeError(f"LiteLLM image generation failed ({resp.status_code}): {resp.text[:300]}")
 
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models"
         f"/gemini-2.5-flash-image:generateContent?key={api_key}"
     )
 
-    # Build request parts: text prompt + optional reference image
+    # Build request parts: text prompt first, then reference image inline
     parts = [{"text": prompt}]
-    if reference_image_url:
-        try:
-            log.info("Fetching reference image from %s", reference_image_url[:60])
-            b64_data = _fetch_and_encode_image(reference_image_url)
-            # Determine MIME type from URL or default to PNG
-            mime_type = "image/png"
-            if ".jpg" in reference_image_url.lower() or ".jpeg" in reference_image_url.lower():
-                mime_type = "image/jpeg"
-            parts.append({
-                "inline_data": {
-                    "mime_type": mime_type,
-                    "data": b64_data,
-                }
-            })
-            log.info("Reference image attached (mime_type=%s)", mime_type)
-        except RuntimeError as e:
-            log.warning("Failed to attach reference image: %s", e)
+    if reference_image_b64:
+        parts.append({
+            "inline_data": {
+                "mime_type": "image/png",
+                "data": reference_image_b64,
+            }
+        })
+        log.info("Reference image attached inline (%d chars base64)", len(reference_image_b64))
+    else:
+        log.warning("Reference image not available — Gemini will generate without composition reference")
 
     payload = {
         "contents": [{"parts": parts}],
@@ -232,17 +320,26 @@ def _generate_imagen(prompt: str, gemini_api_key: str = "", reference_image_url:
     if resp.status_code != 200:
         raise RuntimeError(f"Gemini direct API error {resp.status_code}: {resp.text[:400]}")
 
-    parts_resp = (
-        resp.json()
-        .get("candidates", [{}])[0]
-        .get("content", {})
-        .get("parts", [])
-    )
+    resp_json = resp.json()
+    candidates = resp_json.get("candidates", [])
+    if not candidates:
+        finish = resp_json.get("promptFeedback", {}).get("blockReason", "unknown")
+        raise RuntimeError(f"Gemini direct API returned no candidates (blockReason={finish!r}): {resp.text[:400]}")
+
+    candidate = candidates[0]
+    finish_reason = candidate.get("finishReason", "")
+    parts_resp = candidate.get("content", {}).get("parts", [])
     for part in parts_resp:
         if "inlineData" in part:
             return Image.open(BytesIO(base64.b64decode(part["inlineData"]["data"]))).convert("RGBA")
 
-    raise RuntimeError("Gemini direct API returned no image in response")
+    # Log text parts to help diagnose safety blocks
+    text_parts = [p.get("text", "") for p in parts_resp if "text" in p]
+    log.warning("Gemini returned no image part. finishReason=%r text=%r", finish_reason, text_parts[:2])
+    raise RuntimeError(
+        f"Gemini direct API returned no image in response "
+        f"(finishReason={finish_reason!r}, text={str(text_parts)[:200]})"
+    )
 
 
 # ── Image composition ─────────────────────────────────────────────────────────
@@ -261,53 +358,66 @@ def _make_gradient_overlay(width: int, height: int, angle: str) -> Image.Image:
     This spread is what makes text readable when overlaid on the face area
     (left portion of frame where text sits).
     """
-    tl_color, bl_color = ANGLE_GRADIENTS.get(angle, ANGLE_GRADIENTS["A"])
+    # NOTE: Gemini now bakes the pink/coral + teal corner washes directly into the photo
+    # (see GEMINI_PROMPT_TEMPLATE → "GRADIENT WASH" section). PIL should NOT add its own
+    # colored clouds on top — that caused the "gradient border" artefact the user flagged.
+    # We only add subtle DARK wash bands in the text zones so white text stays readable
+    # regardless of what Gemini produces.
     overlay = np.zeros((height, width, 4), dtype=np.float32)
-    y_grid, x_grid = np.meshgrid(
+    y_grid, _ = np.meshgrid(
         np.linspace(0, 1, height),
         np.linspace(0, 1, width),
         indexing="ij",
     )
-    # Top-left cloud — spread ~50% across width (multiplier 1.2 vs 1.8 = wider)
-    tl_dist  = np.sqrt(x_grid ** 2 + y_grid ** 2)
-    tl_alpha = np.clip(1.0 - tl_dist * 1.2, 0, 1) ** 1.4 * 0.45
-    # Bottom-left cloud — spread ~50% across width
-    bl_dist  = np.sqrt(x_grid ** 2 + (1 - y_grid) ** 2)
-    bl_alpha = np.clip(1.0 - bl_dist * 1.2, 0, 1) ** 1.4 * 0.40
 
-    for c_idx, c_val in enumerate(tl_color):
-        overlay[:, :, c_idx] += tl_alpha * (c_val / 255.0)
-    for c_idx, c_val in enumerate(bl_color):
-        overlay[:, :, c_idx] += bl_alpha * (c_val / 255.0)
-    overlay[:, :, 3] = np.clip(np.maximum(tl_alpha, bl_alpha), 0, 1)
+    # Dark wash bands behind text zones — gentle, no colored tint.
+    top_band    = np.clip(1.0 - y_grid / 0.28, 0, 1) ** 1.5 * 0.32
+    bottom_band = np.clip((y_grid - 0.72) / 0.20, 0, 1) ** 1.5 * 0.28
+    dark_alpha  = np.maximum(top_band, bottom_band)
+    overlay[:, :, 3] = np.clip(dark_alpha, 0, 1)
     return Image.fromarray((np.clip(overlay, 0, 1) * 255).astype(np.uint8), "RGBA")
 
 
 def _load_font(size: int, bold: bool = False):
     """
-    Load Avenir Next (matches Outlier brand style — rounded, clean sans-serif).
-    Bold (index 0) for headlines, Regular (index 7) for subheadlines.
-    Falls back to system fonts if Avenir is unavailable.
+    Load Inter font (Outlier brand standard).
+    Bold for headlines, Regular for subheadlines.
+    Falls back to system fonts if Inter is unavailable.
     """
-    avenir = "/System/Library/Fonts/Avenir Next.ttc"
-    try:
-        idx = 0 if bold else 7  # 0=Bold, 7=Regular
-        return ImageFont.truetype(avenir, size, index=idx)
-    except (IOError, OSError):
-        pass
-    # Fallback chain
-    candidates = (
+    inter_paths = (
         [
+            "/System/Library/Fonts/Inter.ttf",
+            "/Library/Fonts/Inter.ttf",
+            "/usr/share/fonts/opentype/inter/Inter-Bold.ttf",
+            "/usr/share/fonts/truetype/inter/Inter-Bold.ttf",
+        ] if bold else [
+            "/System/Library/Fonts/Inter.ttf",
+            "/Library/Fonts/Inter.ttf",
+            "/usr/share/fonts/opentype/inter/Inter-Regular.ttf",
+            "/usr/share/fonts/truetype/inter/Inter-Regular.ttf",
+        ]
+    )
+    # Try Inter first
+    for path in inter_paths:
+        try:
+            return ImageFont.truetype(path, size)
+        except (IOError, OSError):
+            continue
+    # Fallback chain (Avenir Next → Arial → Liberation)
+    fallback_candidates = (
+        [
+            "/System/Library/Fonts/Avenir Next.ttc",
             "/Library/Fonts/Arial Bold.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         ] if bold else [
+            "/System/Library/Fonts/Avenir Next.ttc",
             "/Library/Fonts/Arial.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         ]
     )
-    for path in candidates:
+    for path in fallback_candidates:
         try:
             return ImageFont.truetype(path, size)
         except (IOError, OSError):
@@ -357,8 +467,8 @@ def _add_bottom_strip(canvas: Image.Image, bottom_text: str, strip_height_frac: 
     """
     White strip at bottom matching Outlier Static Ads v2 reference:
     - Left: two lines — earnings claim line 1, "Fully remote." line 2
-    - Right: "Outlier" wordmark in Avenir Next Bold, brown
-    No shadow, clean Avenir type throughout.
+    - Right: actual Outlier SVG logo (rasterized and tinted to #3D1A00 brown)
+      Falls back to Inter Bold "Outlier" text only if SVG rasterization is unavailable.
     """
     size    = canvas.size[0]
     strip_h = int(size * strip_height_frac)
@@ -388,13 +498,25 @@ def _add_bottom_strip(canvas: Image.Image, bottom_text: str, strip_height_frac: 
     if line2:
         draw.text((pad, text_y + line_h), line2, font=body_font, fill=OUTLIER_BROWN)
 
-    # "Outlier" wordmark — right-aligned, vertically centered
-    logo_font = _load_font(int(size * 0.055), bold=True)
-    logo_text = "Outlier"
-    logo_w    = draw.textlength(logo_text, font=logo_font)
-    logo_h    = int(size * 0.055)
-    logo_y    = strip_y + (strip_h - logo_h) // 2
-    draw.text((size - pad - logo_w, logo_y), logo_text, font=logo_font, fill=OUTLIER_BROWN)
+    # Outlier wordmark — paste the actual SVG logo (tinted brown), right-aligned
+    logo_target_h = int(strip_h * 0.48)  # ~48% of strip height
+    logo_img = _rasterize_outlier_logo(target_width=800)
+    if logo_img is not None:
+        # Scale to the target height
+        scale = logo_target_h / logo_img.height
+        new_w = int(logo_img.width * scale)
+        logo_img = logo_img.resize((new_w, logo_target_h), Image.LANCZOS)
+        logo_x = size - pad - new_w
+        logo_y = strip_y + (strip_h - logo_target_h) // 2
+        canvas.paste(logo_img, (logo_x, logo_y), logo_img)
+    else:
+        # Fallback: text wordmark in Inter Bold
+        logo_font = _load_font(int(size * 0.055), bold=True)
+        logo_text = "Outlier"
+        logo_w    = draw.textlength(logo_text, font=logo_font)
+        logo_h    = int(size * 0.055)
+        logo_y    = strip_y + (strip_h - logo_h) // 2
+        draw.text((size - pad - logo_w, logo_y), logo_text, font=logo_font, fill=OUTLIER_BROWN)
 
     return canvas
 
@@ -562,6 +684,8 @@ def generate_imagen_creative(
     photo_subject: str | None = None,
     gemini_api_key: str | None = None,
     tg_category: str | None = None,  # kept for backward compat, unused
+    prompt_suffix: str = "",
+    attach_reference_image: bool = True,
     **_kwargs,
 ) -> Path:
     """
@@ -575,6 +699,11 @@ def generate_imagen_creative(
                        attire, setting, and geography — NOT a generic category label.
                        Falls back to variant["photo_subject"] if present.
         gemini_api_key: Gemini API key (falls back to config.GEMINI_API_KEY)
+        prompt_suffix: Extra instructions appended to the Gemini prompt. Used by the QC
+                       retry loop to pass specific failure-mode feedback back to the model.
+        attach_reference_image: Whether to attach the Finance-Branded-BankerMale reference
+                       image. QC may set this to False on retry when the reference is
+                       causing the model to mimic the reference person or render its text.
 
     Returns:
         Path to the composed PNG (temp file — caller owns cleanup).
@@ -593,14 +722,23 @@ def generate_imagen_creative(
 
     validate_photo_subject(subject)  # raises ValueError if generic
 
-    prompt = _build_imagen_prompt(subject, angle)
+    prompt, ref_img_b64 = _build_imagen_prompt(subject, angle)
+    if prompt_suffix:
+        prompt = prompt + "\n\nADDITIONAL QC FEEDBACK (apply strictly):\n" + prompt_suffix
+    if not attach_reference_image:
+        ref_img_b64 = ""
+
     log.info("Gemini call — angle=%s photo_subject=%r", angle, subject[:80])
     log.info("Imagen prompt (first 200 chars): %s", prompt[:200])
+    log.info("Reference image inline: %s (%d chars b64)",
+             "YES" if ref_img_b64 else "NO (disabled or file not found)", len(ref_img_b64))
+    if prompt_suffix:
+        log.info("QC prompt suffix applied: %s", prompt_suffix[:200])
 
     bg_image = _generate_imagen(
         prompt,
         gemini_api_key or config.GEMINI_API_KEY,
-        reference_image_url=_REFERENCE_IMAGE_URL,
+        reference_image_b64=ref_img_b64,
     )
     log.info("Imagen photo received (%dx%d)", bg_image.width, bg_image.height)
 
@@ -627,3 +765,143 @@ def generate_imagen_creative(
     ad_image.save(out_path, "PNG", optimize=True)
     log.info("Gemini creative saved: %s (%d bytes)", out_path, out_path.stat().st_size)
     return out_path
+
+
+def generate_imagen_creative_with_qc(
+    variant: dict,
+    photo_subject: str | None = None,
+    reference_image_path: str | Path | None = None,
+    max_retries: int = 2,
+    copy_rewriter: "callable | None" = None,
+    initial_prompt_suffix: str = "",
+    no_reference_image: bool = False,
+    **kwargs,
+) -> tuple[Path, dict]:
+    """
+    Generate a creative with automated QC + retry loop.
+
+    Handles two distinct failure classes:
+      1. **Copy failure** (headline/subheadline exceeds word/char/line limits) — the image
+         would just get cut off, so we send the variant back to the copy rewriter
+         (if one is provided) BEFORE even calling Gemini. No image generation wasted.
+      2. **Image failure** (Gemini rendered text, duplicate logo, mimicry, etc.) —
+         regenerate the image with the QC-suggested prompt suffix. On the second image
+         retry we drop the reference image if mimicry was flagged.
+
+    Args:
+        copy_rewriter: optional callable taking (variant_dict, copy_violations: list[str])
+                       and returning an updated variant dict with rewritten headline/
+                       subheadline. Called if QC detects copy-length violations. If None,
+                       copy failures cause immediate FAIL without regeneration.
+        initial_prompt_suffix: Extra constraints injected into the FIRST generation
+                       attempt — applied before QC runs. Use this to front-load known
+                       failure modes for a specific angle (e.g., Angle A earnings banner)
+                       so the first generation is already hardened rather than relying
+                       on a QC failure to surface the instruction.
+
+    Returns (final_path, qc_report_dict). Callers must check qc_report_dict["verdict"]
+    before shipping to LinkedIn — a FAIL verdict means the retries were exhausted.
+    """
+    from src.copy_design_qc import qc_creative, validate_copy_lengths  # local import
+
+    if no_reference_image:
+        # Caller explicitly opts out of the reference image for both generation AND QC.
+        reference_image_path = None
+        attach_ref_initial = False
+    else:
+        attach_ref_initial = True
+        if reference_image_path is None:
+            for p in (
+                Path("/Users/pranavpatre/Outlier Creatives/Outlier - Static Ads v2/Finance-Branded-BankerMale-Futureproof-1x1.png"),
+                Path("/Users/pranavpatre/Desktop/Outlier Creatives/Outlier - Static Ads v2/Finance-Branded-BankerMale-Futureproof-1x1.png"),
+            ):
+                if p.exists():
+                    reference_image_path = p
+                    break
+
+    # ── Pre-flight copy validation ──
+    # If copy is already too long, rewrite before wasting a Gemini call.
+    copy_retry_budget = 2
+    while copy_retry_budget > 0:
+        copy_violations = validate_copy_lengths(
+            variant.get("headline", ""),
+            variant.get("subheadline", ""),
+        )
+        if not copy_violations:
+            break
+        log.warning("Pre-flight copy violations for angle %s: %s", variant.get("angle"), copy_violations)
+        if copy_rewriter is None:
+            log.error("No copy_rewriter provided — cannot fix copy violations. Skipping generation.")
+            return Path("/dev/null"), {
+                "verdict": "FAIL",
+                "retry_target": "copywriter",
+                "copy_violations": copy_violations,
+                "violations": copy_violations,
+            }
+        variant = copy_rewriter(variant, copy_violations)
+        copy_retry_budget -= 1
+
+    prompt_suffix = initial_prompt_suffix  # seed from caller; QC failures append to it
+    attach_ref   = attach_ref_initial
+    last_report: dict = {"verdict": "FAIL", "violations": ["not attempted"]}
+    path = Path("/dev/null")
+
+    for attempt in range(max_retries + 1):
+        log.info("Creative generation attempt %d/%d (angle=%s)",
+                 attempt + 1, max_retries + 1, variant.get("angle", "?"))
+        path = generate_imagen_creative(
+            variant=variant,
+            photo_subject=photo_subject,
+            prompt_suffix=prompt_suffix,
+            attach_reference_image=attach_ref,
+            **kwargs,
+        )
+
+        try:
+            report = qc_creative(
+                creative_path=path,
+                reference_path=reference_image_path,
+                headline=variant.get("headline", ""),
+                subheadline=variant.get("subheadline", ""),
+                intro_text=variant.get("intro_text", ""),
+                ad_headline=variant.get("ad_headline", ""),
+                ad_description=variant.get("ad_description", ""),
+                cta_button=variant.get("cta_button", ""),
+            )
+        except Exception as exc:
+            log.warning("QC could not run on attempt %d: %s — accepting creative without QC", attempt + 1, exc)
+            return path, {"verdict": "UNKNOWN", "error": str(exc)}
+
+        last_report = report.to_dict()
+        log.info("QC attempt %d: %s (target=%s, %d violations)",
+                 attempt + 1, report.verdict, report.retry_target, len(report.violations))
+
+        if report.verdict == "PASS":
+            return path, last_report
+
+        # Route retry based on failure type
+        if report.retry_target == "copywriter":
+            if copy_rewriter is None:
+                log.error("Copy QC failed and no copy_rewriter available — returning FAIL")
+                return path, last_report
+            log.info("Copy QC failed — invoking copy_rewriter")
+            variant = copy_rewriter(variant, report.copy_violations)
+            prompt_suffix = ""  # fresh image attempt, not a gemini-feedback suffix
+            continue
+
+        # Gemini-side image failure — append QC feedback to existing suffix (preserve initial constraints)
+        qc_suffix = report.retry_instruction
+        if initial_prompt_suffix and initial_prompt_suffix not in (prompt_suffix or ""):
+            prompt_suffix = initial_prompt_suffix + "\n\n" + qc_suffix
+        else:
+            prompt_suffix = qc_suffix
+        if attempt >= 1 and (
+            "reference" in report.retry_instruction.lower()
+            or any("mimic" in v.lower() or "matches_reference" in v.lower() for v in report.violations)
+        ):
+            attach_ref = False
+            log.info("QC flagged reference-image mimicry — dropping reference image for next retry")
+
+    log.warning("Creative still failing QC after %d attempts — returning last attempt with FAIL verdict",
+                max_retries + 1)
+    return path, last_report
