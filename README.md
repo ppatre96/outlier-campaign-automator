@@ -254,3 +254,168 @@ A re-run within 6 days of a successful run exits cleanly with a "skipping" log
 (unless `--force` is passed). A `filelock.FileLock` with a 10-second timeout
 prevents two concurrent invocations from racing — the second invocation exits
 cleanly with "another instance running".
+
+
+## Smart Ramp Poller (Phase 2.6)
+
+`scripts/smart_ramp_poller.py` runs every 15 minutes via launchd. It polls Smart
+Ramp for newly-submitted ramps, runs the campaign pipeline (BOTH InMail and
+Static for every cohort), and posts a single consolidated message to **three
+Slack targets** per ramp: Pranav DM, Diego DM, and channel `C0B0NBB986L`.
+
+### USER ACTION REQUIRED — first-time setup
+
+Per critical_constraints, the agent does NOT edit `~/Library/LaunchAgents/*`
+or run `launchctl` commands. The following steps are manual:
+
+#### 1. Create the launchd plist
+
+Drop the following EXACT content into `~/Library/LaunchAgents/com.outlier.smart-ramp-poller.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.outlier.smart-ramp-poller</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/pranavpatre/outlier-campaign-agent/venv/bin/python3</string>
+        <string>/Users/pranavpatre/outlier-campaign-agent/scripts/smart_ramp_poller.py</string>
+        <string>--once</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/pranavpatre/outlier-campaign-agent</string>
+
+    <!-- Every 15 minutes -->
+    <key>StartInterval</key>
+    <integer>900</integer>
+
+    <!-- Run immediately on launchctl load (catch-up + smoke test) -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- launchd stdout/stderr is constant file; date-stamped logs are
+         the script's responsibility (launchd doesn't support strftime in path) -->
+    <key>StandardOutPath</key>
+    <string>/tmp/outlier-smart-ramp-poller.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/outlier-smart-ramp-poller.stderr.log</string>
+</dict>
+</plist>
+```
+
+Critical: the venv python path MUST be absolute. launchd inherits a minimal
+`$PATH` (per Pitfall 4 in RESEARCH.md), so `/usr/bin/python3` would fail to
+import project deps.
+
+#### 2. Validate + load the plist
+
+```bash
+plutil -lint ~/Library/LaunchAgents/com.outlier.smart-ramp-poller.plist
+# expected: "OK"
+
+launchctl unload ~/Library/LaunchAgents/com.outlier.smart-ramp-poller.plist 2>/dev/null
+launchctl load   ~/Library/LaunchAgents/com.outlier.smart-ramp-poller.plist
+
+launchctl list | grep com.outlier.smart-ramp-poller
+# expected: a line like "-  0  com.outlier.smart-ramp-poller"
+```
+
+#### 3. Invite the bot to channel `C0B0NBB986L`
+
+Without this, all channel posts return `not_in_channel` (the notifier catches
+this and continues with the two DMs, but the channel will never receive
+notifications).
+
+```
+In Slack, navigate to the channel C0B0NBB986L.
+Type: /invite @<bot_name>
+   (the bot's username is in the Slack App config — typically "outlier-campaign-bot")
+```
+
+#### 4. (Optional) Diego accepts the bot DM (covers Pitfall 7)
+
+Pranav messages Diego asking him to send any one-character DM to
+`@outlier-campaign-bot` once. Without this, Diego's first DM may return
+`cannot_dm_bot` — the notifier handles this gracefully (logs warning,
+continues with the other 2 targets), but it means Diego won't receive that
+notification until he replies once.
+
+#### 5. Verify the first poll
+
+```bash
+# Wait ~15 seconds after `launchctl load` (RunAtLoad=true triggers immediate run)
+tail -f logs/smart_ramp_poller/$(date -u +%Y-%m-%d).log
+
+# Expected log lines:
+#   "Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> ..."
+#   "Fetched N ramps; M submitted"
+#   "Ramp <id> action=<new|edit|noop> sig=sha256..."
+```
+
+### Manual runs
+
+```bash
+# Single poll (matches what launchd does every 15 min)
+venv/bin/python3 scripts/smart_ramp_poller.py --once
+
+# Force-process one ramp (debugging — bypasses signature noop check)
+venv/bin/python3 scripts/smart_ramp_poller.py --ramp-id GMR-0010
+
+# Dry run (no state write, no Slack)
+venv/bin/python3 scripts/smart_ramp_poller.py --once --dry-run
+```
+
+### Logs and state
+
+- Run logs: `logs/smart_ramp_poller/<yyyy-mm-dd>.log` (script-managed; rotated by file naming)
+- launchd stdout/stderr: `/tmp/outlier-smart-ramp-poller.std{out,err}.log` (only for crashes BEFORE the script's logger initializes)
+- State file: `data/processed_ramps.json` (atomic-write idempotent)
+- File-lock: `data/smart_ramp_poller.lock` (prevents concurrent polls)
+- Local-fallback creatives (when LinkedIn upload is blocked):
+  `data/ramp_creatives/<ramp_id>/<cohort_id>_<inmail|static>_<angle>__<urlencoded_campaign_name>.png`
+
+### Reset retry counter (after fixing a stuck ramp)
+
+After 5 consecutive failures, the poller stops retrying that ramp and sends an
+escalation message. To resume processing once the underlying issue is fixed:
+
+```bash
+venv/bin/python3 -c "
+import json
+p = 'data/processed_ramps.json'
+ramp_id = 'GMR-XXXX'  # replace with the failed ramp ID
+s = json.load(open(p))
+s['ramps'][ramp_id]['consecutive_failures'] = 0
+s['ramps'][ramp_id]['escalation_dm_sent'] = False
+json.dump(s, open(p, 'w'), indent=2)
+"
+```
+
+### Notification targets
+
+The 3 Slack targets are resolved from `config.SLACK_RAMP_NOTIFY_TARGETS`:
+
+```python
+SLACK_RAMP_NOTIFY_TARGETS = [
+    ("user",    SLACK_REPORT_USER),       # U095J930UEL — Pranav
+    ("user",    SLACK_DIEGO_USER_ID),     # U08AW9FCP27 — Diego
+    ("channel", SLACK_RAMP_NOTIFY_CHANNEL),  # C0B0NBB986L — shared channel
+]
+```
+
+To add or remove a target, edit the list in `config.py`. No code changes needed.
+
+### Failure handling
+
+- Per-ramp isolation: one ramp's exception NEVER aborts the rest of the poll.
+- Per-target Slack isolation: one of the 3 Slack targets failing (e.g., Diego
+  has not accepted the bot DM) does NOT block the other 2 — the notifier logs
+  a warning and continues.
+- 5 consecutive failures on the same ramp → escalation message to all 3
+  targets; subsequent polls do NOT retry that ramp until you reset the counter
+  (snippet above).
