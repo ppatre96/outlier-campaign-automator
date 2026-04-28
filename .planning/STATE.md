@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: In Progress (Phase 2.6 Plan 02 complete)
-last_updated: "2026-04-27T20:16:14.595Z"
+status: In Progress (Phase 2.6 Plan 03 complete; SR-09 awaiting user-side launchd setup)
+last_updated: "2026-04-28T07:30:00.000Z"
 progress:
   total_phases: 6
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 24
-  completed_plans: 22
+  completed_plans: 24
 ---
 
 # Project State
@@ -18,18 +18,18 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-21)
 
 **Core value:** End-to-end campaign automation from screening data to live LinkedIn campaign — zero manual steps once triggered.
-**Current focus:** Phase 02.6 — smart-ramp-auto-trigger (Plan 01 + Plan 02 complete; Plan 03 next)
+**Current focus:** Phase 02.6 — smart-ramp-auto-trigger (all 3 plans code-complete; SR-09 awaiting user-side launchd setup)
 
 ## Current Phase
 
 **Phase 2.6 — Smart Ramp Auto-Trigger**
 Goal: Eliminate the manual `python main.py --ramp-id <id>` step by polling Smart Ramp every 15 minutes; auto-run the full pipeline + Slack-notify Pranav + Diego on success or 5-failure escalation.
 
-**Status: Plan 01 + Plan 02 complete. Plan 03 (Slack notifier + launchd plist + integration tests) remaining; Plan 03 will swap the STUB run_ramp_pipeline body for `from main import run_launch_for_ramp` (one-line change).**
+**Status: ALL 3 PLANS CODE-COMPLETE. Phase 2.6 closes end-to-end in code. Two USER ACTIONS remain: (1) drop launchd plist into `~/Library/LaunchAgents/com.outlier.smart-ramp-poller.plist` + `launchctl load`, (2) `/invite @<bot_name>` in Slack channel `C0B0NBB986L`. README.md documents both with literal commands.**
 
 - Plan 01 (Poller + state file + edit detection) — COMPLETE 2026-04-27 (commits b1d29e8, b3bb228, 3aaef04)
 - Plan 02 (Pipeline runner: InMail + Static per cohort + image-local fallback) — COMPLETE 2026-04-27 (commits 75d8092, 158f5a8, 5edeffc); duration 7m 28s; 81 tests passing (76 baseline + 5 new)
-- Plan 03 (Slack notifier + launchd plist + integration tests) — PENDING
+- Plan 03 (Slack notifier + launchd plist + integration tests) — COMPLETE 2026-04-27 (commits 6da51a8, b2a4da1, a39d424, bee6d2d, 2728f0b); duration 14m 0s; 87 tests passing (81 baseline + 5 notifier + 1 integration). SR-06 + SR-07 fully complete; SR-09 code-complete; awaiting user-side launchd setup.
 
 ## Previous Phase
 
@@ -108,9 +108,16 @@ Goal: Enable continuous optimization by collecting creative/cohort performance f
 - [Phase 02.6-02]: ImageAdResult sentinel covers both 403 AND LINKEDIN_MEMBER_URN. Wrapper translates exceptions to status='local_fallback' (NEVER raise); other errors → status='error' (also never raise). Belt-and-suspenders try/except retained around upload_image (still raises) for unexpected errors.
 - [Phase 02.6-02]: Three layers of fault isolation: per-cohort try/except inside _process_static_campaigns; per-arm try/except inside _process_row_both_modes; per-row try/except inside run_launch_for_ramp. One failure can never propagate past its scope.
 - [Phase 02.6-02]: Image-local-fallback path: data/ramp_creatives/<ramp_id>/<cohort_id>_<mode>_<angle>__<urllib.parse.quote_plus(campaign_name)>.png. shutil.copy2 (NOT move). Locked format from CONTEXT.md.
+- [Phase 02.6]: Plan 03 — Slack notifier sends EXACTLY 3 chat_postMessage calls per ramp (Pranav DM + Diego DM + channel C0B0NBB986L) using two-step conversations_open then chat_postMessage; per-target SlackApiError isolation; identical body across all 3 targets
+- [Phase 02.6]: Plan 03 — STUB swap: scripts/smart_ramp_poller.py:run_ramp_pipeline body replaced with  (Plan 02 entry point); STUB warning log line removed
+- [Phase 02.6]: Plan 03 — process_ramp returns notify_kind in {success, escalation, None} computed from prior.escalation_dm_sent vs entry.escalation_dm_sent transition; escalation fires ONCE per threshold trip; _drive_notifier helper drives the 3-target send OUTSIDE process_ramp so state writes stay isolated from Slack errors
+- [Phase 02.6]: Plan 03 — vocabulary docstring rewritten to point at CLAUDE.md + tests/test_smart_ramp_notifier.py banned regex (instead of inlining the banned-token list, which tripped the file-level vocabulary scan); CLAUDE.md remains the source of truth
+- [Phase 02.6]: Plan 03 — launchd plist + bot-invite-to-C0B0NBB986L are USER ACTION REQUIRED per critical_constraints; agent does NOT edit ~/Library/LaunchAgents/* or run launchctl; full plist XML + commands documented in README.md (Smart Ramp Poller (Phase 2.6) section); SR-09 status: code-complete; awaiting user-side launchd setup
 
 ## Session Notes
 
+- 2026-04-27 (plan 02.6-03): Slack notifier + launchd plist docs + integration tests complete. src/smart_ramp_notifier.py (228 LOC) sends EXACTLY 3 chat_postMessage calls per ramp using two-step `conversations_open(users=[uid])['channel']['id']` -> `chat_postMessage(channel=channel_id, text=text)` for kind=='user' and direct `chat_postMessage(channel=target_id, text=text)` for kind=='channel'. Per-target SlackApiError isolation: failure on one target NEVER blocks the other two (each target wrapped in its own try/except returning False; outcomes dict reports per-target success). Targets resolved from config.SLACK_RAMP_NOTIFY_TARGETS (Plan 01) — Pranav DM (U095J930UEL) + Diego DM (U08AW9FCP27) + channel C0B0NBB986L. Identical message body across all 3 targets (one build_*_message call, reused). Success message contains LinkedIn Campaign Manager deep link (510956407/campaigns) + per-cohort sections (InMail draft URN + Static draft URN + creative URN-or-local-path). Escalation message contains error class + first traceback line + manual recovery cmd (cd /Users/pranavpatre/outlier-campaign-agent + venv/bin/python3 main.py --ramp-id <id>) + reset-counter Python one-liner that resets BOTH consecutive_failures=0 AND escalation_dm_sent=False. Vocabulary-clean per CLAUDE.md: uses "draft", "review and activate", "creative". scripts/smart_ramp_poller.py: STUB body replaced with `from main import run_launch_for_ramp; return run_launch_for_ramp(record.id, modes=("inmail","static"), dry_run=dry_run)`; STUB warning log line removed. process_ramp now returns notify_kind in {success, escalation, None} computed from prior.escalation_dm_sent vs entry.escalation_dm_sent transition (escalation fires ONCE per threshold trip). _drive_notifier helper drives the 3-target Slack send OUTSIDE process_ramp so state writes stay isolated from Slack errors; both notifier calls wrapped in try/except so Slack failures NEVER break the poll. --dry-run skips Slack and logs "[DRY-RUN] would notify (kind=...)". 5 notifier unit tests + 1 integration test, all using MagicMock (no real Slack/Smart Ramp/LinkedIn): test_dm_to_pranav_diego_and_channel asserts EXACTLY 3 chat_postMessage calls + identical body; test_two_step_conversations_open_for_dms asserts EXACTLY 2 conversations_open calls (channel skips it); test_dm_vocabulary asserts banned-token regex passes against both success + escalation bodies; test_escalation_dm_format asserts all 7 literal strings (error class, traceback line, recovery cmd, reset snippet keys); test_one_target_failure_does_not_block_others asserts Diego cannot_dm_bot -> Pranav + channel still succeed (2 of 3 outcomes True); integration test loads tests/fixtures/ramp_GMR-0010.json, mocks SmartRampClient + main.run_launch_for_ramp + slack_sdk.WebClient, redirects STATE_PATH/LOCK_PATH/LOG_DIR into tmp_path, invokes poller.main(argv=['--once']), asserts exit 0 + state file written with version=1 + sha256 sig + EXACTLY 3 chat_postMessage calls + EXACTLY 2 conversations_open calls. README.md +165 lines documenting EXACT plist XML (StartInterval=900, RunAtLoad=true, absolute venv python path, WorkingDirectory, /tmp stdout/stderr) + plutil -lint + launchctl unload/load + launchctl list verification + /invite @<bot_name> step in C0B0NBB986L + reset-counter snippet + SLACK_RAMP_NOTIFY_TARGETS config example. Per critical_constraints, agent did NOT edit ~/Library/LaunchAgents/* or run launchctl — these are USER ACTION REQUIRED. Vocabulary docstring rewritten to point at CLAUDE.md instead of inlining the banned-token list (the original draft tripped the file-level vocabulary scan). 87/87 tests green (81 baseline + 5 notifier + 1 integration); zero regressions on Plan 01 + Plan 02 suites after STUB swap. SR-06, SR-07 fully complete; SR-09 code-complete; awaiting user-side launchd setup. Commits: 6da51a8 (notifier), b2a4da1 (STUB swap + notifier wiring), a39d424 (5 notifier tests), bee6d2d (integration test), 2728f0b (README USER ACTION docs). Duration: 14m 0s. Phase 2.6 closes end-to-end in code.
+- 2026-04-27 (plan 02.6-02): Pipeline runner complete. ADDITIVE refactor in main.py (~620 LOC): _resolve_cohorts (Stage A/B/C runs ONCE per row — Pitfall 1) + _process_static_campaigns (Static-ad arm symmetric to _process_inmail_campaigns with per-cohort try/except) + _process_row_both_modes (dual-arm dispatch with per-arm try/except) + _save_creative_locally (PNG copy to data/ramp_creatives/<ramp>/<cohort>_<mode>_<angle>__<urlencoded>.png via shutil.copy2) + _ramp_to_rows (RampRecord -> [row dict]) + run_launch_for_ramp (programmatic in-process entry point). Three layers of fault isolation: per-cohort + per-arm + per-row try/except. ImageAdResult dataclass + sentinel-based create_image_ad wrapper added to src/linkedin_api.py — translates 403 / LINKEDIN_MEMBER_URN errors into status='local_fallback' (NEVER raises). Existing main.py call site at lines 705-770 migrated to sentinel pattern. CLI: new --modes inmail|static flag (additive). Legacy _process_row + `python main.py --ramp-id <id>` flow preserved byte-for-byte (proven on GMR-0010, GMR-0016 per memory). 5 new unit tests passing: test_both_modes_per_cohort, test_image_403_falls_back_to_local, test_imagead_sentinel_local_fallback_status, test_403_one_cohort_does_not_abort_others, test_resolve_cohorts_runs_once_per_ramp. 81/81 total tests green (76 baseline + 5 new). filename URL-encoding via urllib.parse.quote_plus(campaign_name). SR-03, SR-04 marked complete. Plan 02 of Phase 02.6 COMPLETE. Commits: 75d8092 (ImageAdResult sentinel), 158f5a8 (run_launch_for_ramp + dual-arm pipeline), 5edeffc (5 unit tests). Duration: 7m 28s.
 - 2026-04-27 (plan 02.6-01): Smart Ramp poller scaffolding complete. scripts/smart_ramp_poller.py (~330 LOC) — load_dotenv-first orchestrator with filelock concurrency guard (timeout=5 → log + return 0 on contention), atomic state IO (tempfile + os.fsync + os.replace), sha256 content signature over sorted cohort dicts + summary + updated_at, edit-detection classifier (new/edit/noop), word-boundary test-ramp filter via config.SMART_RAMP_TEST_REQUESTER_PATTERN, 5-failure escalation gate (flips escalation_dm_sent=True; DM send in Plan 03). run_ramp_pipeline kept as STUB returning mock-success dict; Plan 02 replaces with `from main import run_launch_for_ramp`. CLI flags: --once, --ramp-id <id>, --dry-run. compute_signature locked verbatim so 8 pre-seeded ramps in data/processed_ramps.json (commit fc3ad60) classify as noop on first poll. config.py +5 constants (SMART_RAMP_POLL_INTERVAL_SECONDS=900, SMART_RAMP_FAILURE_THRESHOLD=5, SMART_RAMP_TEST_REQUESTER_PATTERN=r"\btest\b", SLACK_DIEGO_USER_ID=U08AW9FCP27, SLACK_RAMP_NOTIFY_CHANNEL=C0B0NBB986L) + SLACK_RAMP_NOTIFY_TARGETS list of 3 (kind, id) tuples. requirements.txt: filelock>=3.28.0 already pinned (Phase 2.5 V2). 6 unit tests, all mocked, all green: signature stability + cohort-permutation invariance, atomic write (no partial JSON on simulated SIGKILL), edit detection v2 (version=2 + ramp_versions["<id>_v1"].superseded=True), test-requester filter (positive AND negative case), filelock contention (returns 0), 5-failure escalation (consecutive_failures=5 → escalation_dm_sent=True; reset releases gate). 76/76 total tests green (70 baseline + 6 new). Vocabulary scan clean — every log/state-file string passes CLAUDE.md banned-token regex; one substitution made ("manual reset required" → "manual reset strongly encouraged"). tests/fixtures/ramp_GMR-0010.json (3 cohorts) created for replay testing in this plan AND Plan 03 e2e. SR-01, SR-02, SR-05, SR-08, SR-10 marked complete (SR-01 caveat: plist install is USER ACTION via Plan 03). SR-07 gate flipped here; DM owned by Plan 03. Commits: b1d29e8 (config constants), b3bb228 (orchestrator), 3aaef04 (tests + fixture). Duration: 5m 39s. Plan 02.6-01 COMPLETE.
 - 2026-04-25 (plan 02.5-08): Weekly Cron Orchestrator complete in code. scripts/weekly_feedback_loop.py (546 LOC) wires v1 alerts (Step A) + V2 funnel (Step B) + V2 sentiment (Step C) + V2 ICP drift (Step D) into one Monday 09:00 IST cron with filelock.FileLock(timeout=10) idempotency guard, 6-day SKIP_WINDOW from data/weekly_feedback_loop_state.json.last_success_ts (--force bypasses), step isolation via per-step try/except (one step failing never aborts others), loud-failure Slack contract (always posts even on failure), dry-run safety (--dry-run skips both Slack post and check_and_trigger reanalysis). load_dotenv() before import config (Pitfall 6 fix). 4-section consolidated Slack message (Creative Progress Alerts -> Funnel Drop Diagnosis -> Sentiment Themes -> ICP Drift) using approved Outlier vocabulary. 5 unit tests passing (test_idempotency, test_dry_run, test_step_isolation, test_consolidated_slack, test_slack_vocabulary), 48/48 total tests green. requirements.txt: filelock>=3.28.0 pinned. README.md +92 lines documenting cron setup + manual run commands + log/state paths. USER ACTION REQUIRED: launchd plist edit + crontab dedup commands (system-level changes the agent does NOT execute per critical_constraints; documented in README + 02.5-08-SUMMARY). FEED-22/FEED-23 code-complete. Plan 08 of Phase 2.5 V2 COMPLETE. Commits: bec625c (filelock pin), bc8660b (orchestrator), d591c47 (tests), dca53d0 (README). Progress: [██████████] 95%
 - 2026-04-25 (plan 02.5-07): ICP Drift Monitor complete. src/icp_drift_monitor.py (264 LOC) with snapshot/compute_drift/check_and_trigger/categorical_kl public API. scipy.stats.entropy for KL divergence with EPSILON=1e-10 zero-bin guard (no hand-rolled math). Drift score = max(categorical KL across worker_source/resume_degree/resume_field/resume_job_title/experience_band) + sum(numeric abs-mean-shifts across total_payout_attempts/task_count_30d). Auto-triggers ReanalysisOrchestrator.trigger_reanalysis(reason="icp_drift") when drift > ICP_DRIFT_THRESHOLD AND n_rows >= ICP_DRIFT_MIN_ROWS AND no reanalysis in past 7d. Per-project last_reanalysis_ts persisted in data/icp_drift_state.json with strict < 7-day comparison (boundary-tested). 5 unit tests (4 required + 1 boundary), all mocked, all green. config.py +3 constants (ICP_DRIFT_THRESHOLD=0.15, ICP_DRIFT_MIN_ROWS=200, ICP_DRIFT_LOOKBACK_WEEKS=4). requirements.txt pinned pyarrow>=23.0.0. FEED-20, FEED-21 complete. Plan 07 of Phase 2.5 V2 COMPLETE. Commits: 598bbe7, a7aac61, 741dcf5. Progress: [█████████░] 90%
@@ -124,6 +131,30 @@ Goal: Enable continuous optimization by collecting creative/cohort performance f
 - 2026-04-20: LinkedIn API session — campaign group, campaign, image upload all working. `create_image_ad` blocked on DSC post author. Performance: Stage A/B 8 sec (was 43 min).
 
 ## Last Session
+
+Completed Phase 02.6 Plan 03 (Slack Notifier + launchd plist docs + Integration Test) — 2026-04-27
+
+- src/smart_ramp_notifier.py (228 LOC): notify_success + notify_escalation + build_success_message + build_escalation_message + _send_to_target + _send_to_all_targets. Iterates config.SLACK_RAMP_NOTIFY_TARGETS [(user, U095J930UEL), (user, U08AW9FCP27), (channel, C0B0NBB986L)]. Two-step DM open per RESEARCH §Q4 differentiates users_not_found / cannot_dm_bot from generic channel_not_found. Per-target SlackApiError isolation: failure on one target NEVER blocks the other two; outcomes dict reports per-target success.
+- scripts/smart_ramp_poller.py: STUB body of run_ramp_pipeline replaced with `from main import run_launch_for_ramp; return run_launch_for_ramp(record.id, modes=("inmail","static"), dry_run=dry_run)`. STUB warning log line removed. process_ramp returns notify_kind in {success, escalation, None} computed from prior.escalation_dm_sent vs entry.escalation_dm_sent transition (escalation fires ONCE per threshold trip). _drive_notifier helper drives the 3-target Slack send OUTSIDE process_ramp; both calls wrapped in try/except so Slack failures NEVER break the poll. --dry-run skips Slack.
+- 5 notifier unit tests: test_dm_to_pranav_diego_and_channel (3 chat_postMessage calls), test_two_step_conversations_open_for_dms (2 conversations_open calls), test_dm_vocabulary (banned regex on both bodies), test_escalation_dm_format (7 literal strings), test_one_target_failure_does_not_block_others (Diego cannot_dm_bot -> Pranav + channel still succeed).
+- 1 integration test: test_recorded_ramp_replay_writes_state_and_three_slack_calls. Loads tests/fixtures/ramp_GMR-0010.json (Plan 01 fixture, 3 cohorts), mocks SmartRampClient + main.run_launch_for_ramp + slack_sdk.WebClient, redirects STATE_PATH/LOCK_PATH/LOG_DIR into tmp_path, invokes poller.main(argv=['--once']). Asserts exit 0, state["ramps"]["GMR-0010"]["version"]==1, last_signature.startswith("sha256:"), pipeline campaign URNs in state, EXACTLY 3 chat_postMessage calls (D_U095J930UEL + D_U08AW9FCP27 + C0B0NBB986L), EXACTLY 2 conversations_open calls.
+- 87/87 tests green (81 baseline + 5 notifier + 1 integration). Zero regressions on Plan 01's 6 tests and Plan 02's 5 tests after the STUB swap.
+- README.md: +165 lines, ## Smart Ramp Poller (Phase 2.6) section appended (zero existing content modified). Documents EXACT plist XML for ~/Library/LaunchAgents/com.outlier.smart-ramp-poller.plist (StartInterval=900, RunAtLoad=true, absolute venv python, WorkingDirectory=/Users/pranavpatre/outlier-campaign-agent, /tmp stdout/stderr) + plutil -lint + launchctl unload/load + launchctl list verification + /invite @<bot_name> in channel C0B0NBB986L + reset-counter snippet (consecutive_failures + escalation_dm_sent keys) + SLACK_RAMP_NOTIFY_TARGETS config example.
+- Per critical_constraints, agent did NOT edit ~/Library/LaunchAgents/* or run launchctl — those are USER ACTION REQUIRED.
+- Vocabulary docstring rewritten: original listed banned tokens by name (compensation/project rate/job/role/...) and tripped the file-level vocabulary scan. New docstring points at CLAUDE.md and the banned regex in tests/test_smart_ramp_notifier.py. CLAUDE.md remains the source of truth.
+- Vocabulary scan over notifier source: clean (no banned tokens in non-comment string literals). test_dm_vocabulary asserts banned regex passes against both success + escalation message bodies.
+- Self-check passed: all 4 created files present (notifier, 2 test files, this summary), all 5 commits in git log, 87/87 tests green, README has all 9 grep markers, "from main import run_launch_for_ramp" present, "STUB called" absent.
+- Requirements marked complete: SR-06 (3 targets per ramp; per-target isolation; verified by 4 tests), SR-07 (escalation message format with all required fields; transition fires once; verified by test_escalation_dm_format + process_ramp logic), SR-09 (code-complete; awaiting user-side launchd setup — `~/Library/LaunchAgents/com.outlier.smart-ramp-poller.plist` install + launchctl load + /invite @<bot_name> in C0B0NBB986L).
+- Commits: 6da51a8 (notifier), b2a4da1 (STUB swap + notifier wiring), a39d424 (5 notifier unit tests), bee6d2d (integration test), 2728f0b (README USER ACTION docs).
+- USER ACTIONS REMAINING (Pranav, before live cron):
+  1. Drop the EXACT plist XML from README into ~/Library/LaunchAgents/com.outlier.smart-ramp-poller.plist
+  2. plutil -lint + launchctl unload + launchctl load + launchctl list | grep
+  3. /invite @<bot_name> in Slack channel C0B0NBB986L (otherwise channel posts return not_in_channel — notifier handles gracefully but channel won't receive notifications)
+  4. (Optional) Diego DMs the bot once to cover Pitfall 7
+
+Duration: 14m 0s. Phase 2.6 closes end-to-end in code; awaits user-side launchd + bot-invite for full live deployment.
+
+## Previous Session
 
 Completed Phase 02.6 Plan 01 (Smart Ramp Poller + State File + Edit Detection) — 2026-04-27
 
@@ -146,7 +177,7 @@ Completed Phase 02.6 Plan 01 (Smart Ramp Poller + State File + Edit Detection) �
 - Requirements marked complete: SR-01 (code-complete; plist USER ACTION via Plan 03), SR-02, SR-05, SR-08, SR-10. SR-07 gate is flipped here but the DM send is Plan 03's scope.
 - Commits: b1d29e8 (config constants), b3bb228 (orchestrator), 3aaef04 (tests + fixture)
 
-## Previous Session
+## Older Session
 
 Completed Phase 02.5 V2 Plan 08 (Weekly Cron Orchestrator) — 2026-04-25
 
@@ -195,11 +226,21 @@ Completed Phase 02.5 V2 Plan 07 (ICP Drift Monitor) — 2026-04-25
 
 ## Next Step
 
-**Phase 02.6 Plan 01 complete (2026-04-27).** Poller scaffolding shipped; STUB pipeline call awaits Plan 02 wiring. Next plans:
+**Phase 02.6 ALL 3 PLANS CODE-COMPLETE (2026-04-27).** Auto-trigger loop closed end-to-end in code: Smart Ramp `submitted` ramp -> 15-min poll (filelock + atomic state IO + sha256 sig + edit detection + test-ramp filter) -> BOTH InMail + Static per cohort (Stage A/B/C runs ONCE per row) -> LinkedIn create_image_ad 403 falls back to local PNG -> 3-target Slack DM (Pranav + Diego + channel C0B0NBB986L) -> 5-failure escalation DM with manual recovery commands. 87/87 tests green. Two USER ACTIONS remaining (Pranav, before live cron):
 
-1. **Phase 02.6 Plan 02 — Pipeline runner.** Replace `run_ramp_pipeline` STUB body with `from main import run_launch_for_ramp`. For each cohort produce BOTH InMail and Static campaigns; on LinkedIn `create_image_ad` 403 fall back to local PNG at `data/ramp_creatives/<ramp_id>/<cohort_id>_<inmail|static>_<angle>__<urlencoded_campaign_name>.png`. Per-cohort try/except so one cohort failing does not abort the ramp. SR-03, SR-04 marked complete on landing.
+1. **Drop the EXACT plist content** from README.md §Smart Ramp Poller (Phase 2.6) into `~/Library/LaunchAgents/com.outlier.smart-ramp-poller.plist` (StartInterval=900, RunAtLoad=true, absolute venv python path, WorkingDirectory). Then:
+   ```bash
+   plutil -lint ~/Library/LaunchAgents/com.outlier.smart-ramp-poller.plist   # expect "OK"
+   launchctl unload ~/Library/LaunchAgents/com.outlier.smart-ramp-poller.plist 2>/dev/null
+   launchctl load   ~/Library/LaunchAgents/com.outlier.smart-ramp-poller.plist
+   launchctl list | grep com.outlier.smart-ramp-poller   # expect a match
+   ```
 
-2. **Phase 02.6 Plan 03 — Slack notifier + launchd plist + integration tests.** `src/smart_ramp_notifier.py` posts the consolidated Slack message to all 3 targets (`SLACK_RAMP_NOTIFY_TARGETS` already configured by Plan 01). Escalation DM fires when `escalation_dm_sent` was just flipped (Plan 01 owns the flag; Plan 03 owns the send). Install `~/Library/LaunchAgents/com.outlier.smart-ramp-poller.plist` with `StartInterval=900`. SR-06, SR-07, SR-09 marked complete on landing (plist install is USER ACTION per Phase 2.5 V2 precedent).
+2. **Invite the bot to channel `C0B0NBB986L`** in Slack: `/invite @<bot_name>` (without this, channel posts return `not_in_channel` — notifier handles gracefully but channel won't receive notifications).
+
+3. (Optional) Diego sends any one-character DM to @outlier-campaign-bot once to cover Pitfall 7 (`cannot_dm_bot` on first send).
+
+Once Pranav completes 1-2, SR-09 flips from "code-complete; awaiting user-side launchd setup" to fully complete. The poller log at `logs/smart_ramp_poller/<yyyy-mm-dd>.log` confirms the first poll fires (RunAtLoad=true triggers immediate run). With 8 pre-seeded ramps in `data/processed_ramps.json` (signatures match), the first poll classifies all 8 as `noop` and exits cleanly with no Slack DMs.
 
 **Phase 02.5 V2 USER ACTIONS still outstanding** (carryover from previous sessions, not blocking 02.6):
 

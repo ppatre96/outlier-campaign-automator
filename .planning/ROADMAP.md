@@ -12,7 +12,7 @@
 - [x] **Phase 1: Pipeline Integrity** — Fix all silent skips and hard blockers so a full dry run completes end-to-end
 - [x] **Phase 2: Observability & Storage** — Close the reporting loop with Slack delivery, Drive persistence, and lifecycle monitoring (completed 2026-04-21)
 - [x] **Phase 2.5: Feedback Loops & Experimentation** — v1 shipped 2026-04-21 (creative/cohort CTR+CPA + experiment backlog + Slack reaction reanalysis). V2 shipped 2026-04-25 with full-funnel conversion (signup → screening pass → activation), public + internal sentiment mining, automatic weekly ICP drift detection, and cron-scheduled orchestration.
-- [ ] **Phase 2.6: Smart Ramp → Pipeline Auto-Trigger** — 15-min polling loop watches Smart Ramp for newly-submitted ramps, runs the full campaign pipeline (InMail + Static for every cohort), saves images locally when LinkedIn upload is blocked, notifies Pranav + Diego (DMs) and channel `C0B0NBB986L` with the campaign URNs + creative paths. Re-runs on edits as `_v2` drafts; supersedes prior. 5 consecutive failures triggers a Slack escalation message.
+- [x] **Phase 2.6: Smart Ramp → Pipeline Auto-Trigger** — Code-complete 2026-04-27 (3/3 plans). 15-min polling loop watches Smart Ramp for newly-submitted ramps, runs the full campaign pipeline (InMail + Static for every cohort), saves images locally when LinkedIn upload is blocked, notifies Pranav + Diego (DMs) and channel `C0B0NBB986L` with the campaign URNs + creative paths. Re-runs on edits as `_v2` drafts; supersedes prior. 5 consecutive failures triggers a Slack escalation message. SR-09 awaiting user-side launchd setup + `/invite @<bot_name>` in C0B0NBB986L (commands documented in README.md §Smart Ramp Poller (Phase 2.6)).
 - [ ] **Phase 3.1: Figma Creative Replication Integration** — Integrate completed Figma layer builder into agent pipeline; pass photo_base64 and create editable frames
 - [ ] **Phase 3: Campaign Expansion** — Regenerate STEM InMails with the winning financial angle and extend targeting buckets
 
@@ -315,8 +315,8 @@ Plans:
 
 Plans:
 - [x] 02.6-01-PLAN.md — Smart Ramp poller + state file + edit detection (SR-01, SR-02, SR-05, SR-08, SR-10) — COMPLETE 2026-04-27 (commits b1d29e8, b3bb228, 3aaef04)
-- [x] 02.6-02-PLAN.md — Pipeline runner: both InMail + Static per cohort + image-local fallback (SR-03, SR-04)
-- [ ] 02.6-03-PLAN.md — Slack notifier + launchd plist + integration tests (SR-06, SR-07, SR-09)
+- [x] 02.6-02-PLAN.md — Pipeline runner: both InMail + Static per cohort + image-local fallback (SR-03, SR-04) — COMPLETE 2026-04-27 (commits 75d8092, 158f5a8, 5edeffc)
+- [x] 02.6-03-PLAN.md — Slack notifier + launchd plist + integration tests (SR-06, SR-07, SR-09) — COMPLETE 2026-04-27 (commits 6da51a8, b2a4da1, a39d424, bee6d2d, 2728f0b); SR-09 code-complete; awaiting user-side launchd setup + bot-invite to channel C0B0NBB986L
 
 ---
 
@@ -413,7 +413,7 @@ Plans:
 | 2. Observability & Storage | 4/4 | Complete   | 2026-04-21 |
 | 2.5. Feedback Loops & Experimentation | 4/4 | Complete    | 2026-04-21 |
 | 3.1. Figma Creative Integration | 1/1 | Complete | 2026-04-21 |
-| 2.6. Smart Ramp Auto-Trigger | 1/3 | In Progress | — |
+| 2.6. Smart Ramp Auto-Trigger | 3/3 | Code-complete; SR-09 awaiting user-side launchd setup | 2026-04-27 |
 | 3. Campaign Expansion | 0/2 | Ready | — |
 
 ---
@@ -460,15 +460,15 @@ Plans:
 | FEED-21 | Phase 2.5 V2 | Pending |
 | FEED-22 | Phase 2.5 V2 | Complete |
 | FEED-23 | Phase 2.5 V2 | Complete |
-| SR-01 | Phase 2.6 | Complete (code; plist via Plan 03) |
+| SR-01 | Phase 2.6 | Complete (code; plist via Plan 03 USER ACTION) |
 | SR-02 | Phase 2.6 | Complete |
-| SR-03 | Phase 2.6 | Pending |
-| SR-04 | Phase 2.6 | Pending |
+| SR-03 | Phase 2.6 | Complete |
+| SR-04 | Phase 2.6 | Complete |
 | SR-05 | Phase 2.6 | Complete |
-| SR-06 | Phase 2.6 | Pending |
-| SR-07 | Phase 2.6 | Pending (gate flipped here; DM in Plan 03) |
+| SR-06 | Phase 2.6 | Complete |
+| SR-07 | Phase 2.6 | Complete |
 | SR-08 | Phase 2.6 | Complete |
-| SR-09 | Phase 2.6 | Pending |
+| SR-09 | Phase 2.6 | Code-complete; awaiting user-side launchd setup + bot-invite to C0B0NBB986L |
 | SR-10 | Phase 2.6 | Complete |
 | IMG-01 | Phase 3.1 | Pending |
 | IMG-02 | Phase 3.1 | Pending |
