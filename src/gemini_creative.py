@@ -767,7 +767,7 @@ def generate_imagen_creative(
     return out_path
 
 
-_QC_MAX_RETRIES_DEFAULT = int(os.getenv("QC_MAX_RETRIES", "14"))
+_QC_MAX_RETRIES_DEFAULT = int(os.getenv("QC_MAX_RETRIES", "9"))
 
 
 def generate_imagen_creative_with_qc(
@@ -785,8 +785,8 @@ def generate_imagen_creative_with_qc(
 
     Pranav rule (2026-04-29): we always ship a creative — keep retrying until QC
     PASSes or `max_retries` is exhausted, and on exhaust ship the BEST attempt
-    (fewest violations) rather than the last attempt. Default cap is 14 (= 15
-    attempts ≈ 7-8 min worst case per variant); override via QC_MAX_RETRIES env.
+    (fewest violations) rather than the last attempt. Default cap is 9 (= 10
+    attempts ≈ 5 min worst case per variant); override via QC_MAX_RETRIES env.
 
     Handles two distinct failure classes:
       1. **Copy failure** (headline/subheadline exceeds word/char/line limits) — the image
