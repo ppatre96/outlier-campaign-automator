@@ -1621,6 +1621,11 @@ class ResolvedCohorts:
     data_driven_exclude_pairs: list = field(default_factory=list)
     flow_id: str = ""
     location: str = ""
+    # Prestige tiering signal across the chosen tier's positives (Pranav rule
+    # 2026-04-29: conditional graft — fold prestige cues into copy/targeting
+    # only when ≥50% of positives skew top-tier). See compute_prestige_signal
+    # in src/profile_tiering.py. {} when fetch is skipped or no data.
+    prestige_signal: dict = field(default_factory=dict)
 
 
 def _resolve_cohorts(
@@ -1790,6 +1795,36 @@ def _resolve_cohorts(
 
     log.info("_resolve_cohorts: %d cohorts selected", len(selected))
 
+    # ── Prestige tiering signal (Pranav rule 2026-04-29) ──
+    # If ≥50% of the chosen tier's positives studied at top-tier universities or
+    # worked at top-tier companies, surface a "prestige applies" signal so
+    # downstream consumers (copy gen, photo subject, future LinkedIn school-facet
+    # targeting) can lean into prestige cues. Otherwise ignore. Best-effort:
+    # missing prestige columns / fetch failures degrade silently.
+    prestige_signal: dict = {}
+    try:
+        from src.profile_tiering import compute_prestige_signal
+        positives_mask = df_bin[target_col].fillna(False).astype(bool)
+        positive_cb_ids = df_bin.loc[positives_mask, "user_id"].dropna().astype(str).tolist() \
+            if "user_id" in df_bin.columns else []
+        if positive_cb_ids and hasattr(snowflake, "fetch_prestige_columns"):
+            prestige_df = snowflake.fetch_prestige_columns(positive_cb_ids)
+            if not prestige_df.empty:
+                prestige_signal = compute_prestige_signal(
+                    prestige_df,
+                    country_hint=(location or "").lower() or None,
+                )
+                log.info(
+                    "_resolve_cohorts: prestige signal — %s",
+                    prestige_signal.get("summary", "(no summary)"),
+                )
+        else:
+            log.debug(
+                "_resolve_cohorts: prestige signal skipped (no positives or client lacks fetch_prestige_columns)",
+            )
+    except Exception as exc:
+        log.warning("_resolve_cohorts: prestige signal computation failed (non-fatal): %s", exc)
+
     # Persist stg_id / display name on each cohort so downstream arms can use them
     for cohort in selected:
         if not getattr(cohort, "_stg_id", None):
@@ -1814,6 +1849,7 @@ def _resolve_cohorts(
         data_driven_exclude_pairs=data_driven_exclude_pairs,
         flow_id=flow_id,
         location=location,
+        prestige_signal=prestige_signal,
     )
 
 

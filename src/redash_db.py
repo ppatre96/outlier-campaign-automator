@@ -279,6 +279,21 @@ WHERE signup_flow_id = '{signup_flow_id}'
 LIMIT 1
 """
 
+# Sidecar fetch for prestige tiering: pulls the resume + LinkedIn columns
+# RESUME_SQL doesn't include. Joins WORKER_RESUME_SUMMARY (most-recent employer
+# pipe-list) + TNS_WORKER_LINKEDIN (full education JSON). Keyed on a list of
+# user_ids so we only fetch what we need (Stage A target tier's positives).
+PRESTIGE_COLUMNS_SQL = """
+SELECT
+    r.USER_ID                   AS cb_id,
+    r.RESUME_JOB_COMPANY        AS resume_job_company,
+    li.LINKEDIN_EDUCATION       AS linkedin_education
+FROM SCALE_PROD.VIEW.WORKER_RESUME_SUMMARY r
+LEFT JOIN SCALE_PROD.VIEW.TNS_WORKER_LINKEDIN li
+    ON r.USER_ID = li.WORKER
+WHERE r.USER_ID IN ({user_ids_csv})
+"""
+
 # -- Creative performance analysis for feedback loop (FEED-01)
 CREATIVE_PERFORMANCE_SQL = """
 SELECT
@@ -523,6 +538,26 @@ class RedashClient:
             end_date=end_date,
         )
         return df, signup_flow_id, config_name
+
+    def fetch_prestige_columns(self, user_ids: list[str]) -> pd.DataFrame:
+        """
+        Pull `resume_job_company` and `linkedin_education` for the given USER_IDs
+        from the flat WORKER_RESUME_SUMMARY + TNS_WORKER_LINKEDIN views (per
+        CLAUDE.md). Returns DataFrame with columns: cb_id, resume_job_company,
+        linkedin_education. Empty DF if user_ids is empty or query returns nothing.
+
+        Used by Stage A prestige tiering — the columns aren't in RESUME_SQL because
+        most callers don't need them.
+        """
+        if not user_ids:
+            return pd.DataFrame(columns=["cb_id", "resume_job_company", "linkedin_education"])
+        # Snowflake IN-list — escape and quote each user_id.
+        ids_csv = ", ".join(f"'{_esc(str(uid))}'" for uid in user_ids)
+        sql = PRESTIGE_COLUMNS_SQL.format(user_ids_csv=ids_csv)
+        log.info("Fetching prestige columns for %d cb_ids", len(user_ids))
+        df = self._run_query(sql, label=f"prestige-{len(user_ids)}cbs")
+        log.info("Fetched %d prestige rows", len(df))
+        return df
 
     def fetch_job_post(self, signup_flow_id: str) -> str:
         sql = JOB_POST_SQL.format(signup_flow_id=_esc(signup_flow_id))
