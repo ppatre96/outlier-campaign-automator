@@ -258,6 +258,93 @@ def validate_copy_lengths(
     return violations
 
 
+# ── Deterministic edge-bleed detector ─────────────────────────────────────────
+# Catches the colored-gradient stripe Gemini paints at L/R photo edges. We look
+# at the outermost photo column and count how many rows have noticeable color
+# spread (max(RGB) - min(RGB)). Plain photo content (walls, shadows) clusters
+# near zero spread; a saturated stripe (pink/teal bleed) clusters at ~0.4+.
+# Thresholds tuned against the 14-image GMR-0005 dry-run set: 12 visibly bleed,
+# 2 are clean — separation at frac>=0.10 with spread>0.20 perfectly matches.
+EDGE_SPREAD_PIXEL_THRESHOLD = 0.20
+EDGE_BLEED_ROW_FRAC_THRESHOLD = 0.10
+
+
+def _detect_photo_bounds(arr) -> tuple[int, int] | None:
+    """
+    Locate the inner edges of the white frame on the L/R sides. Returns
+    (left_x, right_x) where left_x is the first photo column and right_x is
+    one past the last photo column. Returns None if no photo region detected.
+    """
+    import numpy as np
+
+    h, w, _ = arr.shape
+    is_color = ~np.all(arr > 240, axis=2)  # h x w bool
+    y_lo, y_hi = int(h * 0.07), int(h * 0.80)
+    col_color_frac = is_color[y_lo:y_hi].mean(axis=0)
+    is_photo_col = col_color_frac > 0.30
+    if not is_photo_col.any():
+        return None
+    left = int(np.argmax(is_photo_col))
+    right = int(w - np.argmax(is_photo_col[::-1]))
+    return left, right
+
+
+def validate_edges_neutral(
+    creative_path: str | Path,
+    spread_threshold: float = EDGE_SPREAD_PIXEL_THRESHOLD,
+    row_frac_threshold: float = EDGE_BLEED_ROW_FRAC_THRESHOLD,
+) -> tuple[bool, str]:
+    """
+    Detect the colored-gradient edge bleed Gemini sometimes paints along the
+    L/R sides of the photo. Sample the outermost photo column on each side
+    and count rows whose RGB color spread (max-min over channels) exceeds
+    `spread_threshold`. If that fraction is above `row_frac_threshold` on
+    either side, FAIL — a substantial portion of the edge column is uniformly
+    saturated, which is the signature of a bleed.
+
+    Returns (passed, detail_message). Never raises — on PIL/numpy import or
+    decoding failure returns (True, "skipped: <reason>") so the QC pipeline
+    never hard-fails on a missing optional dep.
+    """
+    try:
+        from PIL import Image
+        import numpy as np
+    except Exception as exc:
+        return True, f"skipped: PIL/numpy unavailable ({exc})"
+
+    try:
+        img = Image.open(creative_path).convert("RGB")
+    except Exception as exc:
+        return True, f"skipped: could not open {creative_path} ({exc})"
+
+    arr = np.asarray(img)
+    h, _, _ = arr.shape
+    bounds = _detect_photo_bounds(arr)
+    if bounds is None:
+        return True, "skipped: photo region not detected"
+    left, right = bounds
+
+    y_lo, y_hi = int(h * 0.07), int(h * 0.78)
+
+    def _row_frac(x: int) -> float:
+        col = arr[y_lo:y_hi, x].astype(np.float32)
+        spread = (col.max(axis=1) - col.min(axis=1)) / 255.0
+        return float((spread > spread_threshold).mean())
+
+    left_frac = _row_frac(left)
+    right_frac = _row_frac(right - 1)
+
+    failed: list[str] = []
+    if left_frac > row_frac_threshold:
+        failed.append(f"left edge {left_frac*100:.0f}% rows colored (>{row_frac_threshold*100:.0f}%)")
+    if right_frac > row_frac_threshold:
+        failed.append(f"right edge {right_frac*100:.0f}% rows colored (>{row_frac_threshold*100:.0f}%)")
+
+    if failed:
+        return False, "Edge gradient bleed: " + "; ".join(failed)
+    return True, f"edges neutral: L={left_frac*100:.0f}% R={right_frac*100:.0f}% rows colored"
+
+
 # ── QC prompt for Gemini vision ───────────────────────────────────────────────
 
 _QC_PROMPT = """\
@@ -510,6 +597,23 @@ def qc_creative(
             detail = (block.get("detail", "") if isinstance(block, dict) else "") or "check failed"
             violations.append(f"{label}: {detail}")
             retry_hints.append(retry_hint)
+
+    # Deterministic pixel-level edge-bleed check — runs independently of the
+    # vision model. The vision check `edge_border_artefact` is too permissive on
+    # subtle bleeds, so we sample the photo's outermost columns directly. A FAIL
+    # here routes through the same gemini-retry path as any vision failure.
+    edges_ok, edges_detail = validate_edges_neutral(creative_path)
+    checks["No gradient bleed at photo edges (pixel)"] = edges_ok
+    if not edges_ok:
+        violations.append(f"No gradient bleed at photo edges (pixel): {edges_detail}")
+        retry_hints.append(
+            "PIXEL CHECK FOUND COLORED EDGE STRIPE. The outermost photo column on the L or R "
+            "is a uniformly saturated stripe (pink/teal). Tell Gemini 'The photo MUST extend "
+            "with natural neutral content all the way to the frame edge. The outer 4 pixels "
+            "of every edge MUST be plain photo content (wall, shadow, neutral tones), NOT "
+            "colored gradient banding. Fade the corner washes to FULLY NEUTRAL well before "
+            "reaching the edge — no colored stripe of any width along any frame edge.'"
+        )
 
     verdict = "PASS" if all(checks.values()) else "FAIL"
     retry_instruction = ""
