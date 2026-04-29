@@ -767,11 +767,14 @@ def generate_imagen_creative(
     return out_path
 
 
+_QC_MAX_RETRIES_DEFAULT = int(os.getenv("QC_MAX_RETRIES", "14"))
+
+
 def generate_imagen_creative_with_qc(
     variant: dict,
     photo_subject: str | None = None,
     reference_image_path: str | Path | None = None,
-    max_retries: int = 2,
+    max_retries: int = _QC_MAX_RETRIES_DEFAULT,
     copy_rewriter: "callable | None" = None,
     initial_prompt_suffix: str = "",
     no_reference_image: bool = False,
@@ -779,6 +782,11 @@ def generate_imagen_creative_with_qc(
 ) -> tuple[Path, dict]:
     """
     Generate a creative with automated QC + retry loop.
+
+    Pranav rule (2026-04-29): we always ship a creative — keep retrying until QC
+    PASSes or `max_retries` is exhausted, and on exhaust ship the BEST attempt
+    (fewest violations) rather than the last attempt. Default cap is 14 (= 15
+    attempts ≈ 7-8 min worst case per variant); override via QC_MAX_RETRIES env.
 
     Handles two distinct failure classes:
       1. **Copy failure** (headline/subheadline exceeds word/char/line limits) — the image
@@ -799,8 +807,9 @@ def generate_imagen_creative_with_qc(
                        so the first generation is already hardened rather than relying
                        on a QC failure to surface the instruction.
 
-    Returns (final_path, qc_report_dict). Callers must check qc_report_dict["verdict"]
-    before shipping to LinkedIn — a FAIL verdict means the retries were exhausted.
+    Returns (final_path, qc_report_dict). On PASS, the report's verdict is "PASS".
+    On cap-exhaust, returns the lowest-violation attempt with verdict="FAIL" so the
+    caller can decide whether to ship the best-so-far image or skip the creative.
     """
     from src.copy_design_qc import qc_creative, validate_copy_lengths  # local import
 
@@ -845,6 +854,12 @@ def generate_imagen_creative_with_qc(
     attach_ref   = attach_ref_initial
     last_report: dict = {"verdict": "FAIL", "violations": ["not attempted"]}
     path = Path("/dev/null")
+    # Track best-so-far across the loop. If we exhaust the cap without a PASS,
+    # we ship the lowest-violation attempt rather than whatever the last one was
+    # (Gemini sometimes regresses on later retries).
+    best_violations = float("inf")
+    best_path = path
+    best_report = last_report
 
     for attempt in range(max_retries + 1):
         log.info("Creative generation attempt %d/%d (angle=%s)",
@@ -879,6 +894,13 @@ def generate_imagen_creative_with_qc(
         if report.verdict == "PASS":
             return path, last_report
 
+        # Track best-so-far for cap-exhaust fallback
+        n_viol = len(report.violations)
+        if n_viol < best_violations:
+            best_violations = n_viol
+            best_path = path
+            best_report = last_report
+
         # Route retry based on failure type
         if report.retry_target == "copywriter":
             if copy_rewriter is None:
@@ -902,6 +924,8 @@ def generate_imagen_creative_with_qc(
             attach_ref = False
             log.info("QC flagged reference-image mimicry — dropping reference image for next retry")
 
-    log.warning("Creative still failing QC after %d attempts — returning last attempt with FAIL verdict",
-                max_retries + 1)
-    return path, last_report
+    log.warning(
+        "Creative still failing QC after %d attempts — returning best-so-far attempt with %d violations (last had %d)",
+        max_retries + 1, best_violations, len(last_report.get("violations", [])),
+    )
+    return best_path, best_report
