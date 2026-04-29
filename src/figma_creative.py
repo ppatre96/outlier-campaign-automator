@@ -196,15 +196,97 @@ def _walk_text_layers(node: dict, out: dict) -> None:
 
 # ── Copy generation ────────────────────────────────────────────────────────────
 
+# Geo → photo-subject ethnicity hints. The LLM uses these to choose subjects that
+# look plausible for someone living and working in the targeted country. Without
+# this, the LLM defaults to a global ethnic mix that breaks audience relatability
+# (GMR-0005 surfaced this — Singapore-targeted creatives shipped with South Asian
+# and Black male subjects, when the realistic Singapore-lawyer pool is Chinese
+# Singaporean, Malay Singaporean, Indian Singaporean, or expat).
+_GEO_ETHNICITY_HINTS: dict[str, str] = {
+    "SG": "Chinese Singaporean (most common in legal/finance), Malay Singaporean, Indian Singaporean, or East Asian / South Asian expat working in Singapore",
+    "IN": "Indian (regionally varied — North, South, East, or Northeast Indian)",
+    "US": "Representative of the US professional mix — white, Black, Hispanic Latino, East Asian American, or South Asian American",
+    "UK": "British (mixed European, South Asian British, Black British, East Asian British)",
+    "CA": "Canadian (representative — white, East Asian Canadian, South Asian Canadian, Black Canadian, Indigenous)",
+    "AU": "Australian (representative — white, East Asian Australian, South Asian Australian, Indigenous)",
+    "DE": "German or other Continental European",
+    "FR": "French (representative — white, North African French, sub-Saharan African French, mixed)",
+    "ES": "Spanish or Iberian",
+    "IT": "Italian",
+    "BR": "Brazilian (representative — white, mixed-race, Afro-Brazilian, Indigenous)",
+    "MX": "Mexican (representative — Mestizo, Indigenous, white)",
+    "JP": "Japanese",
+    "KR": "Korean",
+    "ID": "Indonesian",
+    "MY": "Malaysian (Chinese Malaysian, Malay, Indian Malaysian)",
+    "PH": "Filipino",
+    "VN": "Vietnamese",
+    "TH": "Thai",
+}
+
+
+def _format_geo_hint(geos: list[str] | None) -> str:
+    """Build the geo-aware photo-subject guidance block for the LLM prompt.
+
+    Returns an empty string when no geo signal is available — the LLM falls
+    back to global mix, which is correct when targeting is genuinely global.
+    """
+    if not geos:
+        return ""
+    geos_clean = [g for g in geos if g and isinstance(g, str)]
+    if not geos_clean:
+        return ""
+
+    # Multi-geo (3+) → no single ethnicity fits; use a "match the audience"
+    # instruction without locking to a country.
+    if len(geos_clean) >= 3:
+        return (
+            "\n## GEO CONTEXT — photo subject ethnicity\n"
+            f"This campaign targets multiple countries: {', '.join(geos_clean)}. "
+            "Choose ethnicities representative of the COMBINED audience. "
+            "Vary the ethnicity across the 3 angles (don't repeat the same look) — "
+            "e.g., one angle Chinese Singaporean, one angle Indian Singaporean, etc.\n"
+        )
+
+    # Single or dual geo → look up specific hints.
+    parts: list[str] = []
+    for g in geos_clean:
+        hint = _GEO_ETHNICITY_HINTS.get(g.upper())
+        if hint:
+            parts.append(f"- {g.upper()}: {hint}")
+        else:
+            parts.append(
+                f"- {g.upper()}: choose an ethnicity plausible for someone living "
+                f"and working in this country. Research the country's demographic "
+                f"composition; do NOT default to a global mix."
+            )
+    return (
+        "\n## GEO CONTEXT — photo subject ethnicity (CRITICAL for relatability)\n"
+        "This campaign targets contributors in:\n"
+        + "\n".join(parts)
+        + "\n\nThe `photo_subject` ethnicity for EVERY variant MUST be plausible "
+          "for the targeted geo. Audience relatability hinges on this — a Singapore "
+          "lawyer ad with an African-American subject feels off-brand to the actual "
+          "Singapore audience seeing it in their LinkedIn feed.\n"
+    )
+
+
 def build_copy_variants(
     cohort,
     layer_map: dict[str, str],
+    *,
+    geos: list[str] | None = None,
     claude_key: str = "",
 ) -> list[dict]:
     """
     Generate 3 A/B/C copy variants fully derived from cohort signals — no fixed TG categories.
     The LLM infers the professional identity from the cohort name + rules and writes copy
     and photo_subject specific to that exact audience.
+
+    `geos` (optional, ISO country codes from Smart Ramp `included_geos`) drives the
+    photo_subject ethnicity choice. When set, the LLM is told which ethnicities are
+    plausible for the targeted country, preventing global-mix defaults that break
+    audience relatability. See `_GEO_ETHNICITY_HINTS` for the lookup.
 
     Returns: [{angle, angleLabel, headline, subheadline, cta, photo_subject, tgLabel, layerUpdates}, ...]
     """
@@ -232,6 +314,9 @@ def build_copy_variants(
             log.warning("Failed to load competitor intel: %s", exc)
 
     prompt = _build_copy_prompt(cohort.name, signals, layer_map)
+    geo_hint = _format_geo_hint(geos)
+    if geo_hint:
+        prompt += geo_hint
     if competitor_context:
         prompt += competitor_context
 

@@ -560,7 +560,11 @@ def _process_row(
                 figma_client.get_text_layer_map(figma_file, figma_node)
                 if has_figma else {}
             )
-            variants = build_copy_variants(cohort, layer_map)
+            # geos drives photo_subject ethnicity choice — see _GEO_ETHNICITY_HINTS
+            # in src/figma_creative.py. v1 _process_row doesn't have included_geos
+            # in scope, so falls back to None (LLM picks global mix). The Phase 2.6
+            # path (_process_static_campaigns) DOES pass it through — see line ~1910.
+            variants = build_copy_variants(cohort, layer_map, geos=None)
         except Exception as exc:
             log.warning("Copy generation failed for '%s': %s", cohort.name, exc)
 
@@ -1907,14 +1911,20 @@ def _process_static_campaigns(
                 figma_client.get_text_layer_map(figma_file, figma_node)
                 if has_figma else {}
             )
-            variants = build_copy_variants(cohort, layer_map)
+            # Phase 2.6: thread Smart Ramp included_geos into copy gen so the LLM
+            # picks photo_subject ethnicities plausible for the targeted geo.
+            # See _GEO_ETHNICITY_HINTS in src/figma_creative.py for the lookup.
+            variants = build_copy_variants(cohort, layer_map, geos=included_geos)
         except Exception as exc:
             log.warning("Static copy generation failed for '%s': %s", cohort.name, exc)
 
         all_variants_per_cohort.append(variants)
         selected_variant = variants[angle_idx] if angle_idx < len(variants) else {}
 
-        if dry_run:
+        # Honor WITH_IMAGES=1 to run image gen even in dry-run mode (LinkedIn calls
+        # still skipped at the lower gate). Default dry-run skips Gemini for cost.
+        skip_image_gen = dry_run and not os.environ.get("WITH_IMAGES")
+        if skip_image_gen:
             creative_pngs.append(None)
             continue
 
