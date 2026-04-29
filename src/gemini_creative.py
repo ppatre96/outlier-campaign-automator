@@ -247,7 +247,12 @@ def _fetch_and_encode_image(image_url: str) -> str:
 
 # ── Gemini Imagen API call (via LiteLLM proxy) ────────────────────────────────
 
-def _generate_imagen(prompt: str, gemini_api_key: str = "", reference_image_b64: str = "") -> Image.Image:
+def _generate_imagen(
+    prompt: str,
+    gemini_api_key: str = "",
+    reference_image_b64: str = "",
+    feedback_image_b64s: list[str] | None = None,
+) -> Image.Image:
     """
     Generate an image via the Scale LiteLLM proxy using Gemini image models.
 
@@ -265,6 +270,11 @@ def _generate_imagen(prompt: str, gemini_api_key: str = "", reference_image_b64:
             (inline local file — not a URL). Sent as an image part in the Gemini
             multipart request so the model can directly see the reference composition.
             Empty string = no reference image attached (degrades gracefully).
+        feedback_image_b64s: Optional list of additional base64 PNGs attached to
+            the request. Used by the QC retry loop to show Gemini exactly what
+            the previous attempt got wrong (e.g. a crop of the bleeding edge).
+            Each is appended as an inline_data part AFTER the reference image.
+            Only used by the direct-Google-API path; LiteLLM fallback ignores them.
     """
     # ── Primary: direct Google Gemini API (supports multipart with reference image) ──
     # Preferred when GEMINI_API_KEY is available because it can accept the reference
@@ -299,7 +309,8 @@ def _generate_imagen(prompt: str, gemini_api_key: str = "", reference_image_b64:
         f"/gemini-2.5-flash-image:generateContent?key={api_key}"
     )
 
-    # Build request parts: text prompt first, then reference image inline
+    # Build request parts: text prompt first, then reference image inline,
+    # then any QC-feedback failure-region crops.
     parts = [{"text": prompt}]
     if reference_image_b64:
         parts.append({
@@ -311,6 +322,16 @@ def _generate_imagen(prompt: str, gemini_api_key: str = "", reference_image_b64:
         log.info("Reference image attached inline (%d chars base64)", len(reference_image_b64))
     else:
         log.warning("Reference image not available — Gemini will generate without composition reference")
+    for i, fb_b64 in enumerate(feedback_image_b64s or []):
+        if not fb_b64:
+            continue
+        parts.append({
+            "inline_data": {
+                "mime_type": "image/png",
+                "data": fb_b64,
+            }
+        })
+        log.info("QC feedback crop #%d attached inline (%d chars base64)", i + 1, len(fb_b64))
 
     payload = {
         "contents": [{"parts": parts}],
@@ -686,6 +707,7 @@ def generate_imagen_creative(
     tg_category: str | None = None,  # kept for backward compat, unused
     prompt_suffix: str = "",
     attach_reference_image: bool = True,
+    feedback_image_paths: list | None = None,
     **_kwargs,
 ) -> Path:
     """
@@ -735,10 +757,19 @@ def generate_imagen_creative(
     if prompt_suffix:
         log.info("QC prompt suffix applied: %s", prompt_suffix[:200])
 
+    feedback_b64s: list[str] = []
+    for p in (feedback_image_paths or []):
+        try:
+            with open(str(p), "rb") as fh:
+                feedback_b64s.append(base64.b64encode(fh.read()).decode("ascii"))
+        except Exception as exc:
+            log.warning("Could not load feedback crop %s: %s", p, exc)
+
     bg_image = _generate_imagen(
         prompt,
         gemini_api_key or config.GEMINI_API_KEY,
         reference_image_b64=ref_img_b64,
+        feedback_image_b64s=feedback_b64s,
     )
     log.info("Imagen photo received (%dx%d)", bg_image.width, bg_image.height)
 
@@ -860,6 +891,10 @@ def generate_imagen_creative_with_qc(
     best_violations = float("inf")
     best_path = path
     best_report = last_report
+    # QC-feedback failure-region crops attached on the NEXT call (Pranav rule
+    # 2026-04-29: Gemini ignores text hints, so we also attach a visual
+    # example of the defect from the previous attempt's PNG).
+    feedback_image_paths: list = []
 
     for attempt in range(max_retries + 1):
         log.info("Creative generation attempt %d/%d (angle=%s)",
@@ -869,6 +904,7 @@ def generate_imagen_creative_with_qc(
             photo_subject=photo_subject,
             prompt_suffix=prompt_suffix,
             attach_reference_image=attach_ref,
+            feedback_image_paths=feedback_image_paths,
             **kwargs,
         )
 
@@ -882,6 +918,7 @@ def generate_imagen_creative_with_qc(
                 ad_headline=variant.get("ad_headline", ""),
                 ad_description=variant.get("ad_description", ""),
                 cta_button=variant.get("cta_button", ""),
+                attempt_index=attempt,
             )
         except Exception as exc:
             log.warning("QC could not run on attempt %d: %s — accepting creative without QC", attempt + 1, exc)
@@ -917,6 +954,20 @@ def generate_imagen_creative_with_qc(
             prompt_suffix = initial_prompt_suffix + "\n\n" + qc_suffix
         else:
             prompt_suffix = qc_suffix
+        # Capture failure-region crops from THIS attempt to attach to the NEXT
+        # call. We only keep the latest set (older crops are temp files; OS will
+        # GC eventually). Augmenting the suffix with a marker that tells Gemini
+        # the extra images are defect examples, not composition references.
+        feedback_image_paths = list(report.feedback_crop_paths or [])
+        if feedback_image_paths:
+            crop_note = (
+                "\n\nVISUAL FAILURE EXAMPLES ATTACHED: the additional image(s) below "
+                "are CROPS OF THE DEFECT from your previous attempt — they show the exact "
+                "edge bleed pattern you must NOT reproduce. Treat them as negative examples "
+                "(do NOT match these), NOT as composition references."
+            )
+            prompt_suffix = (prompt_suffix or "") + crop_note
+            log.info("Attaching %d failure-region crop(s) to next attempt", len(feedback_image_paths))
         if attempt >= 1 and (
             "reference" in report.retry_instruction.lower()
             or any("mimic" in v.lower() or "matches_reference" in v.lower() for v in report.violations)

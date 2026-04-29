@@ -92,3 +92,37 @@ def test_missing_file_skips_gracefully(tmp_path):
     ok, msg = validate_edges_neutral(tmp_path / "does_not_exist.png")
     assert ok is True
     assert "skipped" in msg.lower()
+
+
+def test_detect_edge_bleed_returns_failed_sides(tmp_path):
+    """The structured helper exposes which sides bleed — used to crop on retry."""
+    from src.copy_design_qc import detect_edge_bleed
+
+    img = _build_canvas(photo_fill=(120, 120, 120))
+    draw = ImageDraw.Draw(img)
+    # Stripe on right edge only
+    draw.rectangle([PHOTO_RIGHT - 6, BORDER + 60, PHOTO_RIGHT - 1, PHOTO_BOTTOM - 60], fill=(245, 180, 175))
+    p = tmp_path / "right_only.png"
+    img.save(p)
+    res = detect_edge_bleed(p)
+    assert res["passed"] is False
+    assert res["failed_sides"] == ["right"]
+    assert res["right_frac"] > res["left_frac"]
+
+
+def test_crop_failure_edge_writes_png(tmp_path):
+    """crop_failure_edge produces a PNG file with the requested side's band."""
+    from src.copy_design_qc import crop_failure_edge
+
+    img = _build_canvas(photo_fill=(120, 120, 120))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([BORDER, BORDER + 60, BORDER + 6, PHOTO_BOTTOM - 60], fill=(40, 200, 220))
+    p = tmp_path / "with_left_bleed.png"
+    img.save(p)
+    crop = crop_failure_edge(p, "left", band_w=80)
+    assert crop is not None
+    assert crop.exists()
+    from PIL import Image
+    crop_img = Image.open(crop)
+    assert crop_img.width == 80  # band width
+    assert crop_img.height > 0

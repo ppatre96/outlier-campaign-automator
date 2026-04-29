@@ -141,6 +141,11 @@ class QCReport:
     retry_instruction: str = ""
     retry_target: str = "none"  # "copywriter" | "gemini" | "none"
     copy_violations: list[str] = field(default_factory=list)  # subset for copywriter retry
+    # Paths to PNG crops illustrating specific defects (currently: edge-bleed
+    # bands). Caller attaches these as additional inline images on the next
+    # Gemini call so the model SEES the failure instead of just reading the
+    # textual hint.
+    feedback_crop_paths: list[Path] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -150,6 +155,7 @@ class QCReport:
             "retry_instruction": self.retry_instruction,
             "retry_target": self.retry_target,
             "copy_violations": self.copy_violations,
+            "feedback_crop_paths": [str(p) for p in self.feedback_crop_paths],
         }
 
 
@@ -289,6 +295,124 @@ def _detect_photo_bounds(arr) -> tuple[int, int] | None:
     return left, right
 
 
+def crop_failure_edge(
+    creative_path: str | Path,
+    side: str,
+    band_w: int = 80,
+) -> Path | None:
+    """
+    Crop a vertical band from the L or R photo edge of `creative_path` and save
+    to a temp PNG. Used to attach a visual failure example to the next Gemini
+    call so the model SEES the defect instead of just reading about it.
+
+    Returns the Path to the cropped PNG, or None if the source image can't be
+    opened or the photo bounds can't be detected.
+    """
+    if side not in ("left", "right"):
+        return None
+    try:
+        from PIL import Image
+        import numpy as np
+        import tempfile
+    except Exception:
+        return None
+    try:
+        img = Image.open(creative_path).convert("RGB")
+    except Exception:
+        return None
+    arr = np.asarray(img)
+    bounds = _detect_photo_bounds(arr)
+    if bounds is None:
+        return None
+    left, right = bounds
+    h, w, _ = arr.shape
+    y_lo = int(h * 0.07)
+    y_hi = int(h * 0.78)
+    if side == "left":
+        x0, x1 = left, min(left + band_w, w)
+    else:
+        x0, x1 = max(right - band_w, 0), right
+    crop = img.crop((x0, y_lo, x1, y_hi))
+    tmp = tempfile.NamedTemporaryFile(prefix=f"qc_edge_{side}_", suffix=".png", delete=False)
+    crop.save(tmp.name)
+    return Path(tmp.name)
+
+
+def detect_edge_bleed(
+    creative_path: str | Path,
+    spread_threshold: float = EDGE_SPREAD_PIXEL_THRESHOLD,
+    row_frac_threshold: float = EDGE_BLEED_ROW_FRAC_THRESHOLD,
+) -> dict:
+    """
+    Structured edge-bleed result. Returns:
+      {
+        "passed": bool,
+        "left_frac": float,  # fraction of edge column rows that are colored
+        "right_frac": float,
+        "failed_sides": ["left", "right"]  # subset that exceeded threshold
+        "detail": str,                      # human-readable summary
+        "skipped": bool,                    # True if PIL/numpy missing or file unreadable
+      }
+    Used by validate_edges_neutral (legacy 2-tuple wrapper) and by qc_creative
+    when it needs the failed_sides to crop the bleeding region for retry feedback.
+    """
+    try:
+        from PIL import Image
+        import numpy as np
+    except Exception as exc:
+        return {"passed": True, "left_frac": 0.0, "right_frac": 0.0,
+                "failed_sides": [], "skipped": True,
+                "detail": f"skipped: PIL/numpy unavailable ({exc})"}
+    try:
+        img = Image.open(creative_path).convert("RGB")
+    except Exception as exc:
+        return {"passed": True, "left_frac": 0.0, "right_frac": 0.0,
+                "failed_sides": [], "skipped": True,
+                "detail": f"skipped: could not open {creative_path} ({exc})"}
+
+    arr = np.asarray(img)
+    h, _, _ = arr.shape
+    bounds = _detect_photo_bounds(arr)
+    if bounds is None:
+        return {"passed": True, "left_frac": 0.0, "right_frac": 0.0,
+                "failed_sides": [], "skipped": True,
+                "detail": "skipped: photo region not detected"}
+    left, right = bounds
+    y_lo, y_hi = int(h * 0.07), int(h * 0.78)
+
+    def _row_frac(x: int) -> float:
+        col = arr[y_lo:y_hi, x].astype(np.float32)
+        spread = (col.max(axis=1) - col.min(axis=1)) / 255.0
+        return float((spread > spread_threshold).mean())
+
+    left_frac = _row_frac(left)
+    right_frac = _row_frac(right - 1)
+    failed_sides: list[str] = []
+    if left_frac > row_frac_threshold:
+        failed_sides.append("left")
+    if right_frac > row_frac_threshold:
+        failed_sides.append("right")
+
+    if failed_sides:
+        parts = []
+        if "left" in failed_sides:
+            parts.append(f"left edge {left_frac*100:.0f}% rows colored (>{row_frac_threshold*100:.0f}%)")
+        if "right" in failed_sides:
+            parts.append(f"right edge {right_frac*100:.0f}% rows colored (>{row_frac_threshold*100:.0f}%)")
+        detail = "Edge gradient bleed: " + "; ".join(parts)
+    else:
+        detail = f"edges neutral: L={left_frac*100:.0f}% R={right_frac*100:.0f}% rows colored"
+
+    return {
+        "passed": not failed_sides,
+        "left_frac": left_frac,
+        "right_frac": right_frac,
+        "failed_sides": failed_sides,
+        "skipped": False,
+        "detail": detail,
+    }
+
+
 def validate_edges_neutral(
     creative_path: str | Path,
     spread_threshold: float = EDGE_SPREAD_PIXEL_THRESHOLD,
@@ -305,44 +429,15 @@ def validate_edges_neutral(
     Returns (passed, detail_message). Never raises — on PIL/numpy import or
     decoding failure returns (True, "skipped: <reason>") so the QC pipeline
     never hard-fails on a missing optional dep.
+
+    Thin 2-tuple wrapper around detect_edge_bleed() for legacy callers + tests.
     """
-    try:
-        from PIL import Image
-        import numpy as np
-    except Exception as exc:
-        return True, f"skipped: PIL/numpy unavailable ({exc})"
-
-    try:
-        img = Image.open(creative_path).convert("RGB")
-    except Exception as exc:
-        return True, f"skipped: could not open {creative_path} ({exc})"
-
-    arr = np.asarray(img)
-    h, _, _ = arr.shape
-    bounds = _detect_photo_bounds(arr)
-    if bounds is None:
-        return True, "skipped: photo region not detected"
-    left, right = bounds
-
-    y_lo, y_hi = int(h * 0.07), int(h * 0.78)
-
-    def _row_frac(x: int) -> float:
-        col = arr[y_lo:y_hi, x].astype(np.float32)
-        spread = (col.max(axis=1) - col.min(axis=1)) / 255.0
-        return float((spread > spread_threshold).mean())
-
-    left_frac = _row_frac(left)
-    right_frac = _row_frac(right - 1)
-
-    failed: list[str] = []
-    if left_frac > row_frac_threshold:
-        failed.append(f"left edge {left_frac*100:.0f}% rows colored (>{row_frac_threshold*100:.0f}%)")
-    if right_frac > row_frac_threshold:
-        failed.append(f"right edge {right_frac*100:.0f}% rows colored (>{row_frac_threshold*100:.0f}%)")
-
-    if failed:
-        return False, "Edge gradient bleed: " + "; ".join(failed)
-    return True, f"edges neutral: L={left_frac*100:.0f}% R={right_frac*100:.0f}% rows colored"
+    res = detect_edge_bleed(
+        creative_path,
+        spread_threshold=spread_threshold,
+        row_frac_threshold=row_frac_threshold,
+    )
+    return res["passed"], res["detail"]
 
 
 # ── QC prompt for Gemini vision ───────────────────────────────────────────────
@@ -502,6 +597,37 @@ def _call_gemini_vision(prompt: str, creative_path: str, reference_path: str | N
         raise
 
 
+# Alternate phrasings for retry-suffix hints. When the same QC check fails on
+# consecutive retries, Gemini sometimes "learns past" a fixed phrasing — the
+# same instruction stops moving the output. Rotating the wording on each
+# subsequent attempt forces a new attentional path. The rotation only kicks in
+# for keys present here; checks not listed reuse the static text from check_map.
+# Pranav rule (2026-04-29): rotate every attempt 2+, not just every 2-3.
+_RETRY_HINT_VARIANTS: dict[str, list[str]] = {
+    "edge_border_artefact": [
+        # attempt 1 — original, descriptive
+        "A thin colored gradient line is visible on the left/right edges of the photo, looking like an inner border. Tell Gemini 'The gradient washes must fade to neutral BEFORE reaching the outer 5% of any edge. No colored stripe along any frame edge.'",
+        # attempt 2 — concrete texture-anchor
+        "STILL FAILING: gradient bleed at edges. Tell Gemini 'The outermost 6 pixels of every edge MUST be plain natural photo texture — wood, plaster, leaf, brick, fabric — NOT pink or teal or purple of any saturation. Edges must look like the photo continues; they must NOT look like a colored frame.'",
+        # attempt 3 — negative-example phrasing
+        "EDGES STILL COLORED. Tell Gemini 'Imagine the photo cropped slightly larger, with the outer 5% sliced off and discarded. The remaining edges must show ordinary photo content — bookshelf, plant leaves, wall, window. NEVER a saturated stripe of color. Reset the gradient washes to be CENTERED at (15%, 15%) and (15%, 85%) with rapid fade-to-neutral by 25% radius — they must NOT touch the frame.'",
+    ],
+    "subject_looks_ai": [
+        "Subject reads as AI-generated. Add 'authentic candid photo, real human skin texture with natural asymmetry, not AI-generated, not uncanny, not stock-photo perfect'.",
+        "PERSISTENT AI LOOK. Tell Gemini 'this must look like a 35mm film snapshot taken on a casual Tuesday — visible skin pores, slight color cast from window light, asymmetric features, NO retouched magazine quality. Documentary photography aesthetic.'",
+        "STILL UNCANNY. Tell Gemini 'pretend this is a frame from a Vimeo travel vlog — handheld, slightly imperfect focus, natural variation in lighting across the face, real human texture. NOT a portrait studio session.'",
+    ],
+    "duplicate_logo": [
+        "A second Outlier logo is visible inside the photograph. Tell Gemini 'Do NOT render any Outlier logo, brand mark, or wordmark — the logo is composited post-hoc.'",
+        "DUPLICATE LOGO STILL APPEARING. Tell Gemini 'There must be ZERO branding, ZERO text shapes that look like words, ZERO letterforms in the photo region. The bottom-right Outlier wordmark is added in post-processing — your image must have BLANK space where it goes. Anywhere your image contains a letter-like shape, REPLACE it with plain background texture.'",
+    ],
+    "rendered_text_in_photo": [
+        "Gemini rendered text/letters/logos INTO the photo. Add explicit 'ZERO TEXT in image. No words, letters, logos, wordmarks, earnings figures, or caption-like shapes anywhere'.",
+        "TEXT STILL APPEARING. Tell Gemini 'I will manually delete any letterform you draw. The headline, subheadline, earnings strip, and Outlier wordmark are ALL composited in post-processing. Generate ONLY the unbranded photograph — clean of any pixel that resembles a glyph.'",
+    ],
+}
+
+
 def qc_creative(
     creative_path: str | Path,
     reference_path: str | Path | None,
@@ -511,6 +637,7 @@ def qc_creative(
     ad_headline: str = "",
     ad_description: str = "",
     cta_button: str = "",
+    attempt_index: int = 0,
 ) -> QCReport:
     """
     Run full QC on a single creative. Structural copy-length checks run FIRST — if copy
@@ -519,6 +646,10 @@ def qc_creative(
 
     When the LinkedIn ad copy fields (intro_text, ad_headline, ad_description, cta_button)
     are provided, they're validated alongside the image overlay text.
+
+    `attempt_index` (0-based) lets the caller rotate the retry-suffix phrasing
+    when the same QC check fails on consecutive attempts — Gemini sometimes
+    learns past a fixed phrasing. See `_RETRY_HINT_VARIANTS`.
     """
     # ── Step 1: structural copy length validation (word/char/line count) ──
     copy_violations = validate_copy_lengths(
@@ -584,6 +715,13 @@ def qc_creative(
         "professional_quality":        ("Professional quality",          "Image lacks professional polish. Tell Gemini 'magazine-quality editorial photography, professional color grading, balanced composition, appropriate for a Fortune-500 LinkedIn campaign'."),
     }
 
+    def _pick_hint(key: str, default_hint: str) -> str:
+        variants = _RETRY_HINT_VARIANTS.get(key)
+        if not variants:
+            return default_hint
+        idx = max(0, min(attempt_index, len(variants) - 1))
+        return variants[idx]
+
     for key, (label, retry_hint) in check_map.items():
         # Auto-pass mimicry check when there is no reference image
         if key == "matches_reference_person" and reference_unavailable:
@@ -596,24 +734,48 @@ def qc_creative(
         if not passed:
             detail = (block.get("detail", "") if isinstance(block, dict) else "") or "check failed"
             violations.append(f"{label}: {detail}")
-            retry_hints.append(retry_hint)
+            retry_hints.append(_pick_hint(key, retry_hint))
 
     # Deterministic pixel-level edge-bleed check — runs independently of the
     # vision model. The vision check `edge_border_artefact` is too permissive on
     # subtle bleeds, so we sample the photo's outermost columns directly. A FAIL
     # here routes through the same gemini-retry path as any vision failure.
-    edges_ok, edges_detail = validate_edges_neutral(creative_path)
+    _PIXEL_EDGE_HINTS = [
+        "PIXEL CHECK FOUND COLORED EDGE STRIPE. The outermost photo column on the L or R "
+        "is a uniformly saturated stripe (pink/teal). Tell Gemini 'The photo MUST extend "
+        "with natural neutral content all the way to the frame edge. The outer 4 pixels "
+        "of every edge MUST be plain photo content (wall, shadow, neutral tones), NOT "
+        "colored gradient banding. Fade the corner washes to FULLY NEUTRAL well before "
+        "reaching the edge — no colored stripe of any width along any frame edge.'",
+        "EDGE STRIPE STILL DETECTED BY PIXEL CHECK. Tell Gemini 'I am sampling the outer 4 "
+        "pixels of each edge programmatically and counting any saturated rows. Currently "
+        "you are still painting a stripe there. Move the corner washes INWARD: the gradient "
+        "must be CENTERED at (15%%, 15%%) and (15%%, 85%%) and decay completely to RGB-neutral "
+        "by (40%%, 40%%) and (40%%, 60%%) respectively. From 50%% inward there must be ZERO color cast.'",
+        "PIXEL CHECK STILL FAILING. Gemini, this is mechanical: a script samples your output. "
+        "Make the photo edges EQUAL to the photo center in saturation level — no peripheral "
+        "color gradient anywhere. If you must include the pink/teal washes, paint them as a "
+        "small soft circle in the inner-left region only. Do NOT extend any colored gradient "
+        "past 30%% of the frame width on any axis.",
+    ]
+    edge_res = detect_edge_bleed(creative_path)
+    edges_ok = edge_res["passed"]
     checks["No gradient bleed at photo edges (pixel)"] = edges_ok
+    feedback_crop_paths: list[Path] = []
     if not edges_ok:
-        violations.append(f"No gradient bleed at photo edges (pixel): {edges_detail}")
-        retry_hints.append(
-            "PIXEL CHECK FOUND COLORED EDGE STRIPE. The outermost photo column on the L or R "
-            "is a uniformly saturated stripe (pink/teal). Tell Gemini 'The photo MUST extend "
-            "with natural neutral content all the way to the frame edge. The outer 4 pixels "
-            "of every edge MUST be plain photo content (wall, shadow, neutral tones), NOT "
-            "colored gradient banding. Fade the corner washes to FULLY NEUTRAL well before "
-            "reaching the edge — no colored stripe of any width along any frame edge.'"
-        )
+        violations.append(f"No gradient bleed at photo edges (pixel): {edge_res['detail']}")
+        idx = max(0, min(attempt_index, len(_PIXEL_EDGE_HINTS) - 1))
+        retry_hints.append(_PIXEL_EDGE_HINTS[idx])
+        # Crop the bleeding edge from this attempt's PNG so the next Gemini call
+        # can SEE the defect (multi-image input). Filenames are temp; the caller
+        # owns cleanup. Best-effort — skip silently on any error.
+        for side in edge_res.get("failed_sides", []):
+            try:
+                p = crop_failure_edge(creative_path, side)
+                if p is not None:
+                    feedback_crop_paths.append(p)
+            except Exception as exc:
+                log.warning("crop_failure_edge(%s) failed: %s", side, exc)
 
     verdict = "PASS" if all(checks.values()) else "FAIL"
     retry_instruction = ""
@@ -629,6 +791,7 @@ def qc_creative(
         verdict=verdict,
         checks=checks,
         violations=violations,
+        feedback_crop_paths=feedback_crop_paths,
         retry_instruction=retry_instruction,
         retry_target=retry_target,
     )
