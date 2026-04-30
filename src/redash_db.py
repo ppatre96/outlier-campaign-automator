@@ -279,6 +279,81 @@ WHERE signup_flow_id = '{signup_flow_id}'
 LIMIT 1
 """
 
+# Canonical "audience requirements" query — combines all 4 signal sources for a
+# project into one row. Built 2026-04-29 after the outlier-data-analyst audit
+# of GMR-0016 surfaced that `JOB_POST_SQL` returned zero rows for many ramps
+# (signup_flow.JOB_POST_IDS is empty array) AND that we were ignoring the
+# richest fields entirely (RESUMESCREENINGCONFIGS.QUESTIONS_TO_ASK_G_P_T,
+# JOBPOSTS.{JOB_NAME, DOMAIN}, SIGNUPFLOWS.NAME).
+#
+# Any of (project_id, signup_flow_id, config_name) may be empty — the unmatched
+# join CTEs return null and the SELECT just gets blank fields. Pass all three
+# when available for the richest result.
+AUDIENCE_REQUIREMENTS_SQL = """
+WITH flow AS (
+  SELECT
+    sf._id                              AS signup_flow_id,
+    sf.name                             AS flow_name,
+    sf.intended_worker_skills::STRING   AS intended_worker_skills
+  FROM PUBLIC.SIGNUPFLOWS sf
+  WHERE sf._id = '{signup_flow_id}'
+),
+job AS (
+  SELECT
+    jp._id                              AS jobpost_id,
+    jp.job_name,
+    jp.domain,
+    jp.pod_group,
+    jp.language_code,
+    jp.resume_screening_config_id,
+    jp.description                      AS jobpost_description
+  FROM PUBLIC.JOBPOSTS jp
+  WHERE jp.signup_flow_id = '{signup_flow_id}'
+  LIMIT 1
+),
+screening AS (
+  SELECT
+    rc._id                              AS config_id,
+    rc.name                             AS config_name,
+    rc.pod_type,
+    rc.assistant_description,
+    rc.questions_to_ask_g_p_t::STRING   AS screening_questions
+  FROM PUBLIC.RESUMESCREENINGCONFIGS rc
+  WHERE rc.name = '{config_name}'
+  LIMIT 1
+),
+project AS (
+  SELECT
+    p._id                               AS project_id,
+    p.name                              AS project_name,
+    LEFT(COALESCE(p.description, ''), 1000) AS project_description
+  FROM PUBLIC.PROJECTS p
+  WHERE p._id = '{project_id}'
+  LIMIT 1
+)
+SELECT
+  COALESCE(f.signup_flow_id, '')        AS signup_flow_id,
+  COALESCE(f.flow_name, '')             AS flow_name,
+  COALESCE(f.intended_worker_skills, '') AS intended_worker_skills,
+  COALESCE(j.jobpost_id, '')            AS jobpost_id,
+  COALESCE(j.job_name, '')              AS job_name,
+  COALESCE(j.domain, '')                AS domain,
+  COALESCE(j.pod_group, '')             AS pod_group,
+  COALESCE(j.jobpost_description, '')   AS jobpost_description,
+  COALESCE(s.config_name, '')           AS config_name,
+  COALESCE(s.pod_type, '')              AS pod_type,
+  COALESCE(s.assistant_description, '') AS assistant_description,
+  COALESCE(s.screening_questions, '')   AS screening_questions,
+  COALESCE(pr.project_name, '')         AS project_name,
+  COALESCE(pr.project_description, '')  AS project_description
+FROM (SELECT 1) seed
+LEFT JOIN flow      f  ON TRUE
+LEFT JOIN job       j  ON TRUE
+LEFT JOIN screening s  ON TRUE
+LEFT JOIN project   pr ON TRUE
+LIMIT 1
+"""
+
 # Sidecar fetch for prestige tiering: pulls the resume + LinkedIn columns
 # RESUME_SQL doesn't include. Joins WORKER_RESUME_SUMMARY (most-recent employer
 # pipe-list) + TNS_WORKER_LINKEDIN (full education JSON). Keyed on a list of
@@ -538,6 +613,105 @@ class RedashClient:
             end_date=end_date,
         )
         return df, signup_flow_id, config_name
+
+    def fetch_audience_requirements(
+        self,
+        project_id: str = "",
+        signup_flow_id: str = "",
+        config_name: str = "",
+    ) -> dict:
+        """
+        Pull all audience-requirement signal for a project in one query. Joins
+        SIGNUPFLOWS + JOBPOSTS + RESUMESCREENINGCONFIGS + PROJECTS. Empty fields
+        stay as empty strings.
+
+        Returns dict with keys:
+          flow_name, intended_worker_skills, jobpost_id, job_name, domain,
+          pod_group, jobpost_description, config_name, pod_type,
+          assistant_description, screening_questions, project_name,
+          project_description.
+
+        Built 2026-04-29 after GMR-0016 audit revealed that the previous
+        JOB_POST_SQL returned empty for ramps where signup_flow.JOB_POST_IDS
+        is empty, AND that we were ignoring the richest field entirely
+        (RESUMESCREENINGCONFIGS.QUESTIONS_TO_ASK_G_P_T = formal qualification
+        spec like "Does this candidate have a doctorate in Medicine, ...").
+        """
+        sql = AUDIENCE_REQUIREMENTS_SQL.format(
+            signup_flow_id=_esc(signup_flow_id),
+            config_name=_esc(config_name),
+            project_id=_esc(project_id),
+        )
+        label = f"audience-req-{(signup_flow_id or project_id or config_name)[:8]}"
+        try:
+            df = self._run_query(sql, label=label)
+        except Exception as exc:
+            log.warning("fetch_audience_requirements failed (%s) — returning empty dict", exc)
+            return {}
+        if df.empty:
+            return {}
+        row = df.iloc[0]
+        out: dict = {}
+        for col in df.columns:
+            val = row.get(col)
+            try:
+                if pd.isna(val):
+                    val = ""
+            except (TypeError, ValueError):
+                pass
+            out[col] = "" if val is None else str(val)
+        return out
+
+    def fetch_job_post_meta(self, signup_flow_id: str) -> dict:
+        """
+        Legacy-shape wrapper for callers that expect a job_post_meta dict.
+        Built 2026-04-29 to fix a latent AttributeError — every prior call
+        site (main.py:1734, icp_from_jobpost:244, etc.) was silently catching
+        AttributeError and dropping the data.
+
+        Returns {description, job_name, domain, pod_group} — the fields the
+        downstream extract_base_role_candidates / family_exclusions_for code
+        looks at. The richer 'description' here is the concatenation of
+        flow_name + job_name + domain + screening_questions when available,
+        which is the strongest signal we have.
+        """
+        req = self.fetch_audience_requirements(signup_flow_id=signup_flow_id)
+        if not req:
+            return {}
+        # Build a richer description by concatenating the best signals in
+        # priority order. Downstream LLM ICP derivation reads this as one blob.
+        parts = [
+            req.get("flow_name", ""),
+            req.get("job_name", ""),
+            req.get("domain", ""),
+            req.get("assistant_description", ""),
+            req.get("screening_questions", ""),
+            req.get("jobpost_description", ""),
+        ]
+        description = "\n\n".join(p.strip() for p in parts if p and p.strip())
+        return {
+            "description": description,
+            "job_name": req.get("job_name", ""),
+            "domain": req.get("domain", ""),
+            "pod_group": req.get("pod_group", ""),
+            "flow_name": req.get("flow_name", ""),
+            "screening_questions": req.get("screening_questions", ""),
+        }
+
+    def fetch_project_meta(self, project_id: str) -> dict:
+        """
+        Legacy-shape wrapper for callers that expect a project_meta dict.
+        Same fix-the-latent-AttributeError purpose as fetch_job_post_meta.
+
+        Returns {description, name} — fields downstream code reads.
+        """
+        req = self.fetch_audience_requirements(project_id=project_id)
+        if not req:
+            return {}
+        return {
+            "description": req.get("project_description", ""),
+            "name": req.get("project_name", ""),
+        }
 
     def fetch_prestige_columns(self, user_ids: list[str]) -> pd.DataFrame:
         """

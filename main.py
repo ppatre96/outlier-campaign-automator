@@ -1754,6 +1754,27 @@ def _resolve_cohorts(
             "_resolve_cohorts: Smart Ramp brief = %r (will fold into ICP derivation + copy gen)",
             smart_ramp_brief[:200],
         )
+    # Build the description_hint that flows to the copy LLM via build_copy_variants.
+    # Prefer Smart Ramp brief (authoritative requester intent). If empty (e.g.,
+    # GMR-0016 came in via launchd without a fresh Smart Ramp form), fall back
+    # to a compact summary of Snowflake-side context — flow_name + job_name +
+    # domain + project_description — which still beats the cohort signature alone.
+    if smart_ramp_brief:
+        copy_description_hint = smart_ramp_brief
+    else:
+        rich_parts = [
+            job_post_meta.get("flow_name", ""),
+            job_post_meta.get("job_name", ""),
+            job_post_meta.get("domain", ""),
+            project_meta.get("name", ""),
+            (project_meta.get("description") or "")[:400],
+        ]
+        copy_description_hint = "\n".join(p for p in rich_parts if p and p.strip()).strip()
+        if copy_description_hint:
+            log.info(
+                "_resolve_cohorts: no Smart Ramp brief — using Snowflake-derived hint for copy gen: %r",
+                copy_description_hint[:200],
+            )
     if description:
         try:
             derived_icp = derive_icp_from_job_post(description) or {}
@@ -1881,7 +1902,7 @@ def _resolve_cohorts(
         flow_id=flow_id,
         location=location,
         prestige_signal=prestige_signal,
-        smart_ramp_brief=smart_ramp_brief,
+        smart_ramp_brief=copy_description_hint,
     )
 
 
