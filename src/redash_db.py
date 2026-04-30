@@ -713,6 +713,42 @@ class RedashClient:
             "name": req.get("project_name", ""),
         }
 
+    def fetch_signal_columns(self, user_ids: list[str]) -> pd.DataFrame:
+        """
+        Pull all the resume + LinkedIn signal columns we use for downstream
+        analysis (prestige, requirement-commonality, exemplars). Heavier than
+        fetch_prestige_columns — returns title + field + skills too.
+
+        Uses WORKER_RESUME_SUMMARY (flat) + TNS_WORKER_LINKEDIN per CLAUDE.md
+        guidance (prefer flat views over JSON-traversing the raw tables).
+
+        Returns DataFrame with columns: cb_id, resume_job_title, resume_field,
+        resume_job_skills, resume_job_company, linkedin_education.
+        """
+        if not user_ids:
+            return pd.DataFrame(columns=[
+                "cb_id", "resume_job_title", "resume_field",
+                "resume_job_skills", "resume_job_company", "linkedin_education",
+            ])
+        ids_csv = ", ".join(f"'{_esc(str(uid))}'" for uid in user_ids)
+        sql = f"""
+        SELECT
+            r.USER_ID                   AS cb_id,
+            r.RESUME_JOB_TITLE          AS resume_job_title,
+            r.RESUME_FIELD              AS resume_field,
+            r.RESUME_JOB_SKILLS         AS resume_job_skills,
+            r.RESUME_JOB_COMPANY        AS resume_job_company,
+            li.LINKEDIN_EDUCATION       AS linkedin_education
+        FROM SCALE_PROD.VIEW.WORKER_RESUME_SUMMARY r
+        LEFT JOIN SCALE_PROD.VIEW.TNS_WORKER_LINKEDIN li
+            ON r.USER_ID = li.WORKER
+        WHERE r.USER_ID IN ({ids_csv})
+        """
+        log.info("Fetching signal columns for %d cb_ids", len(user_ids))
+        df = self._run_query(sql, label=f"signals-{len(user_ids)}cbs")
+        log.info("Fetched %d signal rows", len(df))
+        return df
+
     def fetch_prestige_columns(self, user_ids: list[str]) -> pd.DataFrame:
         """
         Pull `resume_job_company` and `linkedin_education` for the given USER_IDs

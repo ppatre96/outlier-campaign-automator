@@ -1642,6 +1642,11 @@ class ResolvedCohorts:
     # "cardiologist" so creatives went out with generic PhD photo subjects.
     # Threaded through build_copy_variants as description_hint.
     smart_ramp_brief: str = ""
+    # Requirement-commonality signal across the chosen tier's positives.
+    # List of dicts: [{requirement, n_hits, n_total, hit_rate, recommended_action}].
+    # action ∈ {"hard_filter", "soft_hint", "drop"} — see compute_requirement_commonality.
+    # Phase 1 (2026-04-29): surfaced + logged. Stage A consumption is Phase 2.
+    requirement_commonality: list = field(default_factory=list)
 
 
 def _resolve_cohorts(
@@ -1877,6 +1882,60 @@ def _resolve_cohorts(
     except Exception as exc:
         log.warning("_resolve_cohorts: prestige signal computation failed (non-fatal): %s", exc)
 
+    # ── Requirement commonality (Pranav rule 2026-04-29) ──
+    # For each requirement extracted from the Smart Ramp brief / job post,
+    # check what % of the chosen tier's positives have it in their resume.
+    # Surfaces hard_filter / soft_hint / drop recommendations so downstream
+    # can promote dominant signals to Stage A facet anchors and keep rare
+    # ones as copy-only hints. Phase 1 ships the signal; Stage A actually
+    # CONSUMING it is Phase 2 (separate work).
+    requirement_commonality: list[dict] = []
+    try:
+        from src.profile_tiering import compute_requirement_commonality
+        # Pull requirements from derived_icp + Smart Ramp brief words.
+        candidate_reqs: list[str] = []
+        candidate_reqs.extend(derived_icp.get("required_skills", []) or [])
+        tg_label = (derived_icp.get("derived_tg_label") or "").strip()
+        if tg_label:
+            # Split label like "Pediatric Cardiologists (India)" → ["Pediatric Cardiologists", "India"]
+            for token in tg_label.replace("(", " ").replace(")", " ").replace(",", " ").split():
+                t = token.strip()
+                if len(t) >= 4:
+                    candidate_reqs.append(t)
+        # Also seed from Smart Ramp brief (each meaningful word ≥4 chars)
+        for token in smart_ramp_brief.replace(",", " ").split():
+            t = token.strip().strip(".:;")
+            if len(t) >= 5 and t.lower() not in {"with", "from", "have", "their", "they", "this", "that", "want"}:
+                candidate_reqs.append(t)
+        # Dedupe while preserving order
+        seen: set[str] = set()
+        uniq_reqs: list[str] = []
+        for r in candidate_reqs:
+            k = r.lower()
+            if k not in seen:
+                seen.add(k)
+                uniq_reqs.append(r)
+        # Cap at 12 — too many spammed requirements would noise the signal.
+        uniq_reqs = uniq_reqs[:12]
+
+        if uniq_reqs and positive_cb_ids and hasattr(snowflake, "fetch_signal_columns"):
+            signal_df = snowflake.fetch_signal_columns(positive_cb_ids)
+            if not signal_df.empty:
+                requirement_commonality = compute_requirement_commonality(signal_df, uniq_reqs)
+                # Log a one-line summary per requirement
+                for rec in requirement_commonality:
+                    log.info(
+                        "_resolve_cohorts: requirement %r → %d/%d (%.0f%%) — %s",
+                        rec["requirement"], rec["n_hits"], rec["n_total"],
+                        rec["hit_rate"] * 100, rec["recommended_action"],
+                    )
+        else:
+            log.debug(
+                "_resolve_cohorts: requirement commonality skipped (no requirements / positives / fetch method)"
+            )
+    except Exception as exc:
+        log.warning("_resolve_cohorts: requirement commonality computation failed (non-fatal): %s", exc)
+
     # Persist stg_id / display name on each cohort so downstream arms can use them
     for cohort in selected:
         if not getattr(cohort, "_stg_id", None):
@@ -1903,6 +1962,7 @@ def _resolve_cohorts(
         location=location,
         prestige_signal=prestige_signal,
         smart_ramp_brief=copy_description_hint,
+        requirement_commonality=requirement_commonality,
     )
 
 

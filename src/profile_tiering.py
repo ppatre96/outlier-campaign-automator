@@ -256,6 +256,80 @@ def extract_companies_from_resume(resume_job_company: Any) -> list[str]:
     return [p for p in parts if p]
 
 
+def compute_requirement_commonality(
+    df: pd.DataFrame,
+    requirements: list[str],
+) -> list[dict]:
+    """
+    For each `requirement` term (e.g., "cardiology", "MD"), compute what
+    fraction of contributors in `df` have that term anywhere in their
+    resume signal columns (case-insensitive substring match across
+    resume_job_title + resume_field + resume_job_skills + resume_job_company
+    + linkedin_education).
+
+    `df` is expected to have those 5 columns (use RedashClient.fetch_signal_columns
+    on the chosen tier's positives).
+
+    Returns a list of dicts, one per requirement, with shape:
+      {
+        "requirement":        str,
+        "n_total":            int,    # rows in df
+        "n_hits":             int,    # rows where the term appears in any signal column
+        "hit_rate":           float,  # n_hits / n_total
+        "recommended_action": "hard_filter" | "soft_hint" | "drop",
+      }
+
+    Action thresholds (calibrated 2026-04-29):
+      - hit_rate >= 0.50 → "hard_filter": dominant signal in the activator pool;
+        promote to a Stage A facet anchor for tighter LinkedIn targeting
+      - 0.10 <= hit_rate < 0.50 → "soft_hint": substantial but not universal;
+        pass to copy brief only (the LLM emphasizes it but Stage A doesn't filter on it)
+      - hit_rate < 0.10 → "drop": rare; the brief mentioned it but activators don't
+        share it. Probably noise from the LLM extraction. Keep out of targeting + copy.
+
+    Empty `df` or `requirements` → returns [].
+    """
+    n_total = len(df)
+    if n_total == 0 or not requirements:
+        return []
+
+    # Precompute lowercase concatenation per row across all signal columns we look at.
+    SIG_COLS = [
+        "resume_job_title", "resume_field", "resume_job_skills",
+        "resume_job_company", "linkedin_education",
+    ]
+    blob = pd.Series([""] * n_total, index=df.index)
+    for col in SIG_COLS:
+        if col in df.columns:
+            blob = blob + " " + df[col].fillna("").astype(str)
+    blob = blob.str.lower()
+
+    results: list[dict] = []
+    for req_raw in requirements:
+        req = (req_raw or "").strip()
+        if not req or len(req) < 3:
+            continue  # too short to be a meaningful substring
+        # Plain substring match — naive but matches the analyst's ILIKE pattern.
+        # Word-boundary regex would be stricter but misses "cardiologist" vs
+        # "cardiology" without stemming.
+        n_hits = int(blob.str.contains(re.escape(req.lower()), regex=True, na=False).sum())
+        hit_rate = n_hits / n_total
+        if hit_rate >= 0.50:
+            action = "hard_filter"
+        elif hit_rate >= 0.10:
+            action = "soft_hint"
+        else:
+            action = "drop"
+        results.append({
+            "requirement": req,
+            "n_total": n_total,
+            "n_hits": n_hits,
+            "hit_rate": round(hit_rate, 3),
+            "recommended_action": action,
+        })
+    return results
+
+
 def compute_prestige_signal(
     df: pd.DataFrame,
     country_hint: str | None = None,
