@@ -126,3 +126,47 @@ def test_crop_failure_edge_writes_png(tmp_path):
     crop_img = Image.open(crop)
     assert crop_img.width == 80  # band width
     assert crop_img.height > 0
+
+
+def test_bottom_edge_bleed_fails(tmp_path):
+    """A horizontal stripe at the bottom of the photo fails (GMR-0016 'gradient box')."""
+    from src.copy_design_qc import detect_edge_bleed
+    img = _build_canvas(photo_fill=(120, 120, 120))
+    draw = ImageDraw.Draw(img)
+    # Wide colored band 6px tall along the bottom of the photo region
+    draw.rectangle([BORDER + 60, PHOTO_BOTTOM - 6, PHOTO_RIGHT - 60, PHOTO_BOTTOM - 1], fill=(40, 200, 220))
+    p = tmp_path / "bottom_bleed.png"
+    img.save(p)
+    res = detect_edge_bleed(p)
+    assert res["passed"] is False
+    assert "bottom" in res["failed_sides"]
+    assert res["bottom_frac"] > 0.10
+
+
+def test_top_edge_bleed_fails(tmp_path):
+    """A horizontal stripe at the top of the photo fails."""
+    from src.copy_design_qc import detect_edge_bleed
+    img = _build_canvas(photo_fill=(120, 120, 120))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([BORDER + 60, BORDER, PHOTO_RIGHT - 60, BORDER + 6], fill=(245, 180, 175))
+    p = tmp_path / "top_bleed.png"
+    img.save(p)
+    res = detect_edge_bleed(p)
+    assert res["passed"] is False
+    assert "top" in res["failed_sides"]
+    assert res["top_frac"] > 0.10
+
+
+def test_crop_failure_edge_top_and_bottom(tmp_path):
+    """crop_failure_edge handles top + bottom sides."""
+    from src.copy_design_qc import crop_failure_edge
+    img = _build_canvas(photo_fill=(120, 120, 120))
+    p = tmp_path / "clean.png"
+    img.save(p)
+    top_crop = crop_failure_edge(p, "top", band_w=40)
+    bot_crop = crop_failure_edge(p, "bottom", band_w=40)
+    assert top_crop is not None and top_crop.exists()
+    assert bot_crop is not None and bot_crop.exists()
+    from PIL import Image
+    assert Image.open(top_crop).height == 40
+    assert Image.open(bot_crop).height == 40

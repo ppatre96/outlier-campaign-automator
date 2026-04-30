@@ -295,6 +295,42 @@ def _detect_photo_bounds(arr) -> tuple[int, int] | None:
     return left, right
 
 
+def _detect_photo_bounds_4side(arr) -> tuple[int, int, int, int] | None:
+    """
+    Locate the inner edges of the white frame on ALL 4 sides. Returns
+    (left, top, right, bottom) — left/top inclusive, right/bottom exclusive.
+    Returns None if no photo region detected.
+
+    Algorithm: same non-white-fraction detection as L/R, applied row-wise
+    with a horizontal x-band that excludes the rounded corners. The bottom
+    earnings strip (always white + Outlier wordmark in brown) is excluded
+    by clamping the search range to [0, 0.85h] — strip is ~14% of canvas.
+    """
+    import numpy as np
+
+    lr = _detect_photo_bounds(arr)
+    if lr is None:
+        return None
+    left, right = lr
+    h, w, _ = arr.shape
+    is_color = ~np.all(arr > 240, axis=2)
+    # Use the inner 60% of width to avoid rounded corners which can dilute
+    # row-fraction. y_search_hi = 0.86h matches the canonical photo_bottom in
+    # compose_ad (strip_h = 0.14h, so photo ends exactly at h - 0.14h = 0.86h).
+    # Going higher would scan into the earnings strip's brown text/wordmark.
+    x_lo = left + (right - left) // 5
+    x_hi = right - (right - left) // 5
+    y_search_hi = int(h * 0.86)
+    row_color_frac = is_color[:y_search_hi, x_lo:x_hi].mean(axis=1)
+    is_photo_row = row_color_frac > 0.30
+    if not is_photo_row.any():
+        return None
+    top = int(np.argmax(is_photo_row))
+    # bottom = last True in is_photo_row
+    bottom = int(y_search_hi - np.argmax(is_photo_row[::-1]))
+    return left, top, right, bottom
+
+
 def crop_failure_edge(
     creative_path: str | Path,
     side: str,
@@ -308,7 +344,7 @@ def crop_failure_edge(
     Returns the Path to the cropped PNG, or None if the source image can't be
     opened or the photo bounds can't be detected.
     """
-    if side not in ("left", "right"):
+    if side not in ("left", "right", "top", "bottom"):
         return None
     try:
         from PIL import Image
@@ -321,18 +357,23 @@ def crop_failure_edge(
     except Exception:
         return None
     arr = np.asarray(img)
-    bounds = _detect_photo_bounds(arr)
+    bounds = _detect_photo_bounds_4side(arr)
     if bounds is None:
         return None
-    left, right = bounds
-    h, w, _ = arr.shape
-    y_lo = int(h * 0.07)
-    y_hi = int(h * 0.78)
+    left, top, right, bottom = bounds
     if side == "left":
-        x0, x1 = left, min(left + band_w, w)
-    else:
-        x0, x1 = max(right - band_w, 0), right
-    crop = img.crop((x0, y_lo, x1, y_hi))
+        x0, x1 = left, min(left + band_w, right)
+        y0, y1 = top, bottom
+    elif side == "right":
+        x0, x1 = max(right - band_w, left), right
+        y0, y1 = top, bottom
+    elif side == "top":
+        x0, x1 = left, right
+        y0, y1 = top, min(top + band_w, bottom)
+    else:  # bottom
+        x0, x1 = left, right
+        y0, y1 = max(bottom - band_w, top), bottom
+    crop = img.crop((x0, y0, x1, y1))
     tmp = tempfile.NamedTemporaryFile(prefix=f"qc_edge_{side}_", suffix=".png", delete=False)
     crop.save(tmp.name)
     return Path(tmp.name)
@@ -347,66 +388,102 @@ def detect_edge_bleed(
     Structured edge-bleed result. Returns:
       {
         "passed": bool,
-        "left_frac": float,  # fraction of edge column rows that are colored
+        "left_frac": float,    # fraction of L-edge column rows that are colored
         "right_frac": float,
-        "failed_sides": ["left", "right"]  # subset that exceeded threshold
-        "detail": str,                      # human-readable summary
-        "skipped": bool,                    # True if PIL/numpy missing or file unreadable
+        "top_frac": float,     # fraction of T-edge row columns that are colored
+        "bottom_frac": float,
+        "failed_sides": [...]  # subset of {"left","right","top","bottom"}
+        "detail": str,         # human-readable summary
+        "skipped": bool,       # True if PIL/numpy missing or file unreadable
       }
     Used by validate_edges_neutral (legacy 2-tuple wrapper) and by qc_creative
     when it needs the failed_sides to crop the bleeding region for retry feedback.
+
+    All 4 edges checked because Gemini occasionally paints the gradient washes
+    along ANY frame edge (GMR-0016 surfaced bottom-edge stripes that the
+    previous L/R-only check missed).
     """
     try:
         from PIL import Image
         import numpy as np
     except Exception as exc:
         return {"passed": True, "left_frac": 0.0, "right_frac": 0.0,
+                "top_frac": 0.0, "bottom_frac": 0.0,
                 "failed_sides": [], "skipped": True,
                 "detail": f"skipped: PIL/numpy unavailable ({exc})"}
     try:
         img = Image.open(creative_path).convert("RGB")
     except Exception as exc:
         return {"passed": True, "left_frac": 0.0, "right_frac": 0.0,
+                "top_frac": 0.0, "bottom_frac": 0.0,
                 "failed_sides": [], "skipped": True,
                 "detail": f"skipped: could not open {creative_path} ({exc})"}
 
     arr = np.asarray(img)
-    h, _, _ = arr.shape
-    bounds = _detect_photo_bounds(arr)
-    if bounds is None:
+    bounds4 = _detect_photo_bounds_4side(arr)
+    if bounds4 is None:
         return {"passed": True, "left_frac": 0.0, "right_frac": 0.0,
+                "top_frac": 0.0, "bottom_frac": 0.0,
                 "failed_sides": [], "skipped": True,
                 "detail": "skipped: photo region not detected"}
-    left, right = bounds
-    y_lo, y_hi = int(h * 0.07), int(h * 0.78)
+    left, top, right, bottom = bounds4
 
-    def _row_frac(x: int) -> float:
+    # Crop margin to skip rounded corners on each axis. ~7% of photo dim is a
+    # safe-but-stingy margin that excludes the corner curves while keeping
+    # plenty of edge sample.
+    h, w, _ = arr.shape
+    photo_w = right - left
+    photo_h = bottom - top
+    y_lo = top + max(int(photo_h * 0.07), 1)
+    y_hi = bottom - max(int(photo_h * 0.10), 1)  # extra bottom margin to dodge subject torso/desk
+    x_lo = left + max(int(photo_w * 0.07), 1)
+    x_hi = right - max(int(photo_w * 0.07), 1)
+
+    def _col_frac(x: int) -> float:
         col = arr[y_lo:y_hi, x].astype(np.float32)
         spread = (col.max(axis=1) - col.min(axis=1)) / 255.0
         return float((spread > spread_threshold).mean())
 
-    left_frac = _row_frac(left)
-    right_frac = _row_frac(right - 1)
+    def _row_frac(y: int) -> float:
+        row = arr[y, x_lo:x_hi].astype(np.float32)
+        spread = (row.max(axis=1) - row.min(axis=1)) / 255.0
+        return float((spread > spread_threshold).mean())
+
+    left_frac = _col_frac(left)
+    right_frac = _col_frac(right - 1)
+    top_frac = _row_frac(top)
+    bottom_frac = _row_frac(bottom - 1)
+
     failed_sides: list[str] = []
     if left_frac > row_frac_threshold:
         failed_sides.append("left")
     if right_frac > row_frac_threshold:
         failed_sides.append("right")
+    if top_frac > row_frac_threshold:
+        failed_sides.append("top")
+    if bottom_frac > row_frac_threshold:
+        failed_sides.append("bottom")
 
     if failed_sides:
-        parts = []
-        if "left" in failed_sides:
-            parts.append(f"left edge {left_frac*100:.0f}% rows colored (>{row_frac_threshold*100:.0f}%)")
-        if "right" in failed_sides:
-            parts.append(f"right edge {right_frac*100:.0f}% rows colored (>{row_frac_threshold*100:.0f}%)")
+        labels = {
+            "left":   ("left edge",   left_frac),
+            "right":  ("right edge",  right_frac),
+            "top":    ("top edge",    top_frac),
+            "bottom": ("bottom edge", bottom_frac),
+        }
+        parts = [f"{labels[s][0]} {labels[s][1]*100:.0f}% colored (>{row_frac_threshold*100:.0f}%)"
+                 for s in failed_sides]
         detail = "Edge gradient bleed: " + "; ".join(parts)
     else:
-        detail = f"edges neutral: L={left_frac*100:.0f}% R={right_frac*100:.0f}% rows colored"
+        detail = (f"edges neutral: L={left_frac*100:.0f}% R={right_frac*100:.0f}% "
+                  f"T={top_frac*100:.0f}% B={bottom_frac*100:.0f}%")
 
     return {
         "passed": not failed_sides,
         "left_frac": left_frac,
         "right_frac": right_frac,
+        "top_frac": top_frac,
+        "bottom_frac": bottom_frac,
         "failed_sides": failed_sides,
         "skipped": False,
         "detail": detail,
@@ -466,7 +543,7 @@ If you are unsure, count it as a FAIL. Borderline = FAIL.
 SCAN PROTOCOL (execute in this order before scoring):
 (1) Count every occurrence of the word "Outlier" (or stylized equivalent) anywhere in the image. Expected: exactly 1.
 (2) Read the photo area like a page. Transcribe EVERY piece of text you see inside the photo that is NOT the crisp headline/subheadline overlay or the bottom-strip earnings line. Expected: none.
-(3) Measure the visible gap between the BOTTOM edge of the headline text (letter descenders) and the TOP of the subject's hair. The gap should be small but clearly visible — roughly 3-8% of the frame height. Report it as: TOO CLOSE (text touching hair), JUST RIGHT (small clean gap), or TOO FAR (large empty band between text and head).
+(3) Measure the visible gap between the BOTTOM edge of the headline text (letter descenders, including the lowest descender on letters like 'g', 'p', 'y') and the TOP of the subject's hair (including any flyaway strands above the main mass). Be STRICT: if a single hair pixel appears within OR right against the headline's bounding box, that is TOO CLOSE — answer TOO CLOSE. Report it as: TOO CLOSE (text touching, overlapping, or directly abutting hair — even by 1-2 pixels), JUST RIGHT (clearly visible empty band between text and head, ~3-8% of frame height), or TOO FAR (large wasted band, >10% of frame height). When in doubt between TOO CLOSE and JUST RIGHT, answer TOO CLOSE — borderline is FAIL.
 (4) Look at where the COLORED GRADIENT WASHES sit in the image, using the quadrant grid: top-left / top-right / bottom-left / bottom-right.
      - Expected: PINK/CORAL wash in TOP-LEFT quadrant only. TEAL/BLUE wash in BOTTOM-LEFT quadrant only. Right half should be neutral.
      - Also check intensity: the washes should be subtle and painterly, not saturated blocks of color.
@@ -493,9 +570,9 @@ Respond with a single JSON object (JSON only, no prose, no markdown fences):
     "detail": "<echo outlier_logo_count.locations>"
   }},
   "text_overlaps_subject": {{
-    "pass": <true iff scan step 3 classified the gap as JUST RIGHT — text is not touching subject AND gap is not excessively large>,
+    "pass": <true iff scan step 3 classified the gap as JUST RIGHT — text is not touching subject AND gap is not excessively large. Pass=false if gap_classification is TOO CLOSE; the borderline case (descenders within ~1% of frame height of the hairline) ALWAYS counts as TOO CLOSE>,
     "gap_classification": "<TOO CLOSE | JUST RIGHT | TOO FAR>",
-    "detail": "FAIL if text is touching the subject OR if there is an unusually large empty band between the text and the hairline (indicates Gemini placed the subject too low, creating an awkward gap). JUST RIGHT is roughly 3-8% of the frame height between bottom of text descenders and top of hair."
+    "detail": "FAIL if ANY pixel of hair (including flyaways) is within or right against the headline's text bounding box, even by 1-2 pixels. FAIL if there is an unusually large empty band between the text and the hairline. JUST RIGHT is a clearly visible 3-8% empty band between descenders and hairline."
   }},
   "headroom_gap_appropriate": {{
     "pass": <true iff scan step 3 gap_classification is JUST RIGHT>,

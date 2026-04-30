@@ -133,6 +133,12 @@ def run_launch(dry_run: bool = False, flow_id: str | None = None, project_id: st
                     "ramp_id": ramp.id,
                     "cohort_id": cohort.id,
                     "cohort_description": cohort.cohort_description,
+                    # Top-level Smart Ramp brief — applies across all cohorts in
+                    # this Ramp. Distinct from per-cohort `cohort_description`.
+                    # Folded into ICP derivation alongside cohort_description so
+                    # both ramp-wide intent ("we're hiring for Project X") AND
+                    # per-cohort specifics reach Stage A + the copy LLM.
+                    "ramp_summary": ramp.summary or "",
                     "selected_lp_url": cohort.selected_lp_url,
                     "included_geos": cohort.included_geos,
                     "matched_locales": cohort.matched_locales,
@@ -1628,14 +1634,14 @@ class ResolvedCohorts:
     # only when ≥50% of positives skew top-tier). See compute_prestige_signal
     # in src/profile_tiering.py. {} when fetch is skipped or no data.
     prestige_signal: dict = field(default_factory=dict)
-    # Free-form audience description from the Smart Ramp form's cohort row
-    # (e.g., "We want cardiologists with 5+ years experience"). Surfaced
-    # 2026-04-29 (GMR-0016): the field was being read from the row dict and
-    # dropped on the floor — Stage A and the copy LLM never saw "cardiologist"
-    # so creatives went out with generic PhD photo subjects. Now threaded
-    # through to build_copy_variants as description_hint so the LLM can
-    # specialize the photo_subject and copy to the requested specialty.
-    cohort_description: str = ""
+    # Combined Smart Ramp brief — top-level `ramp_summary` + per-cohort
+    # `cohort_description`, joined with newlines. The requester's free-form
+    # audience description (e.g., "We want cardiologists with 5+ yrs exp").
+    # Surfaced 2026-04-29 (GMR-0016): the per-cohort field was being read in
+    # main.py and dropped on the floor — Stage A and the copy LLM never saw
+    # "cardiologist" so creatives went out with generic PhD photo subjects.
+    # Threaded through build_copy_variants as description_hint.
+    smart_ramp_brief: str = ""
 
 
 def _resolve_cohorts(
@@ -1731,18 +1737,22 @@ def _resolve_cohorts(
     except Exception as exc:
         log.warning("_resolve_cohorts: meta fetch failed (non-fatal): %s", exc)
 
-    # Smart Ramp cohort_description — the requester's free-form ask
-    # ("we want cardiologists with 5+ yrs experience"). PREPEND it to whatever
-    # job_post / project description is in Snowflake so the LLM ICP derivation
-    # sees the most specific hint first. Surfaced 2026-04-29 (GMR-0016 drift).
+    # Smart Ramp briefs — the requester's free-form asks. Two levels:
+    #   - ramp_summary:       top-level, applies to all cohorts in this Ramp
+    #   - cohort_description: per-cohort specifics (e.g., "cardiologists in IN+SG")
+    # Both prepended to the Snowflake job_post description so the LLM ICP
+    # derivation sees Smart Ramp intent FIRST, then the broader project blurb.
+    # Surfaced 2026-04-29 (GMR-0016 cardiologist drift).
+    ramp_summary = (row.get("ramp_summary") or "").strip()
     cohort_description = (row.get("cohort_description") or "").strip()
+    smart_ramp_brief = "\n".join(filter(None, [ramp_summary, cohort_description])).strip()
     derived_icp: dict = {}
     snowflake_description = (job_post_meta.get("description") or project_meta.get("description") or "").strip()
-    description = "\n\n".join(filter(None, [cohort_description, snowflake_description]))
-    if cohort_description:
+    description = "\n\n".join(filter(None, [smart_ramp_brief, snowflake_description]))
+    if smart_ramp_brief:
         log.info(
-            "_resolve_cohorts: Smart Ramp cohort_description hint = %r (will fold into ICP derivation + copy gen)",
-            cohort_description[:160],
+            "_resolve_cohorts: Smart Ramp brief = %r (will fold into ICP derivation + copy gen)",
+            smart_ramp_brief[:200],
         )
     if description:
         try:
@@ -1871,7 +1881,7 @@ def _resolve_cohorts(
         flow_id=flow_id,
         location=location,
         prestige_signal=prestige_signal,
-        cohort_description=cohort_description,
+        smart_ramp_brief=smart_ramp_brief,
     )
 
 
@@ -2256,7 +2266,7 @@ def _process_row_both_modes(
                 included_geos=included_geos,
                 ramp_id=ramp_id,
                 cohort_id_override=cohort_id_override,
-                cohort_description=resolved.cohort_description,
+                cohort_description=resolved.smart_ramp_brief,
             )
             if isinstance(r, dict):
                 static_result.update(r)
