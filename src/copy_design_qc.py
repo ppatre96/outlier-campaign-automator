@@ -652,6 +652,11 @@ def qc_creative(
     learns past a fixed phrasing. See `_RETRY_HINT_VARIANTS`.
     """
     # ── Step 1: structural copy length validation (word/char/line count) ──
+    # No early-return on copy failure: we ALSO run the vision + pixel checks so
+    # the next retry sees image-side feedback alongside the copy fix. Pre-fix
+    # behavior (early-return on copy) caused combined-defect creatives to take
+    # 2-3 extra retries — Gemini was blind to image issues until copy passed.
+    # Surfaced by GMR-0016 dry-run 2026-04-29.
     copy_violations = validate_copy_lengths(
         headline, subheadline,
         intro_text=intro_text,
@@ -660,23 +665,7 @@ def qc_creative(
         cta_button=cta_button,
     )
     if copy_violations:
-        log.info("Copy length violations found: %s", copy_violations)
-        return QCReport(
-            verdict="FAIL",
-            checks={
-                "Copy within limits (words/chars/lines)": False,
-            },
-            violations=copy_violations,
-            retry_target="copywriter",
-            copy_violations=copy_violations,
-            retry_instruction=(
-                "Copy exceeds hard limits. Send back to outlier-copy-writer:\n"
-                + "\n".join(f"- {v}" for v in copy_violations)
-                + f"\nHard limits: headline ≤{HEADLINE_MAX_WORDS} words, ≤{HEADLINE_MAX_CHARS} chars, "
-                  f"≤{HEADLINE_MAX_LINES} lines when rendered. Subheadline ≤{SUBHEAD_MAX_WORDS} words, "
-                  f"≤{SUBHEAD_MAX_CHARS} chars, ≤{SUBHEAD_MAX_LINES} lines when rendered."
-            ),
-        )
+        log.info("Copy length violations found (will continue to vision + pixel checks): %s", copy_violations)
 
     # ── Step 2: vision-based image checks ──
     prompt = _QC_PROMPT.format(headline=headline, subheadline=subheadline)
@@ -777,20 +766,44 @@ def qc_creative(
             except Exception as exc:
                 log.warning("crop_failure_edge(%s) failed: %s", side, exc)
 
+    # Merge copy + image findings. Copy violations fold into checks + violations
+    # so the QCReport reflects EVERYTHING that's wrong, not just the image side.
+    if copy_violations:
+        checks["Copy within limits (words/chars/lines)"] = False
+        violations = copy_violations + violations
+
     verdict = "PASS" if all(checks.values()) else "FAIL"
-    retry_instruction = ""
+
+    # retry_target: copywriter wins if copy is broken (the rewriter must run).
+    # The retry_instruction still carries any image-side hints so the next
+    # attempt's prompt_suffix can include both the rewritten copy AND Gemini
+    # feedback. Caller (generate_imagen_creative_with_qc) is responsible for
+    # using BOTH on the next iteration.
     retry_target = "none"
-    if retry_hints:
+    retry_instruction = ""
+    if copy_violations:
+        retry_target = "copywriter"
+    elif retry_hints:
         retry_target = "gemini"
+    if retry_hints:
         retry_instruction = (
             "Append the following to the Gemini prompt for this variant:\n"
             + "\n".join(f"- {h}" for h in retry_hints)
+        )
+    elif copy_violations:
+        retry_instruction = (
+            "Copy exceeds hard limits. Send back to outlier-copy-writer:\n"
+            + "\n".join(f"- {v}" for v in copy_violations)
+            + f"\nHard limits: headline ≤{HEADLINE_MAX_WORDS} words, ≤{HEADLINE_MAX_CHARS} chars, "
+              f"≤{HEADLINE_MAX_LINES} lines when rendered. Subheadline ≤{SUBHEAD_MAX_WORDS} words, "
+              f"≤{SUBHEAD_MAX_CHARS} chars, ≤{SUBHEAD_MAX_LINES} lines when rendered."
         )
 
     return QCReport(
         verdict=verdict,
         checks=checks,
         violations=violations,
+        copy_violations=copy_violations,
         feedback_crop_paths=feedback_crop_paths,
         retry_instruction=retry_instruction,
         retry_target=retry_target,

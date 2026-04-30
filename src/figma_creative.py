@@ -277,6 +277,7 @@ def build_copy_variants(
     *,
     geos: list[str] | None = None,
     claude_key: str = "",
+    description_hint: str = "",
 ) -> list[dict]:
     """
     Generate 3 A/B/C copy variants fully derived from cohort signals — no fixed TG categories.
@@ -287,6 +288,13 @@ def build_copy_variants(
     photo_subject ethnicity choice. When set, the LLM is told which ethnicities are
     plausible for the targeted country, preventing global-mix defaults that break
     audience relatability. See `_GEO_ETHNICITY_HINTS` for the lookup.
+
+    `description_hint` (optional, free-form text from the Smart Ramp cohort form,
+    e.g., "We want cardiologists with 5+ yrs experience"). Surfaced 2026-04-29
+    (GMR-0016 drift): without this hint the LLM only sees the cohort signature
+    (e.g. `highest_degree_level__Phd`) and invents a generic profession ("biomedical
+    researcher", "postdoc"). Pass the description to anchor the LLM on the
+    requester's actual specialty so photo_subject + copy reflect it.
 
     Returns: [{angle, angleLabel, headline, subheadline, cta, photo_subject, tgLabel, layerUpdates}, ...]
     """
@@ -317,6 +325,17 @@ def build_copy_variants(
     geo_hint = _format_geo_hint(geos)
     if geo_hint:
         prompt += geo_hint
+    if description_hint:
+        prompt += (
+            "\n\nSMART RAMP REQUESTER'S AUDIENCE BRIEF (the verbatim ask from the requester for this cohort) — "
+            "treat this as the AUTHORITATIVE description of who the audience actually is. The cohort signature "
+            "above (skills, fields_of_study, degree_level) was mined from RESUME data and MAY be broader or less "
+            "specific than the brief. When the brief names a specialty (e.g., 'cardiologists', 'tax attorneys', "
+            "'civil engineers'), that specialty MUST appear in the photo_subject and headlines — do NOT default "
+            "to the generic role implied by the signals.\n"
+            f"Brief:\n{description_hint}\n"
+        )
+        log.info("Copy gen using Smart Ramp description hint: %r", description_hint[:120])
     if competitor_context:
         prompt += competitor_context
 

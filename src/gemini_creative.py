@@ -957,7 +957,23 @@ def generate_imagen_creative_with_qc(
                 return path, last_report
             log.info("Copy QC failed — invoking copy_rewriter")
             variant = copy_rewriter(variant, report.copy_violations)
-            prompt_suffix = ""  # fresh image attempt, not a gemini-feedback suffix
+            # Combined-defect path (post 2026-04-29 fix): if the same attempt
+            # ALSO had image-side issues, preserve that feedback in the next
+            # iteration's prompt_suffix so Gemini sees both fixes. retry_instruction
+            # contains image hints when retry_hints fired alongside copy violations.
+            has_image_hints = (
+                report.retry_instruction
+                and "Append the following to the Gemini prompt" in report.retry_instruction
+            )
+            if has_image_hints:
+                prompt_suffix = report.retry_instruction
+                # Also propagate the failure-region crops if present.
+                feedback_image_paths = list(report.feedback_crop_paths or [])
+                log.info("Combined-defect retry: %d image hint(s) propagated alongside copy rewrite",
+                         len(report.violations) - len(report.copy_violations))
+            else:
+                prompt_suffix = ""
+                feedback_image_paths = []
             continue
 
         # Gemini-side image failure — append QC feedback to existing suffix (preserve initial constraints)

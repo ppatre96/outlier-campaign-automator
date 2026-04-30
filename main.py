@@ -1628,6 +1628,14 @@ class ResolvedCohorts:
     # only when ≥50% of positives skew top-tier). See compute_prestige_signal
     # in src/profile_tiering.py. {} when fetch is skipped or no data.
     prestige_signal: dict = field(default_factory=dict)
+    # Free-form audience description from the Smart Ramp form's cohort row
+    # (e.g., "We want cardiologists with 5+ years experience"). Surfaced
+    # 2026-04-29 (GMR-0016): the field was being read from the row dict and
+    # dropped on the floor — Stage A and the copy LLM never saw "cardiologist"
+    # so creatives went out with generic PhD photo subjects. Now threaded
+    # through to build_copy_variants as description_hint so the LLM can
+    # specialize the photo_subject and copy to the requested specialty.
+    cohort_description: str = ""
 
 
 def _resolve_cohorts(
@@ -1723,8 +1731,19 @@ def _resolve_cohorts(
     except Exception as exc:
         log.warning("_resolve_cohorts: meta fetch failed (non-fatal): %s", exc)
 
+    # Smart Ramp cohort_description — the requester's free-form ask
+    # ("we want cardiologists with 5+ yrs experience"). PREPEND it to whatever
+    # job_post / project description is in Snowflake so the LLM ICP derivation
+    # sees the most specific hint first. Surfaced 2026-04-29 (GMR-0016 drift).
+    cohort_description = (row.get("cohort_description") or "").strip()
     derived_icp: dict = {}
-    description = (job_post_meta.get("description") or project_meta.get("description") or "").strip()
+    snowflake_description = (job_post_meta.get("description") or project_meta.get("description") or "").strip()
+    description = "\n\n".join(filter(None, [cohort_description, snowflake_description]))
+    if cohort_description:
+        log.info(
+            "_resolve_cohorts: Smart Ramp cohort_description hint = %r (will fold into ICP derivation + copy gen)",
+            cohort_description[:160],
+        )
     if description:
         try:
             derived_icp = derive_icp_from_job_post(description) or {}
@@ -1852,6 +1871,7 @@ def _resolve_cohorts(
         flow_id=flow_id,
         location=location,
         prestige_signal=prestige_signal,
+        cohort_description=cohort_description,
     )
 
 
@@ -1904,6 +1924,7 @@ def _process_static_campaigns(
     included_geos: list[str] | None = None,
     ramp_id: str | None = None,
     cohort_id_override: str | None = None,
+    cohort_description: str = "",
 ) -> dict:
     """Static-ad arm — symmetric counterpart to _process_inmail_campaigns.
 
@@ -1952,7 +1973,14 @@ def _process_static_campaigns(
             # Phase 2.6: thread Smart Ramp included_geos into copy gen so the LLM
             # picks photo_subject ethnicities plausible for the targeted geo.
             # See _GEO_ETHNICITY_HINTS in src/figma_creative.py for the lookup.
-            variants = build_copy_variants(cohort, layer_map, geos=included_geos)
+            # cohort_description (Smart Ramp form's audience brief, 2026-04-29 fix)
+            # is a free-form hint (e.g. "we want cardiologists") — without it the
+            # LLM only sees the cohort signature and invents a generic specialty.
+            variants = build_copy_variants(
+                cohort, layer_map,
+                geos=included_geos,
+                description_hint=cohort_description,
+            )
         except Exception as exc:
             log.warning("Static copy generation failed for '%s': %s", cohort.name, exc)
 
@@ -2228,6 +2256,7 @@ def _process_row_both_modes(
                 included_geos=included_geos,
                 ramp_id=ramp_id,
                 cohort_id_override=cohort_id_override,
+                cohort_description=resolved.cohort_description,
             )
             if isinstance(r, dict):
                 static_result.update(r)
