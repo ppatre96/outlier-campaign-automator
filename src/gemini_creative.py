@@ -931,10 +931,22 @@ def generate_imagen_creative_with_qc(
         if report.verdict == "PASS":
             return path, last_report
 
-        # Track best-so-far for cap-exhaust fallback
-        n_viol = len(report.violations)
-        if n_viol < best_violations:
-            best_violations = n_viol
+        # Track best-so-far for cap-exhaust fallback. We deliberately exclude
+        # copywriter-targeted failures from this tracking: a copy violation on
+        # attempt N is fixed by the rewriter before attempt N+1, so attempt N's
+        # report is a stale snapshot of pre-rewrite copy. Including it would
+        # cause the loop to "return" an em-dash/banned-token violation that no
+        # longer exists in the variant, misleading downstream logging.
+        # Fallback path: if EVERY attempt fails at copy (rewriter never converges),
+        # we still want to surface something — the elif keeps the most recent
+        # copy-failed attempt as a last-resort handle.
+        if report.retry_target != "copywriter":
+            n_viol = len(report.violations)
+            if n_viol < best_violations:
+                best_violations = n_viol
+                best_path = path
+                best_report = last_report
+        elif best_violations == float("inf"):
             best_path = path
             best_report = last_report
 

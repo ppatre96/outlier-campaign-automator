@@ -597,9 +597,11 @@ def _process_row(
         if png_path is None and selected_variant:
             try:
                 from src.figma_creative import rewrite_variant_copy
+                # max_retries comes from the function default (env-var
+                # QC_MAX_RETRIES, default 9 = 10 attempts) — Pranav rule
+                # 2026-04-29, we always want to ship a creative.
                 png_path, qc_report = generate_imagen_creative_with_qc(
                     variant=selected_variant,
-                    max_retries=2,
                     copy_rewriter=rewrite_variant_copy,
                 )
                 log.info(
@@ -1980,9 +1982,10 @@ def _process_static_campaigns(
         if png_path is None and selected_variant:
             try:
                 from src.figma_creative import rewrite_variant_copy
+                # max_retries from function default (env-var QC_MAX_RETRIES,
+                # default 9 = 10 attempts) — see comment in _process_row above.
                 png_path, qc_report = generate_imagen_creative_with_qc(
                     variant=selected_variant,
-                    max_retries=2,
                     copy_rewriter=rewrite_variant_copy,
                 )
                 # Hard-reject on QC FAIL — Phase 2.6 path was silently shipping bad
