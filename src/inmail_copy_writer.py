@@ -64,7 +64,7 @@ ANGLE_CONFIGS = {
             "concrete task example for this TG → "
             "weekly payment + no fixed schedule → "
             "no commitment, no minimum hours → "
-            "call to action. Keep to 75-100 words total."
+            "call to action. Keep to 100-130 words total."
         ),
         "is_control": True,
     },
@@ -84,7 +84,7 @@ ANGLE_CONFIGS = {
             "NOT 'Outlier is a platform...' — that is the worst-performing opener pattern. "
             "Then: why that specific expertise matters for AI (1-2 sentences) → "
             "concrete task example → payment weekly + flexible → call to action. "
-            "Keep to 75-100 words."
+            "Keep to 100-130 words."
         ),
         "is_control": False,
     },
@@ -102,7 +102,7 @@ ANGLE_CONFIGS = {
             "name the specific peer group, not a generic label. "
             "Then: what they do on Outlier → why this TG's knowledge is valuable → "
             "flexible schedule + weekly payment → call to action. "
-            "Keep to 75-100 words."
+            "Keep to 100-130 words."
         ),
         "is_control": False,
     },
@@ -152,7 +152,7 @@ class InMailVariant:
     angle:       str   # "A" | "B" | "C"
     angle_label: str   # "Expertise" | "Earnings" | "Flexibility"
     subject:     str   # ≤60 chars — InMail subject line
-    body:        str   # 75–100 words — plain text, no bullet points
+    body:        str   # 100–130 words — plain text, no bullet points
     cta_label:   str   # ≤20 chars — button label
     cta_url:     str   # destination URL
 
@@ -292,8 +292,11 @@ CRITICAL WRITING RULES (based on 12-month performance data — these directly af
    BAD:  "Outlier is an AI data platform that has paid over $500M to contributors worldwide."
    The company-intro opener is the most common failure pattern in low-CTR InMails.
 
-2. BODY LENGTH: 75–100 words maximum. Data shows 300–599 char bodies get 5.80% CTR vs 4.33%
-   for 900+ char bodies. Stop as soon as the CTA is clear. Do NOT pad with company history.
+2. BODY LENGTH: 100–130 words (≈500–650 characters). Data shows 300–599 char bodies get
+   5.80% CTR vs 4.33% for 900+ char bodies. The previous 150–250 word target was in the
+   worst-performing length bucket. Stop as soon as the value prop and CTA are clear — do
+   NOT pad with company history, repeated credibility stats, or "if this sounds like..."
+   closing filler. Every sentence must carry new information.
 
 3. ACTIVE VOICE: Prefer active constructions. "We send payment weekly" beats "Payment is issued."
    One or two passive phrases are acceptable — don't make it the default register.
@@ -315,7 +318,7 @@ CRITICAL WRITING RULES (based on 12-month performance data — these directly af
 
 Write your response EXACTLY in this format (no other text):
 SUBJECT: <subject line, max 60 chars>
-BODY: <body text, 75–100 words, plain paragraphs>
+BODY: <body text, 100–130 words, plain paragraphs>
 CTA_LABEL: <button label, max 20 chars>"""
 
 
