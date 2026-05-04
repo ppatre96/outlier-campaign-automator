@@ -1,0 +1,102 @@
+name: Smart Ramp Poller
+
+on:
+  schedule:
+    # Every 15 minutes, 24/7 — GitHub Actions cron is UTC
+    - cron: "0,15,30,45 * * * *"
+  # Allow manual trigger from GitHub Actions UI for testing / forced runs
+  workflow_dispatch:
+    inputs:
+      ramp_id:
+        description: "Force-process a specific ramp ID (e.g. GMR-0016). Leave blank to process all new ramps."
+        required: false
+        default: ""
+      dry_run:
+        description: "Run in dry-run mode (no LinkedIn campaigns created)"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+jobs:
+  poll:
+    name: Poll Smart Ramp & run pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 90  # max one ramp cycle; kills runaway image-gen loops
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore processed_ramps state
+        uses: actions/cache@v4
+        with:
+          path: data/processed_ramps.json
+          key: processed-ramps-${{ github.run_id }}
+          restore-keys: |
+            processed-ramps-
+
+      - name: Run poller
+        env:
+          # ── Core API keys ──────────────────────────────────────────────────
+          ANTHROPIC_API_KEY:           ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY:              ${{ secrets.GEMINI_API_KEY }}
+          REDASH_API_KEY:              ${{ secrets.REDASH_API_KEY }}
+          # ── LinkedIn ───────────────────────────────────────────────────────
+          LINKEDIN_ACCESS_TOKEN:       ${{ secrets.LINKEDIN_ACCESS_TOKEN }}
+          LINKEDIN_AD_ACCOUNT_ID:      ${{ secrets.LINKEDIN_AD_ACCOUNT_ID }}
+          LINKEDIN_INMAIL_SENDER_URN:  ${{ secrets.LINKEDIN_INMAIL_SENDER_URN }}
+          # ── Smart Ramp ─────────────────────────────────────────────────────
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+          # ── Slack ──────────────────────────────────────────────────────────
+          SLACK_WEBHOOK_URL:           ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_BOT_TOKEN:             ${{ secrets.SLACK_BOT_TOKEN }}
+          # ── LiteLLM (kept for Gemini /images/generations fallback) ─────────
+          LITELLM_BASE_URL:            "https://litellm-proxy.ml.scale.com/v1"
+          LITELLM_API_KEY:             ${{ secrets.LITELLM_API_KEY }}
+        run: |
+          # Build poller args
+          ARGS="--once"
+          if [ -n "${{ github.event.inputs.ramp_id }}" ]; then
+            ARGS="$ARGS --ramp-id ${{ github.event.inputs.ramp_id }}"
+          fi
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ] || [ "${{ github.event_name }}" = "workflow_dispatch" -a -z "${{ github.event.inputs.ramp_id }}" ]; then
+            # Scheduled runs: live mode (no --dry-run)
+            # Manual runs without ramp_id: dry-run for safety
+            :
+          fi
+          # Scheduled runs always run live; manual dispatch respects the input
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            python scripts/smart_ramp_poller.py $ARGS
+          else
+            DRY="${{ github.event.inputs.dry_run }}"
+            if [ "$DRY" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+            python scripts/smart_ramp_poller.py $ARGS
+          fi
+
+      - name: Save processed_ramps state
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: data/processed_ramps.json
+          key: processed-ramps-${{ github.run_id }}
+
+      - name: Upload run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: poller-log-${{ github.run_id }}
+          path: logs/smart_ramp_poller/
+          retention-days: 7
+          if-no-files-found: ignore
