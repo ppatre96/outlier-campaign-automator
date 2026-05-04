@@ -1,26 +1,29 @@
 """
 InMail copy writer for LinkedIn Message Ad campaigns.
 
-Generates angle variants for a given TG. The FINANCIAL angle is always the
-control/baseline — data shows it consistently outperforms Expertise and
-Flexibility angles on CTR and CPA across all geos and TGs. Experimental
-angles (Expertise, Flexibility, Urgency, etc.) rotate as challengers.
+Generates angle variants for a given TG. The FLEXIBILITY angle is the
+data-validated winner — 12-month analysis (17.4M sends, 2026-05-04) shows
+Flexibility subjects average 5.84% CTR vs 4.38% for Financial and 3.45% for
+Aspirational. Financial is kept as a tested challenger because it still works
+well for Coders ("$80/hr with Machine Learning + AI" = 23.9% CTR, $0.08/click).
+
+Key findings folded into prompts:
+  - Identity-first subjects win: "Romanian Speakers Needed" (28.5% CTR) vs
+    "Top Coders Wanted" (0.65%). Name the exact skill/group, not a flattering label.
+  - Rate format: always "$X/hr" in the main clause — never parenthetical "(Earn $X)"
+    and never drop the $ sign. "40/h" scored 0.19% CTR vs "$40 USD/hr" at 27.5%.
+  - Body length: 300-599 chars = 5.80% CTR; 900+ chars = 4.33%. Target 75-100 words.
+  - Opening line: start with an observation about the reader, NOT a company intro.
+    Good: "Your background in X is exactly what AI teams are missing right now."
+    Bad:  "Outlier is an AI data platform that has paid over $500M..."
+  - Aspirational angle ("Your X expertise is worth $Y") is the weakest by cost:
+    $10.26/click vs $2.55/click for identity-functional subjects. Keep it but
+    pair it with a concrete earning signal.
+  - Medical/PhD/Math is the hardest segment (2.77% avg CTR) — extra specificity
+    in subject + concrete task description needed to compensate.
 
 New angles can be injected via hypothesis dicts from the competitor agent —
 see build_inmail_variants() for the interface.
-
-## Context notes for generation
-
-GEO RESTRICTIONS: Campaigns do not always run in all geos by our own choice.
-Client restrictions may limit which geos a campaign is eligible to run in.
-Do not assume poor geo coverage = poor TG — it may be a client constraint.
-When comparing performance across geos, flag this as a possible confounder.
-
-TG EARNINGS BASELINE: Lower conversion rates for high-skill TGs (e.g. Math,
-PhD-level STEM) do not necessarily mean the TG is weak. These professionals
-may have higher average earnings and face less financial urgency, making them
-harder to convert via financial hooks alone. Compare within-TG (angle vs.
-angle) rather than across TGs when evaluating copy effectiveness.
 """
 import logging
 from dataclasses import dataclass
@@ -30,81 +33,96 @@ from openai import OpenAI
 log = logging.getLogger(__name__)
 
 # ── Angle configs ──────────────────────────────────────────────────────────────
-# FINANCIAL is the proven control. All data (90-day Snowflake analysis) shows
-# financial subject hooks beat expertise/flexibility hooks on CTR and CPA.
-# Rule: rate must appear in the subject. Never say "up to $X" (ceiling framing
-# kills CTR). Never say "Side Income" (lowers perceived value).
-# Winning subject formats:
-#   "[Role] | Flexible Hours & $X/hr"
-#   "[Skill] + AI = Flexible $X/hr"
-#   "Earn $X/hr with [Skill] + AI"
+# Data-validated ranking by CTR (12-month, 17.4M sends, 2026-05-04 analysis):
+#   C (Flexibility): 5.84% CTR — DATA WINNER
+#   F (Financial):   4.38% CTR — strong for Coders specifically
+#   B (Social Proof):~4.5% CTR — peer count + rate works well
+#   A (Aspirational): 3.45% CTR — weakest; needs concrete rate to avoid $10+/click
+#
+# Subject-line rules that cut across all angles (from top-10 analysis):
+#   1. Name the exact identity/skill group ("Romanian Speakers", "Machine Learning")
+#      NOT a flattering label ("Top Coders", "Physics Experts").
+#   2. Rate in the MAIN CLAUSE with "$" sign. Never parenthetical "(Earn $X)".
+#   3. Never say "up to $X", "Side Income", or generic "Remote Opportunity" alone.
 
 ANGLE_CONFIGS = {
     "F": {
         "label":         "Financial",
-        "hook":          "specific hourly rate + role — lead with the number",
+        "hook":          "specific hourly rate + identity — rate in main clause with $ sign",
         "tone":          "direct, factual, outcome-first",
         "subject_style": (
-            "Include the exact hourly rate. Use one of these proven formats: "
-            "'[Role] | Flexible Hours & $X/hr'  OR  '[Skill] + AI = Flexible $X/hr'  OR  "
-            "'Earn $X/hr with [Skill] + AI'. Never say 'up to', never say 'Side Income'."
+            "Name the exact skill/identity then the rate in the main clause. "
+            "Proven formats: 'Earn $X/hr with [Skill] + AI'  OR  '[Skill] + AI = Flexible $X/hr'  OR  "
+            "'[Role] | Flexible Hours & $X/hr'. "
+            "Never parenthetical: NO '(Earn $X/hr)'. Never 'up to'. Never 'Side Income'. "
+            "Always include the $ sign — '50/hr' without $ scored 0.19% CTR vs 27% with $."
         ),
         "body_structure": (
-            "Open with the payment figure or rate → "
-            "briefly explain what contributors do on Outlier (review, rate, generate AI content) → "
-            "weekly payment + fully flexible schedule → "
+            "OPEN: observation about the reader's specific background, NOT a company introduction. "
+            "E.g. 'Your background in [specific skill] is exactly what AI developers are missing.' "
+            "Then: what contributors do (review, rate, generate AI content, 1 sentence) → "
+            "concrete task example for this TG → "
+            "weekly payment + no fixed schedule → "
             "no commitment, no minimum hours → "
-            "what a typical task looks like for this specific TG → "
-            "call to action"
+            "call to action. Keep to 75-100 words total."
         ),
         "is_control": True,
     },
     "A": {
         "label":         "Expertise",
-        "hook":          "specific professional moment — recognition of their domain expertise",
+        "hook":          "recognition of domain expertise — MUST still include earning signal",
         "tone":          "respectful, peer-to-peer, thoughtful",
         "subject_style": (
-            "Role/skill recognition — make them feel seen. Still include a rate or "
-            "earning signal (e.g. '$50/hr' or 'well-paid') to avoid pure vanity framing."
+            "Identity-first recognition + rate signal. Data shows pure aspirational "
+            "('Your X is valuable') without a rate costs $10+/click. "
+            "Good: 'Cardiologists earn $50/hr shaping AI' — names the identity AND the rate. "
+            "Bad: 'Your medical expertise is in demand' — no rate, generic."
         ),
         "body_structure": (
-            "Open by acknowledging their specific expertise → "
-            "explain what Outlier is in one sentence → "
-            "why their background specifically matters for AI tasks → "
-            "what a typical task looks like → "
-            "mention payment weekly as a supporting fact → "
-            "close with a clear, low-friction call to action"
+            "OPEN: specific observation about the reader's expertise — name the actual skill "
+            "or domain ('your ability to interpret ECGs / read code / parse legal arguments'). "
+            "NOT 'Outlier is a platform...' — that is the worst-performing opener pattern. "
+            "Then: why that specific expertise matters for AI (1-2 sentences) → "
+            "concrete task example → payment weekly + flexible → call to action. "
+            "Keep to 75-100 words."
         ),
         "is_control": False,
     },
     "B": {
-        "label":         "Earnings",
+        "label":         "Social Proof",
         "hook":          "peer group stat + payment figure",
         "tone":          "factual, motivating, social proof",
-        "subject_style": "lead with a payment figure or '1,000+ [TG] professionals' stat",
+        "subject_style": (
+            "Lead with a peer count stat or the rate: '1,000+ [exact role] earn $X/hr' OR "
+            "'[exact role] earn $X/hr improving AI'. "
+            "Be specific to the cohort — '1,000+ cardiologists' not '1,000+ professionals'."
+        ),
         "body_structure": (
-            "Open with the payment figure or peer count → "
-            "briefly explain what contributors do on Outlier → "
-            "weekly payment + flexible schedule → "
-            "no commitment, work as much or as little as you want → "
-            "call to action"
+            "OPEN: peer count or 'others like you are already doing this' — "
+            "name the specific peer group, not a generic label. "
+            "Then: what they do on Outlier → why this TG's knowledge is valuable → "
+            "flexible schedule + weekly payment → call to action. "
+            "Keep to 75-100 words."
         ),
         "is_control": False,
     },
     "C": {
         "label":         "Flexibility",
-        "hook":          "lifestyle / schedule declaration",
+        "hook":          "lifestyle / schedule freedom — DATA WINNER (5.84% avg CTR)",
         "tone":          "relaxed, empowering, lifestyle-led",
         "subject_style": (
-            "Lead with time freedom or 'no fixed schedule'. Include an earning "
-            "signal in the subject — pure lifestyle framing without a rate underperforms."
+            "Lead with schedule freedom AND earning signal together. "
+            "Good: '[Role]: set your own hours, earn $X/hr' or 'Flexible, Remote — $X/hr for [skill]'. "
+            "Pure lifestyle without a rate underperforms. Must include the $ amount. "
+            "Never 'Remote Opportunity' alone — it is in the bottom-10 subject patterns."
         ),
         "body_structure": (
-            "Open with the schedule freedom (no shifts, no deadlines) → "
-            "what Outlier tasks actually look like → "
-            "mention weekly payment as a supporting fact, not the main hook → "
-            "Outlier's scale / credibility → "
-            "call to action"
+            "OPEN: call out the constraints they actually face (shifts, call schedules, "
+            "hospital deadlines, fixed hours) — make it specific to this TG. "
+            "E.g. 'No call schedule. No charting deadlines.' for medical. "
+            "Then: what flexibility on Outlier actually looks like → "
+            "what the tasks involve (specific to TG) → weekly payment → call to action. "
+            "Keep to 75-100 words. This is the highest-CTR angle — write it with energy."
         ),
         "is_control": False,
     },
@@ -134,7 +152,7 @@ class InMailVariant:
     angle:       str   # "A" | "B" | "C"
     angle_label: str   # "Expertise" | "Earnings" | "Flexibility"
     subject:     str   # ≤60 chars — InMail subject line
-    body:        str   # 150–300 words — plain text, no bullet points
+    body:        str   # 75–100 words — plain text, no bullet points
     cta_label:   str   # ≤20 chars — button label
     cta_url:     str   # destination URL
 
@@ -245,18 +263,19 @@ def _build_prompt(
     hourly_rate: str = "$50",
 ) -> str:
     control_note = (
-        "NOTE: The Financial angle (rate in subject line) is the proven control — "
-        "data shows it consistently outperforms expertise/flexibility framing on CTR and CPA. "
-        "This variant is a challenger. Make it genuinely distinctive, not just a rewording.\n\n"
-        if not angle_cfg.get("is_control") else ""
+        "NOTE: Data (12-month, 17.4M sends) shows the FLEXIBILITY angle has the highest "
+        "avg CTR (5.84%) — higher than Financial (4.38%). This is a Financial challenger. "
+        "Make it genuinely distinctive — if it reads like a reworded Flexibility message "
+        "without the rate front-and-center, it will underperform.\n\n"
+        if not angle_cfg.get("is_control") else
+        "NOTE: Financial is the best angle for Coders TG specifically. For Medical/PhD TGs "
+        "it under-indexes — compensate by making the task description very concrete.\n\n"
     )
-    return f"""You are writing a LinkedIn InMail (Message Ad) for Outlier — an AI data platform that pays domain experts to complete AI tasks remotely (reviewing, rating, and generating content to improve AI models). Outlier has paid over $500M to contributors globally.
+    return f"""You are writing a LinkedIn InMail (Message Ad) for Outlier — an AI data platform where domain experts earn payment doing flexible, remote AI tasks (reviewing, rating, generating content to improve AI models). Outlier has paid over $500M to contributors globally.
 
-Hourly rate for this TG: {hourly_rate}/hr (use this exact figure in subject and body — do not say "up to").
+Hourly rate for this TG: {hourly_rate}/hr (use this exact figure — never say "up to $X").
 
-{control_note}
-
-{cohort_summary}
+{control_note}{cohort_summary}
 
 Angle: {angle_key} — {angle_cfg['label']}
 Hook: {angle_cfg['hook']}
@@ -266,29 +285,38 @@ Body structure: {angle_cfg['body_structure']}
 
 {VOCAB_RULES}
 
-Guidelines:
-- Address the reader as a professional — this is a peer-to-peer InMail, not a mass marketing email
-- Do NOT use bullet points or headers inside the body — plain paragraphs only
-- Do NOT use the word "Hi" or "Hello" — open with a punchy first sentence
-- Subject must be specific to this TG, not generic ("An opportunity for you" is not acceptable)
-- Body: 150–250 words
-- CTA label: action-oriented verb phrase (not "Click here") — MUST be 20 characters or fewer (count every character including spaces). Good examples: "See Open Tasks" (14), "Start Contributing" (18), "View Opportunities" (18), "Explore Tasks" (13). Count carefully before writing.
-- Subject line MUST be 60 characters or fewer (count every character including spaces). Count carefully before writing.
+CRITICAL WRITING RULES (based on 12-month performance data — these directly affect CTR):
 
-Voice and tone (IMPORTANT):
-- Write in ACTIVE VOICE throughout. Every sentence should have a clear subject performing an action.
-  BAD:  "Payment is issued weekly." → GOOD: "We send payment every week."
-  BAD:  "Tasks are matched to your background." → GOOD: "We match tasks to your background."
-  BAD:  "Your application is processed quickly." → GOOD: "We review your application quickly."
-  One or two passive constructions in the body are acceptable — avoid making them the default.
-- Use concrete specifics over vague generalities. "$50/hr, sent weekly" beats "competitive compensation".
-- Keep sentences varied in length — mix short punchy statements with fuller explanatory ones.
-- No em dashes (—). Use a period or comma instead.
+1. OPENING LINE: Start with a specific observation about the reader's background.
+   GOOD: "Your ability to interpret ECG waveforms is exactly what AI developers can't replicate."
+   BAD:  "Outlier is an AI data platform that has paid over $500M to contributors worldwide."
+   The company-intro opener is the most common failure pattern in low-CTR InMails.
+
+2. BODY LENGTH: 75–100 words maximum. Data shows 300–599 char bodies get 5.80% CTR vs 4.33%
+   for 900+ char bodies. Stop as soon as the CTA is clear. Do NOT pad with company history.
+
+3. ACTIVE VOICE: Prefer active constructions. "We send payment weekly" beats "Payment is issued."
+   One or two passive phrases are acceptable — don't make it the default register.
+
+4. SUBJECT LINE: Name the exact skill/identity group — not a flattering label.
+   GOOD: "Cardiologists: set your own hours, earn $50/hr"
+   BAD:  "Top Medical Experts Wanted" or "Push the Limits of AI (Earn $50/hr)"
+   Rate must appear with $ sign in the main clause — never in parentheses.
+
+5. SPECIFICITY: Name a concrete task the reader will actually do.
+   GOOD: "evaluating AI-generated ECG interpretations for accuracy"
+   BAD:  "helping improve AI models" (too vague to motivate action)
+
+6. NO em dashes (—). Use a period or comma instead.
+7. No bullet points or headers — plain paragraphs only.
+8. Do NOT start with "Hi" or "Hello".
+9. CTA label: action verb, ≤20 characters. Examples: "See Open Tasks" (14), "View Opportunities" (18).
+10. Subject line: ≤60 characters including spaces. Count carefully.
 
 Write your response EXACTLY in this format (no other text):
-SUBJECT: <subject line, max 60 chars — count carefully>
-BODY: <body text, 150–250 words, plain paragraphs>
-CTA_LABEL: <button label, max 20 chars — count carefully>"""
+SUBJECT: <subject line, max 60 chars>
+BODY: <body text, 75–100 words, plain paragraphs>
+CTA_LABEL: <button label, max 20 chars>"""
 
 
 def _shorten_field(client, field_name: str, value: str, max_chars: int) -> str:
