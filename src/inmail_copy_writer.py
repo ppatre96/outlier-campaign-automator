@@ -210,20 +210,40 @@ def build_inmail_variants(
             parsed = _parse_response(response.choices[0].message.content.strip())
             subject = parsed.get("subject", _fallback_subject(tg_category, angle_key))
             cta_label = parsed.get("cta_label", "See Opportunities")
+            body = parsed.get("body", _fallback_body(tg_category, angle_key))
+
+            # Auto-fix hard limit overruns before building the variant.
             if len(subject) > 60:
                 log.warning("Subject over 60 chars (%d), rewording", len(subject))
                 subject = _shorten_field(client, "subject line", subject, 60)
             if len(cta_label) > 20:
                 log.warning("CTA label over 20 chars (%d), rewording", len(cta_label))
                 cta_label = _shorten_field(client, "CTA button label", cta_label, 20)
+            if len(body) > 1900:
+                log.warning("Body over LinkedIn hard limit (%d chars), trimming", len(body))
+                body = _shorten_field(client, "InMail body", body, 1900)
+
             variant = InMailVariant(
                 angle=angle_key,
                 angle_label=angle_cfg["label"],
                 subject=subject,
-                body=parsed.get("body", _fallback_body(tg_category, angle_key)),
+                body=body,
                 cta_label=cta_label,
                 cta_url=destination_url,
             )
+
+            # Structural QC — log all violations; callers see HARD vs SOFT tags.
+            from src.copy_design_qc import validate_inmail_copy
+            qc_violations = validate_inmail_copy(variant.subject, variant.body, variant.cta_label)
+            hard = [v for v in qc_violations if v.startswith("[HARD]")]
+            soft = [v for v in qc_violations if v.startswith("[SOFT]")]
+            if hard:
+                log.error("InMail angle %s HARD QC violations: %s", angle_key, hard)
+            if soft:
+                log.warning("InMail angle %s soft QC suggestions: %s", angle_key, soft)
+            if not qc_violations:
+                log.info("InMail angle %s QC: PASS", angle_key)
+
             log.info("InMail angle %s generated for '%s'", angle_key, cohort.name)
         except Exception as exc:
             log.warning("InMail angle %s failed for '%s': %s", angle_key, cohort.name, exc)

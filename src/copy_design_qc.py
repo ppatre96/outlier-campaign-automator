@@ -60,6 +60,16 @@ ALLOWED_CTA_BUTTONS = {
     "DOWNLOAD", "JOIN", "SUBSCRIBE", "REQUEST_DEMO", "VISIT_WEBSITE",
 }
 
+# ── InMail (Message Ad) structural limits ─────────────────────────────────────
+# Hard limits are LinkedIn API requirements — exceeding them causes 400 on upload.
+# Soft limits are quality targets from 12-month performance analysis (2026-05-04).
+INMAIL_SUBJECT_SOFT_MAX_CHARS = 60     # quality target; 28-char subjects scored 28% CTR
+INMAIL_SUBJECT_HARD_MAX_CHARS = 200    # LinkedIn API hard limit
+INMAIL_BODY_HARD_MAX_CHARS    = 1900   # LinkedIn API hard limit
+INMAIL_BODY_SOFT_MIN_WORDS    = 100    # quality target lower bound (500 chars ≈ 5.80% CTR bucket)
+INMAIL_BODY_SOFT_MAX_WORDS    = 130    # quality target upper bound (650 chars)
+INMAIL_CTA_MAX_CHARS          = 20     # internal limit for readability
+
 # ── Outlier brand voice — banned tokens ───────────────────────────────────────
 # Scanned case-insensitively, whole-word (\bword\b) to avoid false positives
 # (e.g. "so" matched inside "sound"). Sourced from the outlier-copy-writer agent
@@ -715,6 +725,83 @@ _RETRY_HINT_VARIANTS: dict[str, list[str]] = {
         "TEXT STILL APPEARING. Tell Gemini 'I will manually delete any letterform you draw. The headline, subheadline, earnings strip, and Outlier wordmark are ALL composited in post-processing. Generate ONLY the unbranded photograph — clean of any pixel that resembles a glyph.'",
     ],
 }
+
+
+# ── InMail structural QC ──────────────────────────────────────────────────────
+
+def validate_inmail_copy(
+    subject: str,
+    body: str,
+    cta_label: str = "",
+) -> list[str]:
+    """
+    Structural QC for a single InMail (Message Ad) variant. Mirrors
+    validate_copy_lengths for static ads but scoped to InMail fields.
+
+    Returns a list of human-readable violations, empty = clean. Violations
+    are tagged as HARD or SOFT so callers can decide severity:
+      - HARD: LinkedIn API will reject the campaign on upload (fix before sending)
+      - SOFT: Quality target miss (log as warning, do not block)
+
+    Checks:
+      subject:   HARD >200 chars (LinkedIn limit), SOFT >60 chars (quality target)
+      body:      HARD >1900 chars (LinkedIn limit),
+                 SOFT word count outside 100–130 (quality target from CTR analysis),
+                 SOFT contains bullet points or markdown headers (format violations)
+      cta_label: HARD >20 chars (internal limit, LinkedIn has no enforced cap)
+      all fields: Outlier brand voice scan (banned tokens, phrases, em dashes)
+    """
+    violations: list[str] = []
+    subj = (subject or "").strip()
+    body_text = (body or "").strip()
+    cta = (cta_label or "").strip()
+
+    # ── Subject ──
+    if len(subj) > INMAIL_SUBJECT_HARD_MAX_CHARS:
+        violations.append(
+            f"[HARD] Subject is {len(subj)} chars (LinkedIn hard limit {INMAIL_SUBJECT_HARD_MAX_CHARS}): {subj!r}"
+        )
+    elif len(subj) > INMAIL_SUBJECT_SOFT_MAX_CHARS:
+        violations.append(
+            f"[SOFT] Subject is {len(subj)} chars (quality target ≤{INMAIL_SUBJECT_SOFT_MAX_CHARS}): {subj!r}"
+        )
+
+    # ── Body ──
+    if len(body_text) > INMAIL_BODY_HARD_MAX_CHARS:
+        violations.append(
+            f"[HARD] Body is {len(body_text)} chars (LinkedIn hard limit {INMAIL_BODY_HARD_MAX_CHARS})"
+        )
+
+    word_count = len(body_text.split())
+    if word_count < INMAIL_BODY_SOFT_MIN_WORDS:
+        violations.append(
+            f"[SOFT] Body is {word_count} words (quality target ≥{INMAIL_BODY_SOFT_MIN_WORDS}): too short, may feel abrupt"
+        )
+    elif word_count > INMAIL_BODY_SOFT_MAX_WORDS:
+        violations.append(
+            f"[SOFT] Body is {word_count} words (quality target ≤{INMAIL_BODY_SOFT_MAX_WORDS}): "
+            f"longer bodies underperform — data shows 300-599 chars gets 5.80% CTR vs 4.33% for 900+ chars"
+        )
+
+    # Bullet points or markdown headers — format violations that look bad in LinkedIn
+    if re.search(r"^\s*[-•*]\s+\S", body_text, re.MULTILINE):
+        violations.append("[SOFT] Body contains bullet points — InMail must use plain paragraphs only")
+    if re.search(r"^\s*#{1,3}\s+\S", body_text, re.MULTILINE):
+        violations.append("[SOFT] Body contains markdown headers — InMail must use plain paragraphs only")
+
+    # ── CTA label ──
+    if len(cta) > INMAIL_CTA_MAX_CHARS:
+        violations.append(
+            f"[HARD] CTA label is {len(cta)} chars (limit {INMAIL_CTA_MAX_CHARS}): {cta!r}"
+        )
+
+    # ── Brand voice scan on all fields ──
+    violations.extend(scan_brand_voice(subj, "subject"))
+    violations.extend(scan_brand_voice(body_text, "body"))
+    if cta:
+        violations.extend(scan_brand_voice(cta, "cta_label"))
+
+    return violations
 
 
 def qc_creative(
