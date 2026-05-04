@@ -28,7 +28,7 @@ see build_inmail_variants() for the interface.
 import logging
 from dataclasses import dataclass
 
-from openai import OpenAI
+from src.claude_client import call_claude
 
 log = logging.getLogger(__name__)
 
@@ -188,8 +188,6 @@ def build_inmail_variants(
     Falls back to hardcoded defaults if LiteLLM call fails.
     Returns list of InMailVariant objects in the order of angle_keys.
     """
-    import config
-    client = OpenAI(base_url=config.LITELLM_BASE_URL, api_key=config.LITELLM_API_KEY)
     cohort_summary = _cohort_summary(cohort, tg_category)
     variants: list[InMailVariant] = []
 
@@ -205,12 +203,12 @@ def build_inmail_variants(
         if geo_icp_hint:
             prompt += geo_icp_hint
         try:
-            response = client.chat.completions.create(
-                model=config.LITELLM_MODEL,
-                max_tokens=1024,
+            raw = call_claude(
                 messages=[{"role": "user", "content": prompt}],
-            )
-            parsed = _parse_response(response.choices[0].message.content.strip())
+                max_tokens=1024,
+                cache_system=True,
+            ).strip()
+            parsed = _parse_response(raw)
             subject = parsed.get("subject", _fallback_subject(tg_category, angle_key))
             cta_label = parsed.get("cta_label", "See Opportunities")
             body = parsed.get("body", _fallback_body(tg_category, angle_key))
@@ -218,13 +216,13 @@ def build_inmail_variants(
             # Auto-fix hard limit overruns before building the variant.
             if len(subject) > 60:
                 log.warning("Subject over 60 chars (%d), rewording", len(subject))
-                subject = _shorten_field(client, "subject line", subject, 60)
+                subject = _shorten_field("subject line", subject, 60)
             if len(cta_label) > 20:
                 log.warning("CTA label over 20 chars (%d), rewording", len(cta_label))
-                cta_label = _shorten_field(client, "CTA button label", cta_label, 20)
+                cta_label = _shorten_field("CTA button label", cta_label, 20)
             if len(body) > 1900:
                 log.warning("Body over LinkedIn hard limit (%d chars), trimming", len(body))
-                body = _shorten_field(client, "InMail body", body, 1900)
+                body = _shorten_field("InMail body", body, 1900)
 
             variant = InMailVariant(
                 angle=angle_key,
@@ -345,9 +343,9 @@ BODY: <body text, 100–130 words, plain paragraphs>
 CTA_LABEL: <button label, max 20 chars>"""
 
 
-def _shorten_field(client, field_name: str, value: str, max_chars: int) -> str:
+def _shorten_field(field_name: str, value: str, max_chars: int) -> str:
     """
-    Ask the model to reword a field that exceeds max_chars.
+    Ask Claude to reword a field that exceeds max_chars.
     Returns a shortened version, or the original truncated as a last resort.
     """
     prompt = (
@@ -357,12 +355,10 @@ def _shorten_field(client, field_name: str, value: str, max_chars: int) -> str:
         f"Original: {value}"
     )
     try:
-        resp = client.chat.completions.create(
-            model=config.LITELLM_MODEL,
-            max_tokens=64,
+        shortened = call_claude(
             messages=[{"role": "user", "content": prompt}],
-        )
-        shortened = resp.choices[0].message.content.strip().strip('"')
+            max_tokens=64,
+        ).strip().strip('"')
         if len(shortened) <= max_chars:
             return shortened
         log.warning("Rewrite of %s still over limit (%d > %d), truncating", field_name, len(shortened), max_chars)

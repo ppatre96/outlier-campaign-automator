@@ -39,7 +39,8 @@ from typing import Optional
 
 import requests
 from dotenv import load_dotenv
-from openai import OpenAI
+import anthropic as _anthropic_sdk
+from src.claude_client import call_claude
 
 # Load .env so the module works standalone (CLI) and when imported
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -310,20 +311,21 @@ def _analyze_image_vision(image_path: Path) -> Optional[VisionAnalysis]:
     """Call Claude Vision via LiteLLM proxy to classify the creative image."""
     try:
         img_b64 = base64.b64encode(image_path.read_bytes()).decode()
-        client = OpenAI(base_url=config.LITELLM_BASE_URL, api_key=config.LITELLM_API_KEY)
-        resp = client.chat.completions.create(
-            model=config.LITELLM_MODEL,
+        from src.claude_client import get_client
+        resp = get_client().messages.create(
+            model=config.ANTHROPIC_MODEL,
             messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "image_url",
-                     "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
+                    {"type": "image", "source": {
+                        "type": "base64", "media_type": "image/jpeg", "data": img_b64,
+                    }},
                     {"type": "text", "text": _VISION_PROMPT},
                 ],
             }],
             max_tokens=400,
         )
-        raw = resp.choices[0].message.content.strip()
+        raw = resp.content[0].text.strip()
         # Strip markdown fences if present
         if raw.startswith("```"):
             raw = raw.split("```")[1]
@@ -399,14 +401,11 @@ def _analyze_copy(copy_text: str) -> Optional[CopyAnalysis]:
     if not copy_text or len(copy_text) < 50:
         return None
     try:
-        client = OpenAI(base_url=config.LITELLM_BASE_URL, api_key=config.LITELLM_API_KEY)
         prompt = _COPY_PROMPT.format(copy=copy_text[:1500])
-        resp = client.chat.completions.create(
-            model=config.LITELLM_MODEL,
+        raw = call_claude(
             messages=[{"role": "user", "content": prompt}],
             max_tokens=300,
-        )
-        raw = resp.choices[0].message.content.strip()
+        ).strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):

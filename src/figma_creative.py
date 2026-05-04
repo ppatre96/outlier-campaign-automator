@@ -15,17 +15,8 @@ from pathlib import Path
 
 import anthropic
 import requests
-from openai import OpenAI
-
 import config
-
-
-def _llm_client() -> OpenAI:
-    """Return an OpenAI-compatible client pointed at the LiteLLM proxy."""
-    return OpenAI(
-        base_url=config.LITELLM_BASE_URL,
-        api_key=config.LITELLM_API_KEY,
-    )
+from src.claude_client import call_claude
 
 log = logging.getLogger(__name__)
 
@@ -361,8 +352,6 @@ def build_copy_variants(
     if not signals:
         log.warning("No signals for copy gen — LLM will use generic copy")
 
-    client = _llm_client()
-
     # Retry loop: LLM sometimes overshoots hard limits. Retry with explicit violation list.
     variants: list[dict] = []
     last_violations: list[str] = []
@@ -374,16 +363,15 @@ def build_copy_variants(
                 + "\nREWRITE so every headline is ≤6 words AND ≤40 chars, every subheadline is "
                   "≤7 words AND ≤48 chars. No exceptions."
             )
-            messages = [{"role": "user", "content": prompt + retry_note}]
+            user_content = prompt + retry_note
         else:
-            messages = [{"role": "user", "content": prompt}]
+            user_content = prompt
 
-        resp = client.chat.completions.create(
-            model=config.LITELLM_MODEL,
+        raw = call_claude(
+            messages=[{"role": "user", "content": user_content}],
             max_tokens=2048,
-            messages=messages,
-        )
-        raw = resp.choices[0].message.content.strip()
+            cache_system=True,
+        ).strip()
         try:
             parsed = _extract_json(raw)
             variants = parsed.get("variants", [])
@@ -575,13 +563,10 @@ Return ONLY valid JSON, no markdown fences:
 {return_schema}
 """
         try:
-            client = _llm_client()
-            resp = client.chat.completions.create(
-                model=config.LITELLM_MODEL,
-                max_tokens=600,
+            raw = call_claude(
                 messages=[{"role": "user", "content": prompt}],
-            )
-            raw = resp.choices[0].message.content.strip()
+                max_tokens=600,
+            ).strip()
             parsed = _extract_json(raw) or {}
             if not isinstance(parsed, dict):
                 parsed = {}

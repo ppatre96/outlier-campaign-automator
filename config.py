@@ -52,12 +52,18 @@ LINKEDIN_REFRESH_TOKEN = os.getenv("LINKEDIN_REFRESH_TOKEN", "")
 LINKEDIN_CLIENT_ID     = os.getenv("LINKEDIN_CLIENT_ID", "")
 LINKEDIN_CLIENT_SECRET = os.getenv("LINKEDIN_CLIENT_SECRET", "")
 
-# ── LiteLLM proxy ─────────────────────────────────────────────────────────────
-# Public endpoint (no VPN required) — use with pub-prefixed API key.
-# Internal endpoint (Scale VPN only): https://litellm-proxy.ml-serving-internal.scale.com/v1
+# ── LiteLLM proxy (kept for image-gen fallback via /images/generations) ───────
+# Public endpoint (no VPN required). Internal: litellm-proxy.ml-serving-internal.scale.com/v1
 LITELLM_BASE_URL = os.getenv("LITELLM_BASE_URL", "https://litellm-proxy.ml.scale.com/v1")
 LITELLM_API_KEY  = os.getenv("LITELLM_API_KEY", "")
 LITELLM_MODEL    = os.getenv("LITELLM_MODEL", "anthropic/claude-sonnet-4-6")
+
+# ── Direct Anthropic SDK ───────────────────────────────────────────────────────
+# Used for all Claude copy-gen calls (ICP extraction, copy variants, InMail, rewriter).
+# Falls back to LITELLM_API_KEY so the same key value works for both paths.
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", os.getenv("LITELLM_API_KEY", ""))
+# Model ID in Anthropic format (no "anthropic/" prefix — that's LiteLLM's routing prefix)
+ANTHROPIC_MODEL   = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
 # ── Figma ─────────────────────────────────────────────────────────────────────
 FIGMA_TOKEN = os.getenv("FIGMA_TOKEN", "")

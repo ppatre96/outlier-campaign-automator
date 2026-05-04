@@ -37,15 +37,10 @@ def base_variant():
     }
 
 
-def _mock_llm_returning(rewritten_fields: dict) -> MagicMock:
-    """Build a mock LiteLLM client that returns the given JSON object as the rewrite."""
+def _mock_llm_returning(rewritten_fields: dict):
+    """Return a mock call_claude function that returns the given JSON object as the rewrite."""
     import json as _json
-    client = MagicMock()
-    completion = MagicMock()
-    completion.choices = [MagicMock()]
-    completion.choices[0].message.content = _json.dumps(rewritten_fields)
-    client.chat.completions.create.return_value = completion
-    return client
+    return lambda messages, **kw: _json.dumps(rewritten_fields)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -155,17 +150,10 @@ def test_outlier_scrubbed_from_headline(monkeypatch):
     """Rewriter strips 'Outlier' from headline post-LLM (the wordmark is
     composited in the bottom strip, repeating it triggers duplicate-logo QC)."""
     from src.figma_creative import rewrite_variant_copy
-    # Stub the LLM call to return text with "Outlier" in headline
     import src.figma_creative as fc
-    fake_resp = type("R", (), {"choices": [
-        type("C", (), {"message": type("M", (), {"content":
-            '{"headline": "Cardiologists Earn with Outlier"}'
-        })()})()
-    ]})()
-    fake_client = type("Client", (), {"chat": type("Chat", (), {"completions": type("Co", (), {
-        "create": staticmethod(lambda **kw: fake_resp)
-    })()})()})()
-    monkeypatch.setattr(fc, "_llm_client", lambda: fake_client)
+    import json as _json
+    monkeypatch.setattr(fc, "call_claude",
+        lambda messages, **kw: _json.dumps({"headline": "Cardiologists Earn with Outlier"}))
     variant = {"angle": "B", "headline": "OLD", "subheadline": "x"}
     out = rewrite_variant_copy(variant, ["headline contains banned token 'Outlier': 'Cardiologists Earn with Outlier'"])
     assert "Outlier" not in out["headline"]
@@ -177,15 +165,9 @@ def test_outlier_kept_in_intro_text(monkeypatch):
     """Rewriter does NOT strip 'Outlier' from intro_text (legitimate use)."""
     from src.figma_creative import rewrite_variant_copy
     import src.figma_creative as fc
-    fake_resp = type("R", (), {"choices": [
-        type("C", (), {"message": type("M", (), {"content":
-            '{"intro_text": "Cardiologists across Europe earn with Outlier."}'
-        })()})()
-    ]})()
-    fake_client = type("Client", (), {"chat": type("Chat", (), {"completions": type("Co", (), {
-        "create": staticmethod(lambda **kw: fake_resp)
-    })()})()})()
-    monkeypatch.setattr(fc, "_llm_client", lambda: fake_client)
+    import json as _json
+    monkeypatch.setattr(fc, "call_claude",
+        lambda messages, **kw: _json.dumps({"intro_text": "Cardiologists across Europe earn with Outlier."}))
     variant = {"angle": "B", "intro_text": "OLD"}
     out = rewrite_variant_copy(variant, ["intro_text contains em dash"])
     assert "Outlier" in out["intro_text"]
@@ -221,7 +203,7 @@ def test_rewriter_strips_em_dash_from_intro_text_even_if_llm_returns_it(base_var
     base_variant["intro_text"] = "Reviewing regulatory language all day? AI models need exactly that — someone who spots what's wrong fast."
     violations = ['intro_text contains em dash (banned in contributor copy): "..."']
 
-    with patch.object(F, "_llm_client", return_value=_mock_llm_returning(bad_rewrite)):
+    with patch("src.figma_creative.call_claude", side_effect=_mock_llm_returning(bad_rewrite)):
         result = F.rewrite_variant_copy(base_variant, violations)
 
     assert "—" not in result["intro_text"], \
@@ -238,7 +220,7 @@ def test_rewriter_handles_ad_headline_banned_token(base_variant):
     # LLM "rewrite" honors the request
     good_rewrite = {"ad_headline": "Your legal eye is exactly what AI projects need"}
 
-    with patch.object(F, "_llm_client", return_value=_mock_llm_returning(good_rewrite)):
+    with patch("src.figma_creative.call_claude", side_effect=_mock_llm_returning(good_rewrite)):
         result = F.rewrite_variant_copy(base_variant, violations)
 
     # Even if the LLM had failed to remove 'training', the scrub layer would replace it.
@@ -257,7 +239,7 @@ def test_rewriter_scrubs_all_fields_not_just_violated_one(base_variant):
     # LLM only rewrites intro_text (per the prompt's targeted ask).
     targeted_rewrite = {"intro_text": "Some text."}
 
-    with patch.object(F, "_llm_client", return_value=_mock_llm_returning(targeted_rewrite)):
+    with patch("src.figma_creative.call_claude", side_effect=_mock_llm_returning(targeted_rewrite)):
         result = F.rewrite_variant_copy(base_variant, violations)
 
     # subheadline was NOT in fields_to_rewrite, but the scrub layer must still catch
@@ -277,7 +259,7 @@ def test_rewriter_hard_truncates_when_llm_overshoots(base_variant):
     # LLM rewrites but still overshoots the char limit
     bad_rewrite = {"headline": "AI Needs Your Legal Compliance Eye And Expertise Right Now Please."}  # 67 chars
 
-    with patch.object(F, "_llm_client", return_value=_mock_llm_returning(bad_rewrite)):
+    with patch("src.figma_creative.call_claude", side_effect=_mock_llm_returning(bad_rewrite)):
         result = F.rewrite_variant_copy(base_variant, violations)
 
     # 40-char hard limit must be enforced
@@ -292,11 +274,10 @@ def test_rewriter_falls_back_when_llm_fails(base_variant):
     base_variant["intro_text"] = "Some — text with bonus."
     violations = ['intro_text contains em dash']
 
-    # Mock LLM to raise
-    failing_client = MagicMock()
-    failing_client.chat.completions.create.side_effect = RuntimeError("simulated LiteLLM 5xx")
+    def _raise(**kw):
+        raise RuntimeError("simulated Claude 5xx")
 
-    with patch.object(F, "_llm_client", return_value=failing_client):
+    with patch("src.figma_creative.call_claude", side_effect=_raise):
         result = F.rewrite_variant_copy(base_variant, violations)
 
     # Even without LLM, the scrub layer catches the em dash + banned token
@@ -329,7 +310,7 @@ def test_rewriter_output_passes_validate_copy_lengths(base_variant):
         "ad_headline": "Your legal eye is what AI projects need",
     }
 
-    with patch.object(F, "_llm_client", return_value=_mock_llm_returning(good_rewrite)):
+    with patch("src.figma_creative.call_claude", side_effect=_mock_llm_returning(good_rewrite)):
         result = F.rewrite_variant_copy(base_variant, violations)
 
     # The QC gate must accept the rewritten variant
