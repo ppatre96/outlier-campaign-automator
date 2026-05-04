@@ -278,6 +278,7 @@ def build_copy_variants(
     geos: list[str] | None = None,
     claude_key: str = "",
     description_hint: str = "",
+    hourly_rate: str = "",
 ) -> list[dict]:
     """
     Generate 3 A/B/C copy variants fully derived from cohort signals — no fixed TG categories.
@@ -336,6 +337,14 @@ def build_copy_variants(
             f"Brief:\n{description_hint}\n"
         )
         log.info("Copy gen using Smart Ramp description hint: %r", description_hint[:120])
+    if hourly_rate:
+        prompt += (
+            f"\n\nPAY RATE FOR THIS GEO GROUP: {hourly_rate} — this is the ACTUAL rate for this "
+            f"specific geographic cluster (computed from base rate × country multiplier). Use this "
+            f"exact figure in ad copy where earnings are mentioned. Do NOT use the US baseline of $50/hr "
+            f"for lower-multiplier markets."
+        )
+        log.info("Copy gen using geo-specific hourly rate: %s", hourly_rate)
     if competitor_context:
         prompt += competitor_context
 

@@ -1110,6 +1110,7 @@ def _process_inmail_campaigns(
     data_driven_exclude_pairs: list[tuple[str, str]] | None = None,
     destination_url_override: str | None = None,
     included_geos: list[str] | None = None,
+    base_rate_usd: float = 50.0,
 ) -> None:
     """
     InMail (Message Ad) path — no creative generation.
@@ -1125,36 +1126,51 @@ def _process_inmail_campaigns(
 
     group_name = f"Outlier {flow_id} {location} InMail".strip()
 
+    from src.geo_tiers import group_geos_for_campaigns, GeoCampaignGroup
+
+    raw_geos = included_geos or []
+    geo_groups = group_geos_for_campaigns(raw_geos, base_rate_usd)
+    if not geo_groups:
+        geo_groups = [GeoCampaignGroup(
+            cluster="global_mix", cluster_label="Global", geos=[],
+            median_multiplier=1.0, advertised_rate=f"${int(base_rate_usd)}/hr",
+            campaign_suffix="global",
+        )]
+    log.info("_process_inmail_campaigns: %d geo group(s)", len(geo_groups))
+
     if dry_run:
         for i, cohort in enumerate(selected):
             angle_label = ["A", "B", "C"][i % 3]
             tg_cat = classify_tg(cohort.name, cohort.rules)
-            log.info("[dry-run] InMail cohort %d '%s' tg=%s angle=%s", i, cohort.name, tg_cat, angle_label)
-            variants = build_inmail_variants(tg_cat, cohort, claude_key)
-            v = variants[i % 3]
-            log.info("[dry-run] Subject: %s", v.subject)
-            log.info("[dry-run] Body (first 100): %s…", v.body[:100])
-            log.info("[dry-run] CTA: %s", v.cta_label)
+            for geo_group in geo_groups:
+                log.info("[dry-run] InMail cohort %d '%s' tg=%s angle=%s geo=%s rate=%s",
+                         i, cohort.name, tg_cat, angle_label,
+                         geo_group.cluster_label, geo_group.advertised_rate)
+                variants = build_inmail_variants(
+                    tg_cat, cohort, claude_key,
+                    hourly_rate=geo_group.advertised_rate,
+                )
+                v = variants[i % 3]
+                log.info("[dry-run] Subject: %s", v.subject)
+                log.info("[dry-run] Body:\n%s", v.body)
+                log.info("[dry-run] CTA: %s", v.cta_label)
 
-            # Validate InMail copy against brand voice
-            full_copy = f"{v.subject}\n\n{v.body}"
-            report = brand_voice_validator.validate_copy(full_copy)
-
-            if not report.is_compliant:
-                log.warning(f"InMail angle {angle_label}: {len(report.violations)} brand voice violations")
-                log.warning(f"  Must fix: {len(report.must_violations)}")
-                log.warning(f"  Should fix: {len(report.should_violations)}")
-
-                if report.must_violations:
-                    log.error(f"InMail angle {angle_label} has MUST-FIX violations")
-                    for v_item in report.must_violations[:3]:  # Show first 3
-                        log.error(f"    {v_item.rule_name}: {v_item.found_text!r} → {v_item.suggestion}")
+                full_copy = f"{v.subject}\n\n{v.body}"
+                report = brand_voice_validator.validate_copy(full_copy)
+                if not report.is_compliant:
+                    log.warning(f"InMail angle {angle_label}: {len(report.violations)} brand voice violations")
+                    log.warning(f"  Must fix: {len(report.must_violations)}")
+                    log.warning(f"  Should fix: {len(report.should_violations)}")
+                    if report.must_violations:
+                        log.error(f"InMail angle {angle_label} has MUST-FIX violations")
+                        for v_item in report.must_violations[:3]:
+                            log.error(f"    {v_item.rule_name}: {v_item.found_text!r} → {v_item.suggestion}")
+                    else:
+                        log.warning(f"InMail angle {angle_label} has SHOULD-FIX violations (allowed):")
+                        for v_item in report.should_violations[:2]:
+                            log.warning(f"    {v_item.rule_name}: {v_item.found_text!r}")
                 else:
-                    log.warning(f"InMail angle {angle_label} has SHOULD-FIX violations (allowed):")
-                    for v_item in report.should_violations[:2]:  # Show first 2
-                        log.warning(f"    {v_item.rule_name}: {v_item.found_text!r}")
-            else:
-                log.info(f"InMail angle {angle_label} passes brand voice check (confidence: {report.confidence_score:.0%})")
+                    log.info(f"InMail angle {angle_label} passes brand voice check (confidence: {report.confidence_score:.0%})")
         return
 
     group_urn = li_client.create_campaign_group(group_name)
@@ -1168,79 +1184,83 @@ def _process_inmail_campaigns(
     )
 
     for i, cohort in enumerate(selected):
-        angle_idx   = i % 3
-        angle_label = ["A", "B", "C"][angle_idx]
-        tg_cat      = classify_tg(cohort.name, cohort.rules)
+        for geo_group in geo_groups:
+            angle_idx   = i % 3
+            angle_label = ["A", "B", "C"][angle_idx]
+            tg_cat      = classify_tg(cohort.name, cohort.rules)
+            group_geos  = geo_group.geos or raw_geos
 
-        # Generate InMail copy for this cohort
-        variants = build_inmail_variants(tg_cat, cohort, claude_key)
-        variant  = variants[angle_idx]
+            # Generate InMail copy with geo-specific rate
+            variants = build_inmail_variants(
+                tg_cat, cohort, claude_key,
+                hourly_rate=geo_group.advertised_rate,
+            )
+            variant  = variants[angle_idx]
 
-        # Validate InMail copy against brand voice
-        full_copy = f"{variant.subject}\n\n{variant.body}"
-        report = brand_voice_validator.validate_copy(full_copy)
+            # Validate InMail copy against brand voice
+            full_copy = f"{variant.subject}\n\n{variant.body}"
+            report = brand_voice_validator.validate_copy(full_copy)
 
-        if not report.is_compliant:
-            log.warning(f"InMail angle {angle_label}: {len(report.violations)} brand voice violations")
-            log.warning(f"  Must fix: {len(report.must_violations)}")
-            log.warning(f"  Should fix: {len(report.should_violations)}")
+            if not report.is_compliant:
+                log.warning(f"InMail angle {angle_label}: {len(report.violations)} brand voice violations")
+                log.warning(f"  Must fix: {len(report.must_violations)}")
+                log.warning(f"  Should fix: {len(report.should_violations)}")
 
-            if report.must_violations:
-                log.error(f"InMail angle {angle_label} has MUST-FIX violations — blocking submission")
-                for v_item in report.must_violations[:3]:
-                    log.error(f"    {v_item.rule_name}: {v_item.found_text!r} → {v_item.suggestion}")
-                raise RuntimeError(f"Brand voice violation in InMail angle {angle_label}: {report.must_violations[0].rule_name}")
+                if report.must_violations:
+                    log.error(f"InMail angle {angle_label} has MUST-FIX violations — blocking submission")
+                    for v_item in report.must_violations[:3]:
+                        log.error(f"    {v_item.rule_name}: {v_item.found_text!r} → {v_item.suggestion}")
+                    raise RuntimeError(f"Brand voice violation in InMail angle {angle_label}: {report.must_violations[0].rule_name}")
+                else:
+                    log.warning(f"InMail angle {angle_label} has SHOULD-FIX violations (allowed):")
+                    for v_item in report.should_violations[:2]:
+                        log.warning(f"    {v_item.rule_name}: {v_item.found_text!r}")
             else:
-                log.warning(f"InMail angle {angle_label} has SHOULD-FIX violations (allowed):")
-                for v_item in report.should_violations[:2]:
-                    log.warning(f"    {v_item.rule_name}: {v_item.found_text!r}")
-        else:
-            log.info(f"InMail angle {angle_label} passes brand voice check (confidence: {report.confidence_score:.0%})")
+                log.info(f"InMail angle {angle_label} passes brand voice check (confidence: {report.confidence_score:.0%})")
 
-        facet_urns   = urn_res.resolve_cohort_rules(cohort.rules)
-        # Apply Smart Ramp geo overrides if present
-        if included_geos:
-            facet_urns = _apply_geo_overrides(facet_urns, included_geos, urn_res)
-        # Per-cohort override layer
-        cohort_add_urns    = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_add", []) or [])
-        cohort_remove_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_remove", []) or [])
-        cohort_exclude_urns = _subtract_urn_dicts(
-            _merge_urn_dicts(shared_exclude_urns, cohort_add_urns),
-            cohort_remove_urns,
-        )
-        campaign_urn = li_client.create_inmail_campaign(
-            name=cohort._stg_name,
-            campaign_group_urn=group_urn,
-            facet_urns=facet_urns,
-            exclude_facet_urns=cohort_exclude_urns,
-        )
-        campaign_id = campaign_urn.rsplit(":", 1)[-1]
-        sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
-        log.info("Created InMail campaign %s angle=%s", campaign_urn, angle_label)
+            # Per-cohort override layer
+            cohort_add_urns    = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_add", []) or [])
+            cohort_remove_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_remove", []) or [])
+            cohort_exclude_urns = _subtract_urn_dicts(
+                _merge_urn_dicts(shared_exclude_urns, cohort_add_urns),
+                cohort_remove_urns,
+            )
 
-        creative_urn = li_client.create_inmail_ad(
-            campaign_urn=campaign_urn,
-            sender_urn=inmail_sender,
-            subject=variant.subject,
-            body=variant.body,
-            cta_label=variant.cta_label,
-            destination_url=destination_url_override,
-        )
-        sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
+            geo_suffix = f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
+            campaign_name = f"{cohort._stg_name}{geo_suffix}"
 
-        # Store validation report metadata
-        validation_metadata = {
-            "is_compliant": report.is_compliant,
-            "must_violations": len(report.must_violations),
-            "should_violations": len(report.should_violations),
-            "confidence_score": report.confidence_score,
-        }
-        log.info(f"Creative validation: {json.dumps(validation_metadata)}")
+            campaign_urn = li_client.create_inmail_campaign(
+                name=campaign_name,
+                campaign_group_urn=group_urn,
+                facet_urns=facet_urns,
+                exclude_facet_urns=cohort_exclude_urns,
+            )
+            campaign_id = campaign_urn.rsplit(":", 1)[-1]
+            sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
+            log.info("Created InMail campaign %s angle=%s geo=%s rate=%s",
+                     campaign_urn, angle_label, geo_group.cluster_label, geo_group.advertised_rate)
 
-        log.info(
-            "InMail creative %s — cohort '%s' angle %s subject: %s",
-            creative_urn, cohort.name, angle_label, variant.subject,
-        )
+            creative_urn = li_client.create_inmail_ad(
+                campaign_urn=campaign_urn,
+                sender_urn=inmail_sender,
+                subject=variant.subject,
+                body=variant.body,
+                cta_label=variant.cta_label,
+                destination_url=destination_url_override,
+            )
+            sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
+
+            validation_metadata = {
+                "is_compliant": report.is_compliant,
+                "must_violations": len(report.must_violations),
+                "should_violations": len(report.should_violations),
+                "confidence_score": report.confidence_score,
+            }
+            log.info(f"Creative validation: {json.dumps(validation_metadata)}")
+            log.info(
+                "InMail creative %s — cohort '%s' angle %s geo=%s subject: %s",
+                creative_urn, cohort.name, angle_label, geo_group.cluster_label, variant.subject,
+            )
 
 
 def _retry_li_campaign(
@@ -1319,7 +1339,7 @@ def _retry_li_campaign(
         if dry_run:
             log.info("[dry-run] Would create InMail campaign for '%s'", cohort.name)
             log.info("[dry-run] Subject: %s", variant.subject)
-            log.info("[dry-run] Body (first 100): %s…", variant.body[:100])
+            log.info("[dry-run] Body:\n%s", variant.body)
             return
 
         group_name  = f"Outlier {flow_id} {location} InMail".strip()
@@ -2019,6 +2039,7 @@ def _process_static_campaigns(
     ramp_id: str | None = None,
     cohort_id_override: str | None = None,
     cohort_description: str = "",
+    base_rate_usd: float = 50.0,
 ) -> dict:
     """Static-ad arm — symmetric counterpart to _process_inmail_campaigns.
 
@@ -2036,9 +2057,37 @@ def _process_static_campaigns(
         "creative_paths": {cohort_id: <urn or local path>, ...},
       }
     """
+    from src.geo_tiers import group_geos_for_campaigns, filter_blocked_geos
+
     family_exclude_pairs = family_exclude_pairs or []
     data_driven_exclude_pairs = data_driven_exclude_pairs or []
-    included_geos = included_geos or []
+    raw_geos = included_geos or []
+
+    # ── Per-geo group splitting (2026-05-04) ──────────────────────────────────
+    # Split included_geos into ethnic creative clusters, each getting its own
+    # LinkedIn campaign with geo-appropriate photo_subject + computed rate.
+    # G4 blocked countries are strictly skipped here.
+    geo_groups = group_geos_for_campaigns(raw_geos, base_rate_usd)
+    if not geo_groups and raw_geos:
+        # All geos were G4 — fall back to single group with empty geos (global)
+        log.warning("_process_static_campaigns: all included_geos are G4 blocked — creating global campaign")
+        from src.geo_tiers import GeoCampaignGroup
+        geo_groups = [GeoCampaignGroup(
+            cluster="global_mix", cluster_label="Global", geos=[],
+            median_multiplier=1.0, advertised_rate=f"${int(base_rate_usd)}/hr",
+            campaign_suffix="global",
+        )]
+    if not geo_groups:
+        # No geos at all — single global campaign, existing behavior
+        from src.geo_tiers import GeoCampaignGroup
+        geo_groups = [GeoCampaignGroup(
+            cluster="global_mix", cluster_label="Global", geos=[],
+            median_multiplier=1.0, advertised_rate=f"${int(base_rate_usd)}/hr",
+            campaign_suffix="global",
+        )]
+
+    log.info("_process_static_campaigns: %d geo group(s) → %d campaigns per cohort",
+             len(geo_groups), len(geo_groups))
 
     out_campaigns: list[str] = []
     by_cohort: dict[str, str] = {}
@@ -2047,93 +2096,99 @@ def _process_static_campaigns(
     if not selected:
         return {"campaigns": [], "campaigns_by_cohort": {}, "creative_paths": {}}
 
-    # Generate creatives per cohort (mirrors _process_row lines 540-619)
+    # Generate creatives per cohort × geo group
     has_figma = bool(figma_file and figma_node and claude_key)
     figma_client = FigmaCreativeClient() if has_figma else None
-    creative_pngs: list[Path | None] = []
-    all_variants_per_cohort: list[list[dict]] = []
+    # Flat list of (cohort, geo_group, variants, png) specs — one entry per LinkedIn campaign
+    campaign_specs: list[dict] = []
 
     for i, cohort in enumerate(selected):
-        angle_idx = i % 3
-        angle_label = ["A", "B", "C"][angle_idx]
-        variants: list[dict] = []
-        png_path: Path | None = None
+        # Outer loop: cohort. Inner loop: geo group.
+        # For each (cohort, geo_group) pair: one LinkedIn campaign.
+        for geo_group in geo_groups:
+            angle_idx = i % 3
+            angle_label = ["A", "B", "C"][angle_idx]
+            variants: list[dict] = []
+            png_path: Path | None = None
 
-        try:
-            layer_map = (
-                figma_client.get_text_layer_map(figma_file, figma_node)
-                if has_figma else {}
+            geo_label = geo_group.cluster_label
+            group_geos = geo_group.geos or raw_geos  # fallback to raw if no split
+
+            log.info(
+                "_process_static_campaigns: cohort '%s' × geo_group '%s' (%s) rate=%s",
+                cohort.name, geo_label, group_geos, geo_group.advertised_rate,
             )
-            # Phase 2.6: thread Smart Ramp included_geos into copy gen so the LLM
-            # picks photo_subject ethnicities plausible for the targeted geo.
-            # See _GEO_ETHNICITY_HINTS in src/figma_creative.py for the lookup.
-            # cohort_description (Smart Ramp form's audience brief, 2026-04-29 fix)
-            # is a free-form hint (e.g. "we want cardiologists") — without it the
-            # LLM only sees the cohort signature and invents a generic specialty.
-            variants = build_copy_variants(
-                cohort, layer_map,
-                geos=included_geos,
-                description_hint=cohort_description,
-            )
-        except Exception as exc:
-            log.warning("Static copy generation failed for '%s': %s", cohort.name, exc)
 
-        all_variants_per_cohort.append(variants)
-        selected_variant = variants[angle_idx] if angle_idx < len(variants) else {}
-
-        # Honor WITH_IMAGES=1 to run image gen even in dry-run mode (LinkedIn calls
-        # still skipped at the lower gate). Default dry-run skips Gemini for cost.
-        skip_image_gen = dry_run and not os.environ.get("WITH_IMAGES")
-        if skip_image_gen:
-            creative_pngs.append(None)
-            continue
-
-        # Figma clone path
-        if has_figma and variants:
             try:
-                tg_label = variants[0].get("tg_label", cohort.name) if variants else cohort.name
-                clone_ids = apply_plugin_logic(figma_file, figma_node, variants, tg_label, claude_key)
-                if clone_ids:
-                    selected_id = clone_ids[angle_idx % len(clone_ids)]
-                    pngs = figma_client.export_clone_pngs(figma_file, [selected_id])
-                    png_path = pngs[0] if pngs else None
-            except Exception as exc:
-                log.warning("Static Figma path failed for '%s': %s — falling back to Gemini", cohort.name, exc)
-
-        # Gemini path
-        if png_path is None and selected_variant:
-            try:
-                from src.figma_creative import rewrite_variant_copy
-                # max_retries from function default (env-var QC_MAX_RETRIES,
-                # default 9 = 10 attempts) — see comment in _process_row above.
-                png_path, qc_report = generate_imagen_creative_with_qc(
-                    variant=selected_variant,
-                    copy_rewriter=rewrite_variant_copy,
+                layer_map = (
+                    figma_client.get_text_layer_map(figma_file, figma_node)
+                    if has_figma else {}
                 )
-                # Hard-reject on QC FAIL — Phase 2.6 path was silently shipping bad
-                # creatives until 2026-04-28. The campaign is still created, just with
-                # no image attached. Diego sees the empty draft + the loud Slack alert
-                # and can intervene manually.
-                if qc_report and qc_report.get("verdict") == "FAIL":
-                    log.error(
-                        "Static QC FAIL for '%s' after %d attempts; REJECTING creative. "
-                        "Campaign will be created without an image. Violations: %s",
-                        cohort.name,
-                        qc_report.get("attempts", 1),
-                        qc_report.get("violations", []),
-                    )
-                    png_path = None
+                variants = build_copy_variants(
+                    cohort, layer_map,
+                    geos=group_geos,
+                    description_hint=cohort_description,
+                    hourly_rate=geo_group.advertised_rate,
+                )
             except Exception as exc:
-                log.warning("Static Gemini path failed for '%s': %s", cohort.name, exc)
-                png_path = None
+                log.warning("Static copy generation failed for '%s' / '%s': %s",
+                            cohort.name, geo_label, exc)
 
-        creative_pngs.append(png_path)
+            selected_variant = variants[angle_idx] if angle_idx < len(variants) else {}
+
+            # Image gen for this (cohort, geo_group) pair
+            png_path: Path | None = None
+            skip_image_gen = dry_run and not os.environ.get("WITH_IMAGES")
+            if not skip_image_gen:
+                if has_figma and variants:
+                    try:
+                        tg_label = variants[0].get("tg_label", cohort.name) if variants else cohort.name
+                        clone_ids = apply_plugin_logic(figma_file, figma_node, variants, tg_label, claude_key)
+                        if clone_ids:
+                            selected_id = clone_ids[angle_idx % len(clone_ids)]
+                            pngs = figma_client.export_clone_pngs(figma_file, [selected_id])
+                            png_path = pngs[0] if pngs else None
+                    except Exception as exc:
+                        log.warning("Static Figma path failed for '%s': %s — falling back to Gemini",
+                                    cohort.name, exc)
+
+                if png_path is None and selected_variant:
+                    try:
+                        from src.figma_creative import rewrite_variant_copy
+                        png_path, qc_report = generate_imagen_creative_with_qc(
+                            variant=selected_variant,
+                            copy_rewriter=rewrite_variant_copy,
+                        )
+                        if qc_report and qc_report.get("verdict") == "FAIL":
+                            log.error(
+                                "Static QC FAIL for '%s' / '%s' after %d attempts; REJECTING creative. "
+                                "Violations: %s",
+                                cohort.name, geo_label,
+                                qc_report.get("attempts", 1),
+                                qc_report.get("violations", []),
+                            )
+                            png_path = None
+                    except Exception as exc:
+                        log.warning("Static Gemini path failed for '%s' / '%s': %s",
+                                    cohort.name, geo_label, exc)
+                        png_path = None
+
+            # Accumulate spec for LinkedIn creation
+            campaign_specs.append({
+                "cohort": cohort,
+                "geo_group": geo_group,
+                "group_geos": group_geos,
+                "angle_idx": angle_idx,
+                "variants": variants,
+                "png_path": png_path,
+            })
 
     if dry_run:
-        log.info("[dry-run] _process_static_campaigns: skipping LinkedIn calls (%d cohorts)", len(selected))
+        log.info("[dry-run] _process_static_campaigns: skipping LinkedIn calls (%d cohorts × %d geo groups)",
+                 len(selected), len(geo_groups))
         return {"campaigns": [], "campaigns_by_cohort": {}, "creative_paths": {}}
 
-    # Create campaign group + campaigns
+    # Create campaign group + campaigns — one per (cohort × geo_group) spec
     group_name = f"Outlier {flow_id} {location} Static".strip()
     group_urn = li_client.create_campaign_group(group_name)
     out_groups = [group_urn]
@@ -2146,13 +2201,23 @@ def _process_static_campaigns(
         default_exclude_urns, family_exclude_urns, data_driven_exclude_urns,
     )
 
-    for i, cohort in enumerate(selected):
-        # Per-cohort isolation: wrap each cohort's body in try/except so one
-        # cohort's failure NEVER aborts the others (SR-04 contract).
+    for spec in campaign_specs:
+        cohort = spec["cohort"]
+        geo_group = spec["geo_group"]
+        group_geos = spec["group_geos"]
+        angle_idx = spec["angle_idx"]
+        variants = spec["variants"]
+        png_path = spec["png_path"]
+        # Per-(cohort × geo_group) isolation: wrap in try/except so one failure
+        # NEVER aborts the others (SR-04 contract).
         try:
             facet_urns = urn_res.resolve_cohort_rules(cohort.rules)
-            if included_geos:
-                facet_urns = _apply_geo_overrides(facet_urns, included_geos, urn_res)
+            if group_geos:
+                facet_urns = _apply_geo_overrides(facet_urns, group_geos, urn_res)
+
+            # Campaign name encodes the geo cluster for human reviewers
+            geo_suffix = f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
+            campaign_name = f"{cohort._stg_name}{geo_suffix}"
 
             cohort_add_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_add", []) or [])
             cohort_remove_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_remove", []) or [])
@@ -2162,7 +2227,7 @@ def _process_static_campaigns(
             )
 
             campaign_urn = li_client.create_campaign(
-                name=cohort._stg_name,
+                name=campaign_name,
                 campaign_group_urn=group_urn,
                 facet_urns=facet_urns,
                 exclude_facet_urns=cohort_exclude_urns,
@@ -2170,19 +2235,20 @@ def _process_static_campaigns(
             campaign_id = campaign_urn.rsplit(":", 1)[-1]
             sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
             out_campaigns.append(campaign_urn)
-            by_cohort_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
+            # Key includes geo cluster so per-geo campaigns don't collide in by_cohort
+            base_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
+            by_cohort_id = f"{base_id}_{geo_group.campaign_suffix}" if geo_group.cluster != "global_mix" else base_id
             by_cohort[by_cohort_id] = campaign_urn
-            log.info("_process_static_campaigns: campaign %s for cohort %s", campaign_urn, by_cohort_id)
+            log.info("_process_static_campaigns: campaign %s for cohort %s geo=%s",
+                     campaign_urn, base_id, geo_group.cluster_label)
 
             # Image attach — sentinel-aware (SR-04).
-            png_path = creative_pngs[i] if i < len(creative_pngs) else None
             if not (png_path and Path(str(png_path)).exists()):
-                log.info("_process_static_campaigns: no PNG for cohort '%s' — skipping creative attach", cohort.name)
+                log.info("_process_static_campaigns: no PNG for cohort '%s' / '%s' — skipping creative attach",
+                         cohort.name, geo_group.cluster_label)
                 continue
 
-            angle_idx = i % 3
             angle_label = ["A", "B", "C"][angle_idx]
-            variants = all_variants_per_cohort[i] if i < len(all_variants_per_cohort) else []
             variant = variants[angle_idx] if angle_idx < len(variants) else {}
             headline = variant.get("headline") or f"Your {_cohort_headline(cohort)} expertise is in demand."
             subhead = variant.get("subheadline") or "Earn payment doing remote AI tasks on your schedule."
@@ -2219,7 +2285,7 @@ def _process_static_campaigns(
                     cohort_id=by_cohort_id,
                     mode="static",
                     angle=angle_label,
-                    campaign_name=cohort._stg_name,
+                    campaign_name=campaign_name,
                 )
                 creative_paths[by_cohort_id] = local_path
                 log.warning(
