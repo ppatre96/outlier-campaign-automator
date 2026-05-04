@@ -1149,6 +1149,7 @@ def _process_inmail_campaigns(
                 variants = build_inmail_variants(
                     tg_cat, cohort, claude_key,
                     hourly_rate=geo_group.advertised_rate,
+                    geo_icp_hint=geo_group.icp_hint,
                 )
                 v = variants[i % 3]
                 log.info("[dry-run] Subject: %s", v.subject)
@@ -1190,10 +1191,11 @@ def _process_inmail_campaigns(
             tg_cat      = classify_tg(cohort.name, cohort.rules)
             group_geos  = geo_group.geos or raw_geos
 
-            # Generate InMail copy with geo-specific rate
+            # Generate InMail copy with geo-specific rate + ICP context
             variants = build_inmail_variants(
                 tg_cat, cohort, claude_key,
                 hourly_rate=geo_group.advertised_rate,
+                geo_icp_hint=geo_group.icp_hint,
             )
             variant  = variants[angle_idx]
 
@@ -2129,6 +2131,7 @@ def _process_static_campaigns(
                     geos=group_geos,
                     description_hint=cohort_description,
                     hourly_rate=geo_group.advertised_rate,
+                    geo_icp_hint=geo_group.icp_hint,
                 )
             except Exception as exc:
                 log.warning("Static copy generation failed for '%s' / '%s': %s",

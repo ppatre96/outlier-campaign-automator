@@ -167,6 +167,7 @@ def build_inmail_variants(
     angle_keys: list[str] | None = None,
     extra_angles: dict | None = None,
     hourly_rate: str = "$50",
+    geo_icp_hint: str = "",
 ) -> list[InMailVariant]:
     """
     Generate InMail variants for the given TG/cohort.
@@ -201,6 +202,8 @@ def build_inmail_variants(
             log.warning("Unknown angle key '%s', skipping", angle_key)
             continue
         prompt = _build_prompt(cohort_summary, tg_category, angle_key, angle_cfg, hourly_rate=hourly_rate)
+        if geo_icp_hint:
+            prompt += geo_icp_hint
         try:
             response = client.chat.completions.create(
                 model=config.LITELLM_MODEL,

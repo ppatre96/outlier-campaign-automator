@@ -279,6 +279,7 @@ def build_copy_variants(
     claude_key: str = "",
     description_hint: str = "",
     hourly_rate: str = "",
+    geo_icp_hint: str = "",
 ) -> list[dict]:
     """
     Generate 3 A/B/C copy variants fully derived from cohort signals — no fixed TG categories.
@@ -345,6 +346,9 @@ def build_copy_variants(
             f"for lower-multiplier markets."
         )
         log.info("Copy gen using geo-specific hourly rate: %s", hourly_rate)
+    if geo_icp_hint:
+        prompt += geo_icp_hint
+        log.info("Copy gen injecting geo ICP hint (%d chars)", len(geo_icp_hint))
     if competitor_context:
         prompt += competitor_context
 

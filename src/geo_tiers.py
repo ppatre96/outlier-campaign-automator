@@ -189,15 +189,300 @@ CLUSTER_LABELS: dict[str, str] = {
 }
 
 
+# ── Per-cluster ICP profiles ──────────────────────────────────────────────────
+# These inform BOTH the copy LLM (via geo_icp_prompt_hint) and the Gemini image
+# prompt (via photo_setting_hint). Every field is optional context — the LLMs
+# should weave the relevant signals in naturally, not recite them verbatim.
+#
+# Structure per cluster:
+#   primary_hook:       The #1 psychological lever in this market (for subject line + opener)
+#   credential_signals: Prestige markers that resonate here (weave into "people like you" references)
+#   copy_notes:         LLM instructions specific to this market
+#   photo_setting_hint: Additional context for the Gemini photo_subject / setting description
+#   avoid:             Things that actively hurt CTR or feel culturally off in this market
+#
+# Source: historical InMail CTR analysis, Outlier market observations, and
+# Pranav's 2026-05-04 guidance on geo ICP customisation.
+
+GEO_ICP_PROFILES: dict[str, dict[str, str]] = {
+    "anglo": {
+        "primary_hook": "Flexible income — remote work on your own terms, no commute, no boss",
+        "credential_signals": "top university degrees (Ivy League, Russell Group, sandstone AU/CA), FAANG/Goldman/McKinsey experience",
+        "copy_notes": (
+            "American English (for US/CA). British English spelling for GB audiences (colour, recognise). "
+            "Flexibility framing works well ('no fixed hours', 'around your existing work'). "
+            "Income is important but frame it as the reward for expertise, not desperation. "
+            "Use concrete dollar figures — '$50/hr' not 'competitive pay'. "
+            "Tech professionals respond to 'improve AI models'; academics respond to 'your research makes AI more accurate'."
+        ),
+        "photo_setting_hint": (
+            "Modern minimalist home office, clean shelving, MacBook, large window with natural light. "
+            "For US: contemporary American interior. For UK: slightly more formal British home study. "
+            "For AU: bright, airy, coastal-influenced natural light."
+        ),
+        "avoid": "Phrases that imply financial desperation. 'Side hustle' language. Overuse of 'amazing opportunity'.",
+    },
+
+    "northern_european": {
+        "primary_hook": "Work-life balance and intellectual contribution — fit around your life, not the other way around",
+        "credential_signals": "TU Munich, ETH Zürich, TU Delft, Grandes Écoles (France), top Dutch/Scandinavian research universities",
+        "copy_notes": (
+            "Germans and Dutch value precision and substance over hype. Be factual and specific. "
+            "NO superlatives ('amazing', 'incredible', 'best'). "
+            "French professionals respond to intellectual framing — 'contribute to frontier AI research'. "
+            "Swiss are highly income-aware (strong CHF) — frame USD/EUR-comparable rates. "
+            "Work-life balance ('Arbeitszeit' / no fixed shifts) is a primary motivator in DE/NL/FR. "
+            "Avoid American-style hustle culture framing entirely."
+        ),
+        "photo_setting_hint": (
+            "Clean, understated European home office. Scandinavian-style minimal furniture, "
+            "warm indirect lighting. Bookshelf with technical books. Subject dressed professionally but not formally — "
+            "relaxed, intellectual, comfortable."
+        ),
+        "avoid": "Exclamation points in copy. 'Amazing opportunity'. 'Don't miss this'. Any urgency-scarcity tactics.",
+    },
+
+    "southern_european": {
+        "primary_hook": "Supplement your income flexibly — strong professionals here often face income ceiling despite expertise",
+        "credential_signals": "Bocconi, Sapienza, Complutense, top Spanish/Italian/Portuguese research universities",
+        "copy_notes": (
+            "Spain, Italy, Portugal professionals are highly educated but often underpaid vs Northern Europe. "
+            "Income supplementation framing ('earn more') works well alongside flexibility. "
+            "Professional identity and expertise pride matter — acknowledge their specialisation. "
+            "Remote income in USD/EUR feels like accessing global pay despite local salary compression."
+        ),
+        "photo_setting_hint": (
+            "Mediterranean home office — warm tones, natural terracotta and wood, afternoon light. "
+            "Subject relaxed but focused, home setting feels lived-in and professional."
+        ),
+        "avoid": "Implying their local work isn't valuable. Pure income-desperation framing.",
+    },
+
+    "eastern_european": {
+        "primary_hook": "USD/EUR income at Western rates — your expertise is valued globally even from Kraków, Warsaw, Bucharest",
+        "credential_signals": "Warsaw University of Technology, Czech Technical University, Jagiellonian University, AGH, top Romanian/Bulgarian tech universities",
+        "copy_notes": (
+            "Strong USD framing — earning in USD from Eastern Europe is a major life upgrade. "
+            "Tech talent density is high (Poland, Czechia, Romania have strong CS cultures). "
+            "Remote work has boomed here post-2020 — frame as 'global remote market you can access'. "
+            "Keep tone professional and direct — Eastern European audiences are skeptical of hype. "
+            "Ukraine audience: may be displaced — acknowledge remote-first explicitly ('work from anywhere')."
+        ),
+        "photo_setting_hint": (
+            "Home office, slightly more modest than Western European — bookshelves, warm lamp light. "
+            "Subject focused, determined. Setting feels Eastern European urban apartment: functional, tidy."
+        ),
+        "avoid": "Any stereotyping of Eastern Europe as lower-tier. Condescending 'you can earn like the West' framing.",
+    },
+
+    "south_asian": {
+        "primary_hook": "USD income from India/South Asia at rates that match or exceed top domestic roles — no relocation needed",
+        "credential_signals": (
+            "IIT, IIM, AIIMS, NIT, BITS Pilani, IISC — these are the prestige signals. "
+            "Also: Google/Microsoft/Goldman India offices, top product companies (Razorpay, CRED, Zerodha)."
+        ),
+        "copy_notes": (
+            "USD payment is the single most powerful hook — $27-30/hr = ₹2,200-2,500/hr, well above most Indian salaries. "
+            "Make the USD figure prominent and explicit. Do NOT convert to INR in copy — keep it in USD. "
+            "Credential acknowledgment works: 'your IIT background', 'your clinical expertise from AIIMS'. "
+            "Remote work from Bangalore, Mumbai, Hyderabad, Chennai, Pune, Delhi is the mental model. "
+            "Flexibility framing: 'outside your existing consulting/hospital hours' — Indian professionals often have side income expectations. "
+            "For medical/clinical ICPs: 'consulting-level income without leaving your city'. "
+            "Photo subject: South Asian person in a modern home office, could be Bangalore-style apartment."
+        ),
+        "photo_setting_hint": (
+            "Modern South Asian home office — warm, plant-rich, natural light from a window. "
+            "Contemporary furniture, laptop setup. Could suggest a Bangalore or Mumbai professional apartment. "
+            "Subject: South Asian (Indian, Pakistani, or Bangladeshi — vary by cohort) professional, "
+            "mid-20s to 40s, focused and accomplished-looking."
+        ),
+        "avoid": "Framing that implies financial desperation. Western condescension. Implying this is a backup option.",
+    },
+
+    "southeast_asian": {
+        "primary_hook": "Remote USD income — earn at Silicon Valley rates from Singapore, Manila, Jakarta, or anywhere in SEA",
+        "credential_signals": (
+            "NUS, NTU (Singapore), UP Diliman, Ateneo (Philippines), UI, ITB (Indonesia), "
+            "Mahidol, Chulalongkorn (Thailand). Global tech company offices (Google SG, Meta SG, Grab, Sea Group)."
+        ),
+        "copy_notes": (
+            "Singapore: high cost of living, USD parity — rate feels competitive vs local wages. Intellectual and financial framing both work. "
+            "Philippines: USD income is the #1 hook — $25-35/hr vs typical BPO rates of $5-8/hr is transformative. "
+            "Explicitly mention English proficiency as the bridge: 'your English and [domain] expertise'. "
+            "Indonesia: remote USD income vs Rupiah is a massive multiplier — financial framing very strong. "
+            "Vietnam, Thailand: tech talent is growing fast — frame as 'global opportunity for local expertise'. "
+            "Photo subject for Philippines: Filipino professional in home/apartment office, warm casual setting. "
+            "Photo subject for SG: polished multinational professional aesthetic."
+        ),
+        "photo_setting_hint": (
+            "For Singapore: clean, modern, high-rise apartment office feel — polished professional. "
+            "For Philippines/Indonesia/Vietnam: warm home office, tropical light quality, relaxed professional. "
+            "Subject reflects local ethnicity — Malay/Filipino/Indonesian/Vietnamese as appropriate."
+        ),
+        "avoid": "Assuming all SEA markets are the same — Singapore and Philippines have very different positioning needs.",
+    },
+
+    "east_asian": {
+        "primary_hook": "Contribute to frontier AI research — prestigious, intellectually rigorous work from Japan, Korea, or Taiwan",
+        "credential_signals": "University of Tokyo, Kyoto University, Seoul National University, KAIST, POSTECH, NTU Taiwan, top research institutions",
+        "copy_notes": (
+            "Japan: prestige and intellectual rigor matter more than income alone. "
+            "'Contribute to world-class AI development' framing works. Be precise and understated. "
+            "Remote work is still less culturally normalised in Japan — frame as 'outside your main work hours' not 'replace your job'. "
+            "Korea: tech culture is very strong (Samsung, Kakao, Naver ecosystem). USD income is appealing. "
+            "Ambition and career growth framing works for Korean audience. "
+            "Taiwan: semiconductor/hardware expertise — mention 'technical depth' and 'engineering excellence'. "
+            "All East Asian markets: formal but not stuffy. High credibility threshold — mention $500M paid to contributors."
+        ),
+        "photo_setting_hint": (
+            "Minimalist, precise home office setup. Clean lines, nothing extraneous. "
+            "Japanese setting: tatami mat detail or sliding door visible, natural light. "
+            "Korean setting: modern tech-forward apartment, dual monitor setup. "
+            "Subject: East Asian professional (Japanese/Korean/Taiwanese), focused, composed expression."
+        ),
+        "avoid": "Casual American English tone. Slang. Anything that feels insufficiently serious or rigorous.",
+    },
+
+    "latin_american": {
+        "primary_hook": "Earn in USD — protect your income from inflation and access global rates from anywhere in Latin America",
+        "credential_signals": "UNAM, PUC Chile, Universidad de los Andes (Colombia), UBA (Argentina), top LatAm engineering schools",
+        "copy_notes": (
+            "USD payment is the single most powerful hook for ALL LatAm markets. "
+            "Currency volatility (ARS, COP, PEN, CLP, MXN vs USD) is top of mind for educated professionals. "
+            "'Earn in USD' or 'pagado en dólares' framing (even in English) resonates immediately. "
+            "Do NOT frame as 'supplemental income' — for many, this is primary income-level work. "
+            "Mexico: proximity to US market, many are familiar with remote USD work via US companies. "
+            "Colombia, Peru: growing tech talent pools, aspiration to access global pay. "
+            "Argentina: highest urgency — ARS inflation is extreme. USD = financial stability. "
+            "Panama: already USD economy — focus on flexibility and expertise recognition instead. "
+            "Photo subject: Hispanic/Latin American professional, home office in LatAm urban setting."
+        ),
+        "photo_setting_hint": (
+            "Latin American home office — warm tones, natural light, plants. "
+            "Urban apartment feel (Bogotá, Mexico City, Santiago, Buenos Aires). "
+            "Subject: Hispanic/Latin American professional, friendly and professional expression, "
+            "modern laptop setup, feels aspirational but accessible."
+        ),
+        "avoid": "Anything implying LatAm professionals are desperate. 'Side hustle'. Condescending 'even you can earn...' framing.",
+    },
+
+    "brazilian": {
+        "primary_hook": "Renda em dólares — earn USD from anywhere in Brazil as BRL loses value",
+        "credential_signals": "USP, UNICAMP, UFRJ, UFMG, ITA, IME, top Brazilian engineering/medicine universities",
+        "copy_notes": (
+            "Brazil has its own strong tech ecosystem (Nubank, Mercado Libre, iFood) — acknowledge Brazilian tech identity. "
+            "BRL has depreciated significantly — USD income is financially transformative. "
+            "Copy should still be in English (LinkedIn targets English-speaking professionals) but can reference "
+            "'from Brazil', 'from São Paulo / Rio / Belo Horizonte / Florianópolis'. "
+            "Flexibility is valued — Brazilians have strong work-life culture ('trabalho para viver'). "
+            "Photo subject: Brazilian professional, warm home office setting, could be São Paulo apartment."
+        ),
+        "photo_setting_hint": (
+            "Warm, vibrant Brazilian home office — tropical plants, warm afternoon light. "
+            "São Paulo or Rio de Janeiro apartment feel — modern but warm. "
+            "Subject: Brazilian professional (mixed-heritage or Afro-Brazilian or lighter-skinned Brazilian — vary across angles)."
+        ),
+        "avoid": "Implying Brazilian professionals are less qualified than US counterparts.",
+    },
+
+    "middle_eastern": {
+        "primary_hook": "Earn at global rates for elite expertise — prestige and income at the level your credentials deserve",
+        "credential_signals": "AUB (Beirut), Hebrew University, Technion, UAE University, King Saud University, expat credentials from global universities",
+        "copy_notes": (
+            "UAE/Saudi: professional prestige matters enormously. Photo subject should look polished. "
+            "Israel: strong tech ecosystem (Unit 8200 alumni, Tel Aviv startup scene) — tech/AI angle resonates. "
+            "Frame as 'global AI industry values your expertise' — appeals to professionals who feel under-recognised. "
+            "USD parity in UAE (AED is pegged to USD) — rate emphasis less critical, but global credibility matters. "
+            "For expat-heavy markets (UAE): diverse photo subjects; not exclusively Arab. "
+            "Jordan, Lebanon: USD income is highly valued given currency instability."
+        ),
+        "photo_setting_hint": (
+            "Polished, high-end home office. Elegant, minimal. "
+            "UAE: modern skyscraper visible in background or glass-and-steel apartment aesthetic. "
+            "Israel: tech-forward home office, casual professional. "
+            "Subject: Middle Eastern or globally diverse professional — polished expression."
+        ),
+        "avoid": "Anything culturally insensitive. Do not generalise the Middle East as one homogeneous market.",
+    },
+
+    "african": {
+        "primary_hook": "USD income that transforms your earning potential — access global rates from Nigeria, Kenya, Ghana, or South Africa",
+        "credential_signals": "University of Lagos, University of Nairobi, University of Cape Town, Wits, KNUST, top African universities",
+        "copy_notes": (
+            "USD income is transformative in most African markets (NGN, KES, GHS vs USD). "
+            "Nigeria: large, highly educated tech talent pool (fintech, crypto-savvy). "
+            "Emphasise payment reliability — Nigerian professionals have been burned by unreliable platforms. "
+            "Kenya: mobile money culture, remote work growing rapidly. M-Pesa payment comfort. "
+            "South Africa: more Westernised market — flexibility and career growth framing alongside income. "
+            "Ghana: growing tech sector, aspiration to access global market. "
+            "Credibility signal important: mention '$500M paid to contributors worldwide' — reduces skepticism. "
+            "Photo subject should reflect the specific country's dominant demographics."
+        ),
+        "photo_setting_hint": (
+            "African home office — warm, natural light, plants, laptop. "
+            "Lagos/Nairobi/Accra modern urban apartment feel. "
+            "Subject: Black African professional, age 25-40, focused and accomplished. "
+            "Setting feels aspirational but real — not over-styled."
+        ),
+        "avoid": "Any language that could read as condescending. 'You deserve better' framing done carelessly. Payment uncertainty language.",
+    },
+
+    "global_mix": {
+        "primary_hook": "Remote flexible income — your expertise has global value",
+        "credential_signals": "Top universities and employers in your field",
+        "copy_notes": (
+            "Generic global framing — use when geo cluster is unknown or truly mixed. "
+            "Lead with flexibility and income. USD/hourly rate should be prominent. "
+            "Keep photo subject vague — 'professional in a home office' — do not assume ethnicity."
+        ),
+        "photo_setting_hint": "Neutral, clean home office. No culturally specific indicators. Natural light.",
+        "avoid": "Assuming any specific cultural context.",
+    },
+}
+
+
+def get_geo_icp_prompt_hint(cluster: str, geos: list[str] | None = None) -> str:
+    """
+    Build a geo-ICP context block to inject into copy-gen LLM prompts.
+    Returns a formatted string that the LLM should use to customise copy
+    tone, hooks, and references for this specific geo cluster.
+
+    The hint intentionally avoids hardcoding specific phrases — it gives
+    the LLM enough cultural context to make natural, authentic choices
+    rather than formulaic insertions.
+    """
+    profile = GEO_ICP_PROFILES.get(cluster, GEO_ICP_PROFILES["global_mix"])
+    geo_names = ", ".join(geos[:6]) + ("..." if geos and len(geos) > 6 else "") if geos else "this region"
+
+    return f"""
+GEO-SPECIFIC ICP CONTEXT — {CLUSTER_LABELS.get(cluster, cluster).upper()} MARKET ({geo_names})
+This campaign targets professionals in {geo_names}. Customise copy and photo_subject for this market:
+
+PRIMARY HOOK FOR THIS MARKET: {profile['primary_hook']}
+
+CREDENTIAL SIGNALS THAT RESONATE: {profile['credential_signals']}
+
+COPY GUIDANCE: {profile['copy_notes']}
+
+PHOTO SETTING / SUBJECT DETAIL: {profile['photo_setting_hint']}
+
+AVOID IN THIS MARKET: {profile['avoid']}
+
+These are guidelines, not verbatim script. Weave the relevant cultural signals naturally
+into the copy — do NOT list them or make them feel like a checklist.
+"""
+
+
 @dataclass
 class GeoCampaignGroup:
     """One campaign's worth of geo targeting — a cluster of culturally similar countries."""
-    cluster:          str           # ethnic cluster key
-    cluster_label:    str           # human-readable
-    geos:             list[str]     # ISO country codes in this group
-    median_multiplier: float        # median pay multiplier across geos
-    advertised_rate:  str           # formatted rate string for copy, e.g. "$35/hr"
-    campaign_suffix:  str           # e.g. "south_asian" for campaign name
+    cluster:           str    # ethnic cluster key
+    cluster_label:     str    # human-readable label
+    geos:              list[str]  # ISO country codes in this group
+    median_multiplier: float  # median pay multiplier across geos
+    advertised_rate:   str    # formatted rate string for copy, e.g. "$35/hr"
+    campaign_suffix:   str    # e.g. "south_asian" for campaign name
+    icp_hint:          str = ""   # pre-built geo ICP prompt block for LLM injection
 
 
 def filter_blocked_geos(included_geos: list[str]) -> tuple[list[str], list[str]]:
@@ -267,6 +552,7 @@ def group_geos_for_campaigns(
             median_multiplier=mult,
             advertised_rate=rate_str,
             campaign_suffix=cluster,
+            icp_hint=get_geo_icp_prompt_hint(cluster, [cc]),
         )]
 
     # Group by ethnic cluster
@@ -287,6 +573,7 @@ def group_geos_for_campaigns(
             median_multiplier=round(median_mult, 3),
             advertised_rate=rate_str,
             campaign_suffix=cluster,
+            icp_hint=get_geo_icp_prompt_hint(cluster, geos),
         ))
         log.info(
             "Geo group: %s → %s (geos=%s, median_mult=%.2f, rate=%s)",
