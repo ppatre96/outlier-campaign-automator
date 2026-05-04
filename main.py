@@ -1922,11 +1922,14 @@ def _resolve_cohorts(
             signal_df = snowflake.fetch_signal_columns(positive_cb_ids)
             if not signal_df.empty:
                 requirement_commonality = compute_requirement_commonality(signal_df, uniq_reqs)
-                # Log a one-line summary per requirement
+                # Log a one-line summary per requirement — show 1 decimal so
+                # borderline rates (e.g. 9.7%) aren't visually rounded to 10%
+                # which falsely looks like the soft_hint threshold was met.
                 for rec in requirement_commonality:
                     log.info(
-                        "_resolve_cohorts: requirement %r → %d/%d (%.0f%%) — %s",
-                        rec["requirement"], rec["n_hits"], rec["n_total"],
+                        "_resolve_cohorts: requirement %r (stem=%r) → %d/%d (%.1f%%) — %s",
+                        rec["requirement"], rec.get("stem", ""),
+                        rec["n_hits"], rec["n_total"],
                         rec["hit_rate"] * 100, rec["recommended_action"],
                     )
         else:

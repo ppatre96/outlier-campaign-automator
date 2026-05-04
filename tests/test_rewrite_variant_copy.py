@@ -149,6 +149,59 @@ def test_scrub_handles_empty_and_none():
     assert _scrub_banned_tokens_and_dashes(None) is None
 
 
+# ── 2026-05-04 GMR-0006 fix: ban 'Outlier' in headline/subheadline only ──
+
+def test_outlier_scrubbed_from_headline(monkeypatch):
+    """Rewriter strips 'Outlier' from headline post-LLM (the wordmark is
+    composited in the bottom strip, repeating it triggers duplicate-logo QC)."""
+    from src.figma_creative import rewrite_variant_copy
+    # Stub the LLM call to return text with "Outlier" in headline
+    import src.figma_creative as fc
+    fake_resp = type("R", (), {"choices": [
+        type("C", (), {"message": type("M", (), {"content":
+            '{"headline": "Cardiologists Earn with Outlier"}'
+        })()})()
+    ]})()
+    fake_client = type("Client", (), {"chat": type("Chat", (), {"completions": type("Co", (), {
+        "create": staticmethod(lambda **kw: fake_resp)
+    })()})()})()
+    monkeypatch.setattr(fc, "_llm_client", lambda: fake_client)
+    variant = {"angle": "B", "headline": "OLD", "subheadline": "x"}
+    out = rewrite_variant_copy(variant, ["headline contains banned token 'Outlier': 'Cardiologists Earn with Outlier'"])
+    assert "Outlier" not in out["headline"]
+    # Should be cleaned to "Cardiologists Earn with" (Outlier dropped, trailing space stripped)
+    assert "Cardiologists" in out["headline"]
+
+
+def test_outlier_kept_in_intro_text(monkeypatch):
+    """Rewriter does NOT strip 'Outlier' from intro_text (legitimate use)."""
+    from src.figma_creative import rewrite_variant_copy
+    import src.figma_creative as fc
+    fake_resp = type("R", (), {"choices": [
+        type("C", (), {"message": type("M", (), {"content":
+            '{"intro_text": "Cardiologists across Europe earn with Outlier."}'
+        })()})()
+    ]})()
+    fake_client = type("Client", (), {"chat": type("Chat", (), {"completions": type("Co", (), {
+        "create": staticmethod(lambda **kw: fake_resp)
+    })()})()})()
+    monkeypatch.setattr(fc, "_llm_client", lambda: fake_client)
+    variant = {"angle": "B", "intro_text": "OLD"}
+    out = rewrite_variant_copy(variant, ["intro_text contains em dash"])
+    assert "Outlier" in out["intro_text"]
+
+
+def test_scan_brand_voice_flags_outlier_in_headline_only():
+    """scan_brand_voice flags 'Outlier' for headline+subheadline, not other fields."""
+    from src.copy_design_qc import scan_brand_voice
+    text = "Cardiologists Earn with Outlier"
+    assert any("Outlier" in v for v in scan_brand_voice(text, "headline"))
+    assert any("Outlier" in v for v in scan_brand_voice(text, "subheadline"))
+    assert not any("Outlier" in v for v in scan_brand_voice(text, "intro_text"))
+    assert not any("Outlier" in v for v in scan_brand_voice(text, "ad_headline"))
+    assert not any("Outlier" in v for v in scan_brand_voice(text, "ad_description"))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # End-to-end rewriter — the big bug. Replays GMR-0005's actual em-dash-in-intro_text
 # violation and asserts the returned variant has NO em dashes anywhere.

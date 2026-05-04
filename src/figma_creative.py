@@ -532,11 +532,11 @@ VIOLATIONS:
 {violation_bullets}
 
 HARD LIMITS:
-- headline: MAX {_HEADLINE_MAX_WORDS} words AND MAX {_HEADLINE_MAX_CHARS} characters. MUST fit in 1-2 lines.
-- subheadline: MAX {_SUBHEAD_MAX_WORDS} words AND MAX {_SUBHEAD_MAX_CHARS} characters. MUST fit in 1-2 lines.
-- intro_text: MAX 140 characters. Feed text above the image.
-- ad_headline: MAX 70 characters. Bold text below the image.
-- ad_description: MAX 100 characters. Small text under ad_headline.
+- headline: MAX {_HEADLINE_MAX_WORDS} words AND MAX {_HEADLINE_MAX_CHARS} characters. MUST fit in 1-2 lines. NEVER include the word "Outlier" — the brand wordmark is composited on the image separately, repeating it in the headline causes a duplicate-logo failure.
+- subheadline: MAX {_SUBHEAD_MAX_WORDS} words AND MAX {_SUBHEAD_MAX_CHARS} characters. MUST fit in 1-2 lines. NEVER include the word "Outlier" (same reason as headline).
+- intro_text: MAX 140 characters. Feed text above the image. Mentioning "Outlier" is OK here.
+- ad_headline: MAX 70 characters. Bold text below the image. Mentioning "Outlier" is OK here.
+- ad_description: MAX 100 characters. Small text under ad_headline. Mentioning "Outlier" is OK here.
 
 RESTRICTED VOCABULARY (BANNED — never use, in ANY field):
 - "compensation" -> use "payment"
@@ -587,6 +587,14 @@ Return ONLY valid JSON, no markdown fences:
         val = updated.get(field)
         if val:
             updated[field] = _scrub_banned_tokens_and_dashes(val)
+            # Field-scoped scrub: 'Outlier' is forbidden in headline/subheadline
+            # because those get baked onto the photo where the wordmark already
+            # appears in the bottom strip (vision QC reads both as logos →
+            # duplicate-logo false positive). Surfaced 2026-05-04 GMR-0006.
+            if field in ("headline", "subheadline"):
+                # Word-boundary case-insensitive replace, collapse double spaces.
+                updated[field] = re.sub(r"\s*\bOutlier\b\s*", " ", updated[field], flags=re.IGNORECASE)
+                updated[field] = re.sub(r"\s+", " ", updated[field]).strip(" ,.:;-")
 
     # Last-resort hard truncation. Drops final word, strips trailing punctuation.
     for field, max_c in _FIELD_MAX_CHARS.items():
@@ -659,8 +667,8 @@ Write all 3 copy variants for the specific person you've identified — not a ge
 You are producing TWO TEXT SETS per variant:
 
 ### (I) IMAGE OVERLAY TEXT (baked into the 1200×1200 creative PNG)
-- **headline**: MAX 6 words AND MAX 40 characters. 1–2 lines. Bold white text over the photo.
-- **subheadline**: MAX 7 words AND MAX 48 characters. 1–2 lines. Regular white text over the photo.
+- **headline**: MAX 6 words AND MAX 40 characters. 1–2 lines. Bold white text over the photo. NEVER include the word "Outlier" — the brand wordmark is composited on the image separately, repeating it in the headline causes a duplicate-logo QC failure.
+- **subheadline**: MAX 7 words AND MAX 48 characters. 1–2 lines. Regular white text over the photo. NEVER include the word "Outlier" (same reason as headline).
 - Every word must earn its place. Short, punchy, specific. Cut filler.
 - No logo or CTA text in the image itself.
 

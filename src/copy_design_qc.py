@@ -108,6 +108,18 @@ def scan_brand_voice(text: str, field_name: str = "field") -> list[str]:
         if re.search(rf"\b{re.escape(banned.lower())}\b", low):
             violations.append(f"{field_name} contains banned token {banned!r}: {text!r}")
 
+    # Field-scoped ban: 'Outlier' inside headline/subheadline conflicts with the
+    # composited wordmark in the bottom strip — vision QC reads both as logos
+    # and flags 'duplicate_logo'. Surfaced 2026-05-04 (GMR-0006 cohort 1).
+    # Other fields (intro_text, ad_headline, ad_description, body) freely use
+    # "Outlier" because they don't render against the wordmark.
+    if field_name in ("headline", "subheadline"):
+        if re.search(r"\boutlier\b", low):
+            violations.append(
+                f"{field_name} contains banned token 'Outlier': {text!r} "
+                "(image-overlay text must not include the brand name; the wordmark is composited in the bottom strip)"
+            )
+
     # Substring scan for multi-word phrases
     for phrase in _BANNED_PHRASES:
         if phrase in low:

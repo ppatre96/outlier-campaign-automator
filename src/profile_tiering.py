@@ -309,11 +309,26 @@ def compute_requirement_commonality(
         req = (req_raw or "").strip()
         if not req or len(req) < 3:
             continue  # too short to be a meaningful substring
-        # Plain substring match — naive but matches the analyst's ILIKE pattern.
-        # Word-boundary regex would be stricter but misses "cardiologist" vs
-        # "cardiology" without stemming.
-        n_hits = int(blob.str.contains(re.escape(req.lower()), regex=True, na=False).sum())
+        # Stem the requirement before matching so plurals/inflections all hit.
+        # Without this, "Cardiologists" (from "50 Cardiologists") fails to
+        # match "cardiologist" in resume_job_title — surfaced 2026-05-04 by
+        # GMR-0006 dry-run where Cardiologists scored 1/290 even though the
+        # entire activator pool was cardiologists. Stem rules: drop trailing
+        # 's' / 'es' / 'ies'; for multi-word reqs, stem each word independently.
+        stem = _stem_requirement(req.lower())
+        # Use word-boundary match on the stem — matches "cardiologist",
+        # "cardiologists", "cardiology" (all share the "cardiolog" stem).
+        # Falls back to substring if stem is too short (<4 chars) so we don't
+        # over-match "ed" → every English word.
+        if len(stem) >= 4:
+            pattern = rf"\b{re.escape(stem)}"
+        else:
+            pattern = re.escape(req.lower())
+        n_hits = int(blob.str.contains(pattern, regex=True, na=False).sum())
         hit_rate = n_hits / n_total
+        # Threshold check uses raw hit_rate (not display-rounded) so the
+        # action label matches the actual rate. Borderline like 0.0965 stays
+        # below 0.10 → drop, even though display would round to "10%".
         if hit_rate >= 0.50:
             action = "hard_filter"
         elif hit_rate >= 0.10:
@@ -322,12 +337,40 @@ def compute_requirement_commonality(
             action = "drop"
         results.append({
             "requirement": req,
+            "stem": stem,
             "n_total": n_total,
             "n_hits": n_hits,
-            "hit_rate": round(hit_rate, 3),
+            "hit_rate": round(hit_rate, 4),  # keep 4 decimals so 9.65% != 10.00%
             "recommended_action": action,
         })
     return results
+
+
+def _stem_requirement(token: str) -> str:
+    """
+    Crude stemmer for requirement-commonality matching. Drops English plural
+    suffixes from each whitespace-separated word so "cardiologists" and
+    "cardiologist" match the same root. Does NOT handle irregular plurals
+    (people/person) — fine for our domain (job titles + skills + degrees).
+    Returns the joined-back string.
+    """
+    out_words = []
+    for w in token.split():
+        # Order matters: longer suffixes first.
+        if len(w) > 5 and w.endswith("ies"):
+            w = w[:-3] + "y"      # "fellowships" → no, "qualities" → "quality"
+        elif len(w) > 4 and w.endswith("es") and not w.endswith(("ses", "zes")):
+            w = w[:-2]            # "cardiologies" → no actual hits but harmless
+        elif len(w) > 3 and w.endswith("s") and not w.endswith(("ss", "us", "is")):
+            w = w[:-1]            # "cardiologists" → "cardiologist"
+        # Strip a couple more nominalizing suffixes so "cardiology" matches
+        # "cardiologist" via shared "cardiolog" prefix
+        for suf in ("logist", "logy", "ation", "ician", "ician"):
+            if len(w) > len(suf) + 2 and w.endswith(suf):
+                w = w[:-len(suf)]
+                break
+        out_words.append(w)
+    return " ".join(out_words)
 
 
 def compute_prestige_signal(

@@ -157,20 +157,53 @@ def test_requirement_rare_is_drop():
 
 
 def test_requirement_matches_across_columns():
-    """A term that appears in ANY of the 5 signal columns counts as a hit."""
+    """A term that appears in ANY of the 5 signal columns counts as a hit.
+
+    Word-boundary prefix match (post 2026-05-04 inflection fix): only counts
+    matches at the start of a word, not arbitrary substrings — so 'cardio'
+    matches 'Cardiology' (prefix match) but NOT 'echocardiography' (the
+    pattern is `\\bcardio`, not bare substring).
+    """
     from src.profile_tiering import compute_requirement_commonality
     rows = [
-        _signal_row(title="Researcher", field="MD Cardiology"),     # hit via field (cardiology contains cardio)
+        _signal_row(title="Researcher", field="MD Cardiology"),     # hit via field (Cardiology starts with cardio)
         _signal_row(title="Cardio surgeon"),                          # hit via title
-        _signal_row(skills="cardiac echocardiography"),               # hit via skills (echocardiography contains cardio)
-        _signal_row(education='[{"school":"Stanford School of Medicine"}]'),  # NO hit — neither cardio nor stem
+        _signal_row(skills="cardiac echocardiography"),               # NO hit — "cardiac" doesn't start with "cardio", "echocardiography" has 'cardio' embedded but not at word boundary
+        _signal_row(education='[{"school":"Stanford School of Medicine"}]'),  # NO hit
     ]
     df = pd.DataFrame(rows)
     out = compute_requirement_commonality(df, ["cardio"])
-    # 3 of 4 rows have "cardio" as a substring somewhere
-    assert out[0]["n_hits"] == 3
-    assert out[0]["hit_rate"] == 0.75
+    # 2 of 4 rows have "cardio" at a word boundary
+    assert out[0]["n_hits"] == 2
+    assert out[0]["hit_rate"] == 0.5
     assert out[0]["recommended_action"] == "hard_filter"
+
+
+def test_requirement_inflection_singular_plural():
+    """The 2026-05-04 inflection fix: 'Cardiologists' (plural) matches
+    'cardiologist' (singular) in resume_job_title via shared stem."""
+    from src.profile_tiering import compute_requirement_commonality
+    # 10 cardiologists, 10 surgeons. Brief says "Cardiologists" (plural).
+    rows = [_signal_row(title="cardiologist") for _ in range(10)]
+    rows += [_signal_row(title="surgeon") for _ in range(10)]
+    df = pd.DataFrame(rows)
+    out = compute_requirement_commonality(df, ["Cardiologists"])
+    assert out[0]["n_hits"] == 10
+    assert out[0]["hit_rate"] == 0.5
+    assert out[0]["recommended_action"] == "hard_filter"
+
+
+def test_requirement_inflection_logist_logy():
+    """Stemmer collapses '-logist' and '-logy' to a shared root, so
+    'cardiologist' (job title) and 'cardiology' (field of study) both
+    match a brief that mentions either form."""
+    from src.profile_tiering import compute_requirement_commonality
+    rows = [_signal_row(title="cardiologist") for _ in range(5)]
+    rows += [_signal_row(field="Cardiology") for _ in range(5)]
+    df = pd.DataFrame(rows)
+    out = compute_requirement_commonality(df, ["cardiology"])
+    # All 10 should hit — both forms share the "cardio" prefix after stem
+    assert out[0]["n_hits"] == 10
 
 
 def test_requirement_company_and_education_columns_count():
