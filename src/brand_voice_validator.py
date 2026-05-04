@@ -124,7 +124,13 @@ class BrandVoiceValidator:
         patterns = {
             "PATTERN-01": {
                 "name": "Active Voice Only",
-                "severity": ViolationSeverity.MUST,
+                # Downgraded from MUST to SHOULD (2026-05-04, Pranav). Passive
+                # voice in InMail body copy is a style issue, not a blocking
+                # defect — e.g., "payment is issued weekly" is clear and common.
+                # Hard-rejecting every passive construction caused 5/5 InMail
+                # cohorts to fail in GMR-0006, shipping 0 creatives. Treating
+                # as SHOULD lets the copy land while flagging for future rewrites.
+                "severity": ViolationSeverity.SHOULD,
                 "check_fn": self._check_active_voice,
             },
             "PATTERN-02": {

@@ -275,6 +275,16 @@ Guidelines:
 - CTA label: action-oriented verb phrase (not "Click here") — MUST be 20 characters or fewer (count every character including spaces). Good examples: "See Open Tasks" (14), "Start Contributing" (18), "View Opportunities" (18), "Explore Tasks" (13). Count carefully before writing.
 - Subject line MUST be 60 characters or fewer (count every character including spaces). Count carefully before writing.
 
+Voice and tone (IMPORTANT):
+- Write in ACTIVE VOICE throughout. Every sentence should have a clear subject performing an action.
+  BAD:  "Payment is issued weekly." → GOOD: "We send payment every week."
+  BAD:  "Tasks are matched to your background." → GOOD: "We match tasks to your background."
+  BAD:  "Your application is processed quickly." → GOOD: "We review your application quickly."
+  One or two passive constructions in the body are acceptable — avoid making them the default.
+- Use concrete specifics over vague generalities. "$50/hr, sent weekly" beats "competitive compensation".
+- Keep sentences varied in length — mix short punchy statements with fuller explanatory ones.
+- No em dashes (—). Use a period or comma instead.
+
 Write your response EXACTLY in this format (no other text):
 SUBJECT: <subject line, max 60 chars — count carefully>
 BODY: <body text, 150–250 words, plain paragraphs>
