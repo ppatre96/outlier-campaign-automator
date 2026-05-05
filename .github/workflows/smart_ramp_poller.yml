@@ -33,8 +33,17 @@ jobs:
       contents: read
 
     steps:
+      - name: Debug — show runner context
+        run: |
+          echo "Actor: ${{ github.actor }}"
+          echo "Repo:  ${{ github.repository }}"
+          echo "Ref:   ${{ github.ref }}"
+          git --version
+
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Set up Python 3.13
         uses: actions/setup-python@v5
