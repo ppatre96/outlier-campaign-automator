@@ -20,21 +20,21 @@ on:
           - "true"
           - "false"
 
-env:
-  # Opt into Node.js 24 to silence deprecation warnings
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   poll:
     name: Poll Smart Ramp & run pipeline
     runs-on: ubuntu-latest
     timeout-minutes: 90  # max one ramp cycle; kills runaway image-gen loops
 
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+    permissions:
+      contents: read
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python 3.13
         uses: actions/setup-python@v5
