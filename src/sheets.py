@@ -1,13 +1,21 @@
 """
 Google Sheets client — reads Triggers 2 / Config tabs and writes results back.
+
+In the Smart Ramp pipeline, Sheets is OPTIONAL:
+  - Config values (LinkedIn token, etc.) all fall back to env vars.
+  - Write-back calls (cohort IDs, campaign IDs, creative URNs) are nice-to-have
+    audit trail — the Slack notification + processed_ramps.json cover monitoring.
+
+If credentials.json is absent (e.g. GitHub Actions without GOOGLE_CREDENTIALS_JSON
+secret), SheetsClient() returns a NullSheetsClient stub that reads from env vars
+and silently no-ops all writes. No credentials needed for the Smart Ramp path.
 """
 import logging
+import os
 import random
 from datetime import datetime
+from pathlib import Path
 from typing import Any
-
-import gspread
-from google.oauth2.service_account import Credentials
 
 import config
 
@@ -17,6 +25,48 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive.readonly",
 ]
+
+
+class NullSheetsClient:
+    """No-op stub used when Google credentials are unavailable.
+    Reads config from environment variables; silently ignores all writes.
+    """
+
+    def read_config(self) -> dict[str, str]:
+        return {
+            "LINKEDIN_TOKEN":       os.getenv("LINKEDIN_ACCESS_TOKEN", ""),
+            "CLAUDE_API_KEY":       os.getenv("ANTHROPIC_API_KEY", ""),
+            "MIDJOURNEY_API_TOKEN": os.getenv("MIDJOURNEY_API_TOKEN", ""),
+            "INMAIL_SENDER_URN":    os.getenv("LINKEDIN_INMAIL_SENDER_URN", ""),
+            "SCREENING_CONFIG_NAME": "",
+        }
+
+    def read_pending_rows(self) -> list[dict]:
+        return []
+
+    def read_li_retry_rows(self) -> list[dict]:
+        return []
+
+    def write_cohorts(self, *a, **kw) -> None:
+        log.debug("NullSheetsClient.write_cohorts — no-op (credentials unavailable)")
+
+    def update_li_campaign_id(self, *a, **kw) -> None:
+        log.debug("NullSheetsClient.update_li_campaign_id — no-op")
+
+    def write_creative(self, *a, **kw) -> None:
+        log.debug("NullSheetsClient.write_creative — no-op")
+
+    def get_urn_sheet(self) -> None:
+        return None
+
+    def get_text_layer_map(self, *a, **kw) -> dict:
+        return {}
+
+
+def _credentials_available() -> bool:
+    """True when a service-account credentials file exists and is readable."""
+    cred_path = Path(config.GOOGLE_CREDENTIALS)
+    return cred_path.exists() and cred_path.stat().st_size > 10
 
 # Column indices (0-based) for "Triggers 2"
 COL = {
@@ -49,7 +99,18 @@ def _col_letter(idx: int) -> str:
 
 
 class SheetsClient:
+    def __new__(cls):
+        """Return NullSheetsClient when credentials are unavailable."""
+        if not _credentials_available():
+            log.info("Google credentials not found — using NullSheetsClient (env-var fallback, writes no-op)")
+            return NullSheetsClient()
+        return super().__new__(cls)
+
     def __init__(self):
+        if isinstance(self, NullSheetsClient):
+            return  # already initialised by __new__
+        import gspread
+        from google.oauth2.service_account import Credentials
         creds = Credentials.from_service_account_file(config.GOOGLE_CREDENTIALS, scopes=SCOPES)
         self._gc = gspread.authorize(creds)
         self._triggers = self._gc.open_by_key(config.TRIGGERS_SHEET_ID)
