@@ -20,6 +20,10 @@ on:
           - "true"
           - "false"
 
+env:
+  # Opt into Node.js 24 to silence deprecation warnings
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   poll:
     name: Poll Smart Ramp & run pipeline
@@ -29,17 +33,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
           cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
       - name: Restore processed_ramps state
+        id: cache-state
         uses: actions/cache@v4
         with:
           path: data/processed_ramps.json
@@ -47,43 +55,42 @@ jobs:
           restore-keys: |
             processed-ramps-
 
+      - name: Ensure data directory exists
+        run: mkdir -p data logs
+
       - name: Run poller
         env:
-          # ── Core API keys ──────────────────────────────────────────────────
-          ANTHROPIC_API_KEY:           ${{ secrets.ANTHROPIC_API_KEY }}
-          GEMINI_API_KEY:              ${{ secrets.GEMINI_API_KEY }}
-          REDASH_API_KEY:              ${{ secrets.REDASH_API_KEY }}
-          # ── LinkedIn ───────────────────────────────────────────────────────
-          LINKEDIN_ACCESS_TOKEN:       ${{ secrets.LINKEDIN_ACCESS_TOKEN }}
-          LINKEDIN_AD_ACCOUNT_ID:      ${{ secrets.LINKEDIN_AD_ACCOUNT_ID }}
-          LINKEDIN_INMAIL_SENDER_URN:  ${{ secrets.LINKEDIN_INMAIL_SENDER_URN }}
-          # ── Smart Ramp ─────────────────────────────────────────────────────
+          # ── Core API keys ──────────────────────────────────────────────
+          ANTHROPIC_API_KEY:               ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY:                  ${{ secrets.GEMINI_API_KEY }}
+          REDASH_API_KEY:                  ${{ secrets.REDASH_API_KEY }}
+          # ── LinkedIn ───────────────────────────────────────────────────
+          LINKEDIN_ACCESS_TOKEN:           ${{ secrets.LINKEDIN_ACCESS_TOKEN }}
+          LINKEDIN_AD_ACCOUNT_ID:          ${{ secrets.LINKEDIN_AD_ACCOUNT_ID }}
+          LINKEDIN_INMAIL_SENDER_URN:      ${{ secrets.LINKEDIN_INMAIL_SENDER_URN }}
+          # ── Smart Ramp ─────────────────────────────────────────────────
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-          # ── Slack ──────────────────────────────────────────────────────────
-          SLACK_WEBHOOK_URL:           ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_BOT_TOKEN:             ${{ secrets.SLACK_BOT_TOKEN }}
-          # ── LiteLLM (kept for Gemini /images/generations fallback) ─────────
-          LITELLM_BASE_URL:            "https://litellm-proxy.ml.scale.com/v1"
-          LITELLM_API_KEY:             ${{ secrets.LITELLM_API_KEY }}
+          # ── Slack (optional — pipeline degrades gracefully when absent) ─
+          SLACK_WEBHOOK_URL:               ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_BOT_TOKEN:                 ${{ secrets.SLACK_BOT_TOKEN }}
         run: |
-          # Build poller args
           ARGS="--once"
+
+          # Specific ramp override (manual dispatch only)
           if [ -n "${{ github.event.inputs.ramp_id }}" ]; then
             ARGS="$ARGS --ramp-id ${{ github.event.inputs.ramp_id }}"
           fi
-          if [ "${{ github.event.inputs.dry_run }}" = "true" ] || [ "${{ github.event_name }}" = "workflow_dispatch" -a -z "${{ github.event.inputs.ramp_id }}" ]; then
-            # Scheduled runs: live mode (no --dry-run)
-            # Manual runs without ramp_id: dry-run for safety
-            :
+
+          # Dry-run logic:
+          #   scheduled runs  → always live (no --dry-run)
+          #   manual dispatch → respect the dry_run input (default: true)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
+             [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
           fi
-          # Scheduled runs always run live; manual dispatch respects the input
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            python scripts/smart_ramp_poller.py $ARGS
-          else
-            DRY="${{ github.event.inputs.dry_run }}"
-            if [ "$DRY" = "true" ]; then ARGS="$ARGS --dry-run"; fi
-            python scripts/smart_ramp_poller.py $ARGS
-          fi
+
+          echo "Running: python scripts/smart_ramp_poller.py $ARGS"
+          python scripts/smart_ramp_poller.py $ARGS
 
       - name: Save processed_ramps state
         if: always()
@@ -97,6 +104,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: poller-log-${{ github.run_id }}
-          path: logs/smart_ramp_poller/
+          path: logs/
           retention-days: 7
           if-no-files-found: ignore
