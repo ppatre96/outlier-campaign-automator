@@ -43,9 +43,16 @@ log = logging.getLogger(__name__)
 # These are resolved once at import time from known local paths.
 # Fall back gracefully if running outside the standard dev environment.
 
+def _asset(filename: str) -> Path:
+    """Resolve an asset path — checks repo assets/ dir first, then local machine paths."""
+    _repo_root = Path(__file__).resolve().parent.parent
+    return _repo_root / "assets" / filename
+
+
 def _load_reference_image_b64() -> str:
     """Return base64-encoded Finance-Branded-BankerMale-Futureproof-1x1.png."""
     candidates = [
+        _asset("Finance-Branded-BankerMale-Futureproof-1x1.png"),
         Path("/Users/pranavpatre/Outlier Creatives/Outlier - Static Ads v2/Finance-Branded-BankerMale-Futureproof-1x1.png"),
         Path("/Users/pranavpatre/Desktop/Outlier Creatives/Outlier - Static Ads v2/Finance-Branded-BankerMale-Futureproof-1x1.png"),
         Path("/Users/pranavpatre/Downloads/Outlier - Static Ads v2/Finance-Branded-BankerMale-Futureproof-1x1.png"),
@@ -62,6 +69,7 @@ def _load_reference_image_b64() -> str:
 def _load_outlier_logo_svg() -> str:
     """Return the Outlier logo SVG as a string."""
     candidates = [
+        _asset("outlier logo.svg"),
         Path("/Users/pranavpatre/Downloads/outlier logo.svg"),
         Path("/Users/pranavpatre/Desktop/outlier logo.svg"),
     ]
@@ -78,7 +86,8 @@ def _rasterize_outlier_logo(target_width: int = 800) -> Image.Image | None:
     Returns None if cairosvg or the SVG file isn't available.
     """
     svg_path = None
-    for p in (Path("/Users/pranavpatre/Downloads/outlier logo.svg"),
+    for p in (_asset("outlier logo.svg"),
+              Path("/Users/pranavpatre/Downloads/outlier logo.svg"),
               Path("/Users/pranavpatre/Desktop/outlier logo.svg")):
         if p.exists():
             svg_path = p
@@ -852,6 +861,7 @@ def generate_imagen_creative_with_qc(
         attach_ref_initial = True
         if reference_image_path is None:
             for p in (
+                _asset("Finance-Branded-BankerMale-Futureproof-1x1.png"),
                 Path("/Users/pranavpatre/Outlier Creatives/Outlier - Static Ads v2/Finance-Branded-BankerMale-Futureproof-1x1.png"),
                 Path("/Users/pranavpatre/Desktop/Outlier Creatives/Outlier - Static Ads v2/Finance-Branded-BankerMale-Futureproof-1x1.png"),
             ):
