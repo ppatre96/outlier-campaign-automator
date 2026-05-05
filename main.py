@@ -1127,6 +1127,7 @@ def _process_inmail_campaigns(
     group_name = f"Outlier {flow_id} {location} InMail".strip()
 
     from src.geo_tiers import group_geos_for_campaigns, GeoCampaignGroup
+    from src.campaign_registry import log_campaign as _reg_log_inmail
 
     raw_geos = included_geos or []
     geo_groups = group_geos_for_campaigns(raw_geos, base_rate_usd)
@@ -1136,22 +1137,29 @@ def _process_inmail_campaigns(
             median_multiplier=1.0, advertised_rate=f"${int(base_rate_usd)}/hr",
             campaign_suffix="global",
         )]
-    log.info("_process_inmail_campaigns: %d geo group(s)", len(geo_groups))
+    # Experimentation caps: max 3 cohorts per geo cluster, all angles tested
+    capped_cohorts_inmail = selected[:config.MAX_COHORTS_PER_GEO_CLUSTER]
+    inmail_angle_keys = ["A", "B", "C"][:config.ANGLES_PER_COHORT]
+    log.info(
+        "_process_inmail_campaigns: %d cohort(s) × %d geo group(s) × %d angle(s) = %d campaigns",
+        len(capped_cohorts_inmail), len(geo_groups), len(inmail_angle_keys),
+        len(capped_cohorts_inmail) * len(geo_groups) * len(inmail_angle_keys),
+    )
 
     if dry_run:
-        for i, cohort in enumerate(selected):
-            angle_label = ["A", "B", "C"][i % 3]
+        for i, cohort in enumerate(capped_cohorts_inmail):
             tg_cat = classify_tg(cohort.name, cohort.rules)
             for geo_group in geo_groups:
-                log.info("[dry-run] InMail cohort %d '%s' tg=%s angle=%s geo=%s rate=%s",
-                         i, cohort.name, tg_cat, angle_label,
-                         geo_group.cluster_label, geo_group.advertised_rate)
-                variants = build_inmail_variants(
-                    tg_cat, cohort, claude_key,
-                    hourly_rate=geo_group.advertised_rate,
-                    geo_icp_hint=geo_group.icp_hint,
-                )
-                v = variants[i % 3]
+                for angle_label in inmail_angle_keys:
+                    log.info("[dry-run] InMail cohort %d '%s' tg=%s angle=%s geo=%s rate=%s",
+                             i, cohort.name, tg_cat, angle_label,
+                             geo_group.cluster_label, geo_group.advertised_rate)
+                    variants = build_inmail_variants(
+                        tg_cat, cohort, claude_key,
+                        hourly_rate=geo_group.advertised_rate,
+                        geo_icp_hint=geo_group.icp_hint,
+                    )
+                    v = variants[["A","B","C"].index(angle_label) % len(variants)]
                 log.info("[dry-run] Subject: %s", v.subject)
                 log.info("[dry-run] Body:\n%s", v.body)
                 log.info("[dry-run] CTA: %s", v.cta_label)
@@ -1184,20 +1192,23 @@ def _process_inmail_campaigns(
         default_exclude_urns, family_exclude_urns, data_driven_exclude_urns,
     )
 
-    for i, cohort in enumerate(selected):
+    for cohort in capped_cohorts_inmail:
         for geo_group in geo_groups:
-            angle_idx   = i % 3
-            angle_label = ["A", "B", "C"][angle_idx]
-            tg_cat      = classify_tg(cohort.name, cohort.rules)
-            group_geos  = geo_group.geos or raw_geos
+            for angle_label in inmail_angle_keys:
+                angle_idx   = inmail_angle_keys.index(angle_label)
+                tg_cat      = classify_tg(cohort.name, cohort.rules)
+                group_geos  = geo_group.geos or raw_geos
 
-            # Generate InMail copy with geo-specific rate + ICP context
-            variants = build_inmail_variants(
-                tg_cat, cohort, claude_key,
-                hourly_rate=geo_group.advertised_rate,
-                geo_icp_hint=geo_group.icp_hint,
-            )
-            variant  = variants[angle_idx]
+                # Generate InMail copy with geo-specific rate + ICP context
+                variants = build_inmail_variants(
+                    tg_cat, cohort, claude_key,
+                    hourly_rate=geo_group.advertised_rate,
+                    geo_icp_hint=geo_group.icp_hint,
+                )
+                variant  = variants[angle_idx % len(variants)] if variants else None
+                if not variant:
+                    log.warning("No InMail variant for cohort '%s' angle %s — skipping", cohort.name, angle_label)
+                    continue
 
             # Validate InMail copy against brand voice
             full_copy = f"{variant.subject}\n\n{variant.body}"
@@ -1229,7 +1240,7 @@ def _process_inmail_campaigns(
             )
 
             geo_suffix = f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
-            campaign_name = f"{cohort._stg_name}{geo_suffix}"
+            campaign_name = f"{cohort._stg_name}{geo_suffix} {angle_label}"
 
             campaign_urn = li_client.create_inmail_campaign(
                 name=campaign_name,
@@ -1251,6 +1262,27 @@ def _process_inmail_campaigns(
                 destination_url=destination_url_override,
             )
             sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
+
+            # Log to campaign registry
+            base_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
+            try:
+                _reg_log_inmail(
+                    smart_ramp_id=flow_id or "",
+                    cohort_id=str(base_id),
+                    cohort_signature=cohort.name,
+                    geo_cluster=geo_group.cluster,
+                    geo_cluster_label=geo_group.cluster_label,
+                    geos=group_geos,
+                    angle=angle_label,
+                    campaign_type="inmail",
+                    advertised_rate=geo_group.advertised_rate,
+                    linkedin_campaign_urn=campaign_urn,
+                    creative_urn=creative_urn,
+                    inmail_subject=variant.subject,
+                    inmail_body=variant.body,
+                )
+            except Exception as _exc:
+                log.warning("Registry log failed (non-fatal): %s", _exc)
 
             validation_metadata = {
                 "is_compliant": report.is_compliant,
@@ -2088,33 +2120,40 @@ def _process_static_campaigns(
             campaign_suffix="global",
         )]
 
-    log.info("_process_static_campaigns: %d geo group(s) → %d campaigns per cohort",
-             len(geo_groups), len(geo_groups))
+    # ── Experimentation caps (Pranav rule 2026-05-05) ─────────────────────────
+    # Max 3 cohorts per geo cluster × 3 angles each.
+    # Feedback agent surfaces winners/losers; losing angles get deprecated.
+    capped_cohorts = selected[:config.MAX_COHORTS_PER_GEO_CLUSTER]
+    angle_labels   = ["A", "B", "C"][:config.ANGLES_PER_COHORT]
+    log.info(
+        "_process_static_campaigns: %d cohort(s) × %d geo group(s) × %d angle(s) = %d campaigns",
+        len(capped_cohorts), len(geo_groups), len(angle_labels),
+        len(capped_cohorts) * len(geo_groups) * len(angle_labels),
+    )
 
     out_campaigns: list[str] = []
     by_cohort: dict[str, str] = {}
     creative_paths: dict[str, str] = {}
 
-    if not selected:
+    if not capped_cohorts:
         return {"campaigns": [], "campaigns_by_cohort": {}, "creative_paths": {}}
 
-    # Generate creatives per cohort × geo group
+    # Generate creatives per cohort × geo group × angle
     has_figma = bool(figma_file and figma_node and claude_key)
     figma_client = FigmaCreativeClient() if has_figma else None
-    # Flat list of (cohort, geo_group, variants, png) specs — one entry per LinkedIn campaign
+    # Flat list of specs — one entry per (cohort × geo_group × angle) = one LinkedIn campaign
     campaign_specs: list[dict] = []
 
-    for i, cohort in enumerate(selected):
-        # Outer loop: cohort. Inner loop: geo group.
-        # For each (cohort, geo_group) pair: one LinkedIn campaign.
+    for cohort in capped_cohorts:
+        # Outer loop: cohort. Middle: geo group. Inner: angle.
         for geo_group in geo_groups:
-            angle_idx = i % 3
-            angle_label = ["A", "B", "C"][angle_idx]
-            variants: list[dict] = []
-            png_path: Path | None = None
+            for angle_label in angle_labels:
+                angle_idx = angle_labels.index(angle_label)
+                variants: list[dict] = []
+                png_path: Path | None = None
 
-            geo_label = geo_group.cluster_label
-            group_geos = geo_group.geos or raw_geos  # fallback to raw if no split
+                geo_label = geo_group.cluster_label
+                group_geos = geo_group.geos or raw_geos  # fallback to raw if no split
 
             log.info(
                 "_process_static_campaigns: cohort '%s' × geo_group '%s' (%s) rate=%s",
@@ -2178,17 +2217,21 @@ def _process_static_campaigns(
 
             # Accumulate spec for LinkedIn creation
             campaign_specs.append({
-                "cohort": cohort,
-                "geo_group": geo_group,
-                "group_geos": group_geos,
-                "angle_idx": angle_idx,
-                "variants": variants,
-                "png_path": png_path,
+                "cohort":      cohort,
+                "geo_group":   geo_group,
+                "group_geos":  group_geos,
+                "angle_idx":   angle_idx,
+                "angle_label": angle_label,
+                "variants":    variants,
+                "png_path":    png_path,
             })
 
     if dry_run:
-        log.info("[dry-run] _process_static_campaigns: skipping LinkedIn calls (%d cohorts × %d geo groups)",
-                 len(selected), len(geo_groups))
+        log.info(
+            "[dry-run] _process_static_campaigns: skipping LinkedIn calls "
+            "(%d cohorts × %d geo groups × %d angles = %d specs)",
+            len(capped_cohorts), len(geo_groups), len(angle_labels), len(campaign_specs),
+        )
         return {"campaigns": [], "campaigns_by_cohort": {}, "creative_paths": {}}
 
     # Create campaign group + campaigns — one per (cohort × geo_group) spec
@@ -2204,23 +2247,26 @@ def _process_static_campaigns(
         default_exclude_urns, family_exclude_urns, data_driven_exclude_urns,
     )
 
+    from src.campaign_registry import log_campaign as _reg_log
+
     for spec in campaign_specs:
         cohort = spec["cohort"]
         geo_group = spec["geo_group"]
         group_geos = spec["group_geos"]
         angle_idx = spec["angle_idx"]
+        angle_label = spec.get("angle_label", ["A", "B", "C"][angle_idx])
         variants = spec["variants"]
         png_path = spec["png_path"]
-        # Per-(cohort × geo_group) isolation: wrap in try/except so one failure
+        # Per-(cohort × geo_group × angle) isolation: wrap in try/except so one failure
         # NEVER aborts the others (SR-04 contract).
         try:
             facet_urns = urn_res.resolve_cohort_rules(cohort.rules)
             if group_geos:
                 facet_urns = _apply_geo_overrides(facet_urns, group_geos, urn_res)
 
-            # Campaign name encodes the geo cluster for human reviewers
+            # Campaign name: {cohort} [geo_cluster] Angle {A/B/C}
             geo_suffix = f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
-            campaign_name = f"{cohort._stg_name}{geo_suffix}"
+            campaign_name = f"{cohort._stg_name}{geo_suffix} {angle_label}"
 
             cohort_add_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_add", []) or [])
             cohort_remove_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_remove", []) or [])
@@ -2238,12 +2284,33 @@ def _process_static_campaigns(
             campaign_id = campaign_urn.rsplit(":", 1)[-1]
             sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
             out_campaigns.append(campaign_urn)
-            # Key includes geo cluster so per-geo campaigns don't collide in by_cohort
+            # Key includes geo cluster + angle so campaigns don't collide in by_cohort
             base_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
-            by_cohort_id = f"{base_id}_{geo_group.campaign_suffix}" if geo_group.cluster != "global_mix" else base_id
+            by_cohort_id = f"{base_id}_{geo_group.campaign_suffix}_{angle_label}"
             by_cohort[by_cohort_id] = campaign_urn
-            log.info("_process_static_campaigns: campaign %s for cohort %s geo=%s",
-                     campaign_urn, base_id, geo_group.cluster_label)
+            log.info("_process_static_campaigns: campaign %s cohort=%s geo=%s angle=%s",
+                     campaign_urn, base_id, geo_group.cluster_label, angle_label)
+
+            # Log to campaign registry immediately at creation
+            variant = variants[angle_idx] if angle_idx < len(variants) else {}
+            try:
+                _reg_log(
+                    smart_ramp_id=ramp_id or "",
+                    cohort_id=base_id,
+                    cohort_signature=cohort.name,
+                    geo_cluster=geo_group.cluster,
+                    geo_cluster_label=geo_group.cluster_label,
+                    geos=group_geos,
+                    angle=angle_label,
+                    campaign_type="static",
+                    advertised_rate=geo_group.advertised_rate,
+                    linkedin_campaign_urn=campaign_urn,
+                    headline=variant.get("headline", ""),
+                    subheadline=variant.get("subheadline", ""),
+                    photo_subject=variant.get("photo_subject", ""),
+                )
+            except Exception as _exc:
+                log.warning("Registry log failed (non-fatal): %s", _exc)
 
             # Image attach — sentinel-aware (SR-04).
             if not (png_path and Path(str(png_path)).exists()):
@@ -2280,6 +2347,18 @@ def _process_static_campaigns(
                 sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
                 creative_paths[by_cohort_id] = creative_urn
                 log.info("_process_static_campaigns: creative %s attached", creative_urn)
+                # Update registry with creative URN now that we have it
+                try:
+                    from src.campaign_registry import update_metrics as _noop
+                    from src.campaign_registry import _load as _reg_load, _save as _reg_save
+                    recs = _reg_load()
+                    for _r in recs:
+                        if _r.get("linkedin_campaign_urn") == campaign_urn:
+                            _r["creative_urn"] = creative_urn
+                            break
+                    _reg_save(recs)
+                except Exception:
+                    pass
             elif ad_result.status == "local_fallback":
                 # SR-04: copy the PNG locally + continue.
                 local_path = _save_creative_locally(

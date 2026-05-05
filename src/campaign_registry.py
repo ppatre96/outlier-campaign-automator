@@ -1,0 +1,286 @@
+"""
+Campaign Registry — tracks every campaign created by the pipeline in an Excel sheet.
+
+Columns written at campaign creation time:
+  smart_ramp_id, cohort_id, cohort_signature, geo_cluster, geo_cluster_label,
+  geos, angle, campaign_type (inmail/static), advertised_rate,
+  linkedin_campaign_urn, creative_urn, headline, subheadline, photo_subject,
+  inmail_subject, created_at, status (active/deprecated/paused)
+
+Metric columns updated later by the feedback agent:
+  impressions, clicks, cpm_usd, ctr_pct, cpc_usd, spend_usd,
+  applications, cpa_usd, last_metrics_at
+
+The registry is written to data/campaign_registry.xlsx and also stored in
+data/campaign_registry.json (for machine-readable access without openpyxl).
+
+Pranav rule (2026-05-05): experimentation framework — max 3 cohorts per geo
+cluster × 3 angles each. Feedback agent surfaces winners/losers; losing
+angles are marked deprecated and replaced with new variants.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+log = logging.getLogger(__name__)
+
+_REGISTRY_PATH = Path("data/campaign_registry.json")
+_EXCEL_PATH    = Path("data/campaign_registry.xlsx")
+
+COLUMNS = [
+    # ── Identity ──────────────────────────────────────────────────────────────
+    "smart_ramp_id",
+    "cohort_id",
+    "cohort_signature",
+    "geo_cluster",
+    "geo_cluster_label",
+    "geos",
+    "angle",                    # A / B / C / F
+    "campaign_type",            # "static" | "inmail"
+    "advertised_rate",          # e.g. "$50/hr"
+    # ── LinkedIn URNs ─────────────────────────────────────────────────────────
+    "linkedin_campaign_urn",
+    "creative_urn",             # static: image creative URN; inmail: message ad URN
+    # ── Copy snapshot ─────────────────────────────────────────────────────────
+    "headline",
+    "subheadline",
+    "photo_subject",
+    "inmail_subject",
+    "inmail_body_preview",      # first 150 chars
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+    "created_at",
+    "status",                   # active | paused | deprecated
+    "deprecation_reason",
+    # ── Performance metrics (filled by feedback agent) ─────────────────────────
+    "impressions",
+    "clicks",
+    "cpm_usd",
+    "ctr_pct",
+    "cpc_usd",
+    "spend_usd",
+    "applications",
+    "cpa_usd",
+    "last_metrics_at",
+]
+
+
+@dataclass
+class CampaignEntry:
+    smart_ramp_id:          str = ""
+    cohort_id:              str = ""
+    cohort_signature:       str = ""
+    geo_cluster:            str = ""
+    geo_cluster_label:      str = ""
+    geos:                   str = ""    # comma-joined ISO codes
+    angle:                  str = ""
+    campaign_type:          str = ""
+    advertised_rate:        str = ""
+    linkedin_campaign_urn:  str = ""
+    creative_urn:           str = ""
+    headline:               str = ""
+    subheadline:            str = ""
+    photo_subject:          str = ""
+    inmail_subject:         str = ""
+    inmail_body_preview:    str = ""
+    created_at:             str = ""
+    status:                 str = "active"
+    deprecation_reason:     str = ""
+    # metrics — empty until feedback agent runs
+    impressions:            int | None = None
+    clicks:                 int | None = None
+    cpm_usd:                float | None = None
+    ctr_pct:                float | None = None
+    cpc_usd:                float | None = None
+    spend_usd:              float | None = None
+    applications:           int | None = None
+    cpa_usd:                float | None = None
+    last_metrics_at:        str = ""
+
+
+def _load() -> list[dict]:
+    if _REGISTRY_PATH.exists():
+        try:
+            return json.loads(_REGISTRY_PATH.read_text())
+        except Exception:
+            pass
+    return []
+
+
+def _save(records: list[dict]) -> None:
+    _REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _REGISTRY_PATH.write_text(json.dumps(records, indent=2, default=str))
+    _write_excel(records)
+
+
+def _write_excel(records: list[dict]) -> None:
+    try:
+        import openpyxl
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        log.debug("openpyxl not installed — skipping Excel write (JSON only)")
+        return
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Campaign Registry"
+
+    # Header row
+    header_fill = PatternFill("solid", fgColor="1F3864")
+    header_font = Font(color="FFFFFF", bold=True)
+    for col_idx, col in enumerate(COLUMNS, 1):
+        cell = ws.cell(row=1, column=col_idx, value=col.replace("_", " ").title())
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", wrap_text=True)
+
+    # Section dividers — colour-code by campaign_type
+    static_fill  = PatternFill("solid", fgColor="E8F4FD")
+    inmail_fill  = PatternFill("solid", fgColor="FEF9E7")
+    depr_fill    = PatternFill("solid", fgColor="FDECEA")
+
+    for row_idx, rec in enumerate(records, 2):
+        fill = (depr_fill if rec.get("status") == "deprecated"
+                else inmail_fill if rec.get("campaign_type") == "inmail"
+                else static_fill)
+        for col_idx, col in enumerate(COLUMNS, 1):
+            val = rec.get(col, "")
+            cell = ws.cell(row=row_idx, column=col_idx, value=val)
+            cell.fill = fill
+            cell.alignment = Alignment(wrap_text=False)
+
+    # Column widths
+    col_widths = {
+        "smart_ramp_id": 14, "cohort_signature": 40, "geo_cluster_label": 22,
+        "geos": 18, "angle": 7, "campaign_type": 10, "advertised_rate": 12,
+        "linkedin_campaign_urn": 35, "creative_urn": 35,
+        "headline": 30, "subheadline": 30, "photo_subject": 35,
+        "inmail_subject": 35, "inmail_body_preview": 40,
+        "created_at": 20, "status": 12,
+    }
+    for col_idx, col in enumerate(COLUMNS, 1):
+        ws.column_dimensions[get_column_letter(col_idx)].width = col_widths.get(col, 14)
+
+    ws.freeze_panes = "A2"
+    _EXCEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(_EXCEL_PATH)
+    log.info("Campaign registry written to %s (%d rows)", _EXCEL_PATH, len(records))
+
+
+def log_campaign(
+    smart_ramp_id: str,
+    cohort_id: str,
+    cohort_signature: str,
+    geo_cluster: str,
+    geo_cluster_label: str,
+    geos: list[str],
+    angle: str,
+    campaign_type: str,
+    advertised_rate: str,
+    linkedin_campaign_urn: str,
+    creative_urn: str = "",
+    headline: str = "",
+    subheadline: str = "",
+    photo_subject: str = "",
+    inmail_subject: str = "",
+    inmail_body: str = "",
+) -> None:
+    """Append one campaign row to the registry. Safe to call from both arms."""
+    entry = CampaignEntry(
+        smart_ramp_id=smart_ramp_id,
+        cohort_id=cohort_id,
+        cohort_signature=cohort_signature,
+        geo_cluster=geo_cluster,
+        geo_cluster_label=geo_cluster_label,
+        geos=", ".join(geos) if geos else "",
+        angle=angle,
+        campaign_type=campaign_type,
+        advertised_rate=advertised_rate,
+        linkedin_campaign_urn=linkedin_campaign_urn,
+        creative_urn=creative_urn,
+        headline=headline,
+        subheadline=subheadline,
+        photo_subject=photo_subject,
+        inmail_subject=inmail_subject,
+        inmail_body_preview=inmail_body[:150] if inmail_body else "",
+        created_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        status="active",
+    )
+    records = _load()
+    records.append(asdict(entry))
+    _save(records)
+    log.info(
+        "Registry: logged %s campaign %s (ramp=%s cohort=%s angle=%s geo=%s)",
+        campaign_type, linkedin_campaign_urn, smart_ramp_id, cohort_id, angle, geo_cluster_label,
+    )
+
+
+def update_metrics(
+    linkedin_campaign_urn: str,
+    impressions: int,
+    clicks: int,
+    spend_usd: float,
+    applications: int = 0,
+) -> None:
+    """Update performance metrics for a campaign. Called by the feedback agent."""
+    records = _load()
+    updated = False
+    for rec in records:
+        if rec.get("linkedin_campaign_urn") == linkedin_campaign_urn:
+            rec["impressions"] = impressions
+            rec["clicks"] = clicks
+            rec["spend_usd"] = round(spend_usd, 2)
+            rec["cpm_usd"] = round(spend_usd / impressions * 1000, 2) if impressions else None
+            rec["ctr_pct"] = round(clicks / impressions * 100, 3) if impressions else None
+            rec["cpc_usd"] = round(spend_usd / clicks, 2) if clicks else None
+            rec["applications"] = applications
+            rec["cpa_usd"] = round(spend_usd / applications, 2) if applications else None
+            rec["last_metrics_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            updated = True
+            break
+    if updated:
+        _save(records)
+        log.info("Registry: metrics updated for %s", linkedin_campaign_urn)
+    else:
+        log.warning("Registry: campaign not found for metrics update: %s", linkedin_campaign_urn)
+
+
+def deprecate_campaign(linkedin_campaign_urn: str, reason: str) -> None:
+    """Mark a campaign as deprecated (feedback agent determined it's underperforming)."""
+    records = _load()
+    for rec in records:
+        if rec.get("linkedin_campaign_urn") == linkedin_campaign_urn:
+            rec["status"] = "deprecated"
+            rec["deprecation_reason"] = reason
+            break
+    _save(records)
+    log.info("Registry: deprecated %s — %s", linkedin_campaign_urn, reason)
+
+
+def get_active_campaigns(smart_ramp_id: str | None = None) -> list[dict]:
+    """Return all active campaigns, optionally filtered by ramp."""
+    records = _load()
+    return [
+        r for r in records
+        if r.get("status") == "active"
+        and (smart_ramp_id is None or r.get("smart_ramp_id") == smart_ramp_id)
+    ]
+
+
+def get_registry_summary() -> dict:
+    """Quick stats for Slack notifications / logging."""
+    records = _load()
+    return {
+        "total": len(records),
+        "active": sum(1 for r in records if r.get("status") == "active"),
+        "deprecated": sum(1 for r in records if r.get("status") == "deprecated"),
+        "by_ramp": {
+            ramp: sum(1 for r in records if r.get("smart_ramp_id") == ramp)
+            for ramp in {r.get("smart_ramp_id") for r in records}
+        },
+    }

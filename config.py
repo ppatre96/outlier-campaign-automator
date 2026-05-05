@@ -76,6 +76,11 @@ MIN_PASS_RATE_FLOOR         = float(os.getenv("MIN_PASS_RATE_FLOOR", 5.0))
 COUNTRY_VALIDATION_THRESHOLD = int(os.getenv("COUNTRY_VALIDATION_THRESHOLD", 75))
 MAX_INCLUDE_FACETS          = int(os.getenv("MAX_INCLUDE_FACETS", 4))
 MAX_CAMPAIGNS               = int(os.getenv("MAX_CAMPAIGNS", 5))
+# Experimentation caps — Pranav rule 2026-05-05:
+# Max 3 cohorts per geo cluster, each with 3 angle variants (A/B/C) for testing.
+# Feedback agent surfaces winners/losers; losers get deprecated and replaced.
+MAX_COHORTS_PER_GEO_CLUSTER = int(os.getenv("MAX_COHORTS_PER_GEO_CLUSTER", 3))
+ANGLES_PER_COHORT           = int(os.getenv("ANGLES_PER_COHORT", 3))
 AUDIENCE_SIZE_MIN           = int(os.getenv("AUDIENCE_SIZE_MIN", 50_000))
 MIN_UNIQUE_AUDIENCE_PCT     = float(os.getenv("MIN_UNIQUE_AUDIENCE_PCT", 80.0))
 URN_FUZZY_MATCH_THRESHOLD   = float(os.getenv("URN_FUZZY_MATCH_THRESHOLD", 0.85))
