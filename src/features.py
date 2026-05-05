@@ -269,24 +269,148 @@ def _derive_country_from_parsed(edu_info: dict, jobs: list) -> str:
 
 # ── Full feature extraction ───────────────────────────────────────────────────
 
+def _pipes_to_semicolons(series: pd.Series) -> pd.Series:
+    """Map ' | '-joined resume-summary strings to '; '-joined form for engineer_features."""
+    return series.fillna("").astype(str).str.replace("|", ";", regex=False)
+
+
+def _parse_linkedin_certifications(raw: Any) -> str:
+    """
+    TNS_WORKER_LINKEDIN.LINKEDIN_CERTIFICATIONS is a JSON-array string, not a
+    pipe-separated text field like the resume_* columns. Shapes observed in prod:
+
+        None                                        → no LinkedIn record
+        '[]'                                        → LinkedIn record, zero certs
+        '[{"authority":"Coursera","name":"..."}]'   → real certifications
+
+    Return a '; '-joined string of certificate `name` values, so the existing
+    `_split` + frequency-map machinery can build meaningful dummies
+    (`accreditations_norm__Google_Data_Analytics`, …). Returns "" for missing /
+    empty / malformed input — the downstream `_split` already skips empties.
+    """
+    if raw is None:
+        return ""
+    try:
+        if pd.isna(raw):
+            return ""
+    except (TypeError, ValueError):
+        pass
+
+    if isinstance(raw, (list, tuple)):
+        items = raw
+    else:
+        s = str(raw).strip()
+        if not s or s in ("[]", "{}", "null", "None"):
+            return ""
+        try:
+            items = json.loads(s)
+        except (json.JSONDecodeError, ValueError):
+            # Not JSON — treat as a plain pipe/semicolon-separated text field.
+            return s.replace("|", ";")
+
+    names: list[str] = []
+    for item in items or []:
+        if isinstance(item, dict):
+            nm = item.get("name") or item.get("title") or item.get("authority") or ""
+        else:
+            nm = str(item)
+        nm = nm.strip()
+        if nm:
+            names.append(nm)
+    return "; ".join(names)
+
+
+_STRUCTURAL_TOKENS = {"", "[]", "{}", "null", "none", "nan", "[{}]"}
+
+
+def _highest_degree_from_pipes(raw: Any) -> str:
+    """Pick the highest-ranking degree from a pipe-separated resume_degree string."""
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return "Other"
+    parts = [p.strip() for p in str(raw).replace(";", "|").split("|") if p.strip()]
+    best_rank, best_label = 0, "Other"
+    for p in parts:
+        level = _degree_level(p)
+        rank = _DEGREE_RANK.get(level.lower(), 1)
+        if rank > best_rank:
+            best_rank, best_label = rank, level
+    return best_label
+
+
+def normalize_stage1_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adapter: take the new STAGE1_SQL DataFrame (flat resume-summary + CESF tier bools)
+    and emit the column shape that engineer_features() expects, so Stage A/B/C keep
+    working unchanged.
+
+    Writes (does not drop existing columns):
+        skills_str              ← resume_job_skills (pipe → semicolon)
+        job_titles              ← resume_job_title  (pipe → semicolon)
+        fields_of_study         ← resume_field      (pipe → semicolon)
+        highest_degree_level    ← derived from resume_degree (pipe list → best rank)
+        accreditations_str      ← linkedin_certifications (pipe → semicolon, best effort)
+        experience_band         ← "Other" (STAGE1_SQL has no computed band)
+        total_years_experience  ← 0       (same — no signal available)
+        role_count              ← 0
+        country                 ← "UNKNOWN" (Stage B will treat as below_threshold)
+
+    Leaves tier booleans (t3_activated, t2_course_pass, …) and exemplar fields
+    (resume_job_title, resume_job_company, resume_degree, resume_field,
+    linkedin_url, …) untouched.
+    """
+    out = df.copy()
+    if "resume_job_skills" in out.columns and "skills_str" not in out.columns:
+        out["skills_str"] = _pipes_to_semicolons(out["resume_job_skills"])
+    if "resume_job_title" in out.columns and "job_titles" not in out.columns:
+        out["job_titles"] = _pipes_to_semicolons(out["resume_job_title"])
+    if "resume_field" in out.columns and "fields_of_study" not in out.columns:
+        out["fields_of_study"] = _pipes_to_semicolons(out["resume_field"])
+    if "linkedin_certifications" in out.columns and "accreditations_str" not in out.columns:
+        # JSON-array field — parse and extract cert names rather than treating as pipe text.
+        out["accreditations_str"] = out["linkedin_certifications"].apply(_parse_linkedin_certifications)
+    if "resume_degree" in out.columns and "highest_degree_level" not in out.columns:
+        out["highest_degree_level"] = out["resume_degree"].apply(_highest_degree_from_pipes)
+    # STAGE1_SQL doesn't compute these — fill defaults so downstream code doesn't KeyError.
+    if "experience_band" not in out.columns:
+        out["experience_band"] = "Other"
+    if "total_years_experience" not in out.columns:
+        out["total_years_experience"] = 0
+    if "role_count" not in out.columns:
+        out["role_count"] = 0
+    if "country" not in out.columns:
+        out["country"] = "UNKNOWN"
+    return out
+
+
 def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Build engineered feature columns from SQL pre-aggregated inputs.
 
-    All heavy extraction (skills, titles, fields_of_study, experience_band,
-    degree_level, country, accreditations) is now computed by Snowflake via
-    LATERAL FLATTEN CTEs — no Python JSON parsing needed.
+    Accepts two DataFrame shapes:
+      - Legacy RESUME_SQL output (skills_str, job_titles, experience_band, …).
+      - New STAGE1_SQL output — will be auto-normalized via normalize_stage1_frame().
 
-    This function just cleans / type-converts the pre-computed columns.
+    Detection: if the new shape's hallmark column `resume_job_skills` is present
+    but `skills_str` is missing, normalize first.
     """
+    if "resume_job_skills" in df.columns and "skills_str" not in df.columns:
+        df = normalize_stage1_frame(df)
+
     out = df.copy()
 
     # ── List columns from semicolon-separated SQL strings ────────────────────
     def _split(series: pd.Series) -> pd.Series:
-        """Split '; '-separated strings into lists, handle NaN."""
-        return series.fillna("").apply(
-            lambda v: [s.strip() for s in str(v).split(";") if s.strip()]
-        )
+        """Split '; '-separated strings into lists. Filters out structural/empty
+        artifacts (e.g. the literal string "[]" left over from an unparsed JSON
+        array) so they don't turn into bogus one-hot dummies downstream."""
+        def _one(v):
+            out: list[str] = []
+            for s in str(v).split(";"):
+                t = s.strip()
+                if t and t.lower() not in _STRUCTURAL_TOKENS:
+                    out.append(t)
+            return out
+        return series.fillna("").apply(_one)
 
     out["skills"]              = _split(df.get("skills_str",      pd.Series([""] * len(df), index=df.index)))
     out["job_titles_norm"]     = _split(df.get("job_titles",      pd.Series([""] * len(df), index=df.index)))

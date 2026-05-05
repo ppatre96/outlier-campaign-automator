@@ -188,6 +188,9 @@ def discover_new_icps(
     from src.analysis import stage_a, stage_b
 
     try:
+        # Monitor doesn't have a project_id in scope (it scans many flows). Leave
+        # project_id unset — T3/T2 columns come back empty, tier picker falls back
+        # to T1 (resume-pass) which is the correct monitoring behaviour.
         df_raw = snowflake.fetch_screenings(flow_id, config_name)
         if df_raw.empty:
             return []

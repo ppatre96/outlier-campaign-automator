@@ -112,9 +112,26 @@ class SnowflakeClient:
         self,
         signup_flow_id: str,
         config_name: str,
+        project_id: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> pd.DataFrame:
+        """
+        Matches RedashClient.fetch_screenings() signature. `project_id` scopes
+        the T3 (tasking) + T2 (course-pass) tier columns. Pass None only if you
+        want to fall back to T1 (resume-pass) only — pick_target_tier will warn.
+
+        Note: this SnowflakeClient path uses the LEGACY RESUME_SQL (no tier CTEs).
+        The tier-aware SQL lives in `src/redash_db.py:RESUME_SQL`. If you need
+        tier columns from direct Snowflake, mirror that SQL here.
+        """
+        if project_id:
+            log.warning(
+                "SnowflakeClient.fetch_screenings received project_id=%s but the "
+                "legacy RESUME_SQL in snowflake_db.py doesn't include tier CTEs — "
+                "T2/T3 columns will be missing. Use RedashClient for tiered analysis.",
+                project_id,
+            )
         params = {
             "signup_flow_id": signup_flow_id,
             "config_name":    config_name,
