@@ -946,7 +946,30 @@ def run(window: int = 60) -> str:
 
     _save_vision_cache(vision_cache)
 
-    # 4. Load and update experiment queue
+    # 4. Push metrics + deprecation decisions to campaign registry
+    try:
+        from src.campaign_registry import update_metrics as _reg_metrics, deprecate_campaign as _reg_deprecate
+        for s in scores:
+            m = s.metrics
+            # Build campaign URN from campaign_id (LinkedIn numeric ID → URN format)
+            campaign_urn = f"urn:li:sponsoredCampaign:{m.campaign_id}" if m.campaign_id else ""
+            if campaign_urn:
+                _reg_metrics(
+                    linkedin_campaign_urn=campaign_urn,
+                    impressions=m.impressions,
+                    clicks=m.lp_clicks,
+                    spend_usd=m.cost_usd,
+                    applications=m.applications,
+                )
+            if s.recommendation == "PAUSE" and campaign_urn:
+                _reg_deprecate(
+                    campaign_urn,
+                    reason=f"PAUSE — score {s.total:.0f}/100 (CTR={m.lp_ctr:.2f}%, CPC=${m.cpc_lp:.2f})",
+                )
+    except Exception as _exc:
+        log.warning("Registry update failed (non-fatal): %s", _exc)
+
+    # 5. Load and update experiment queue
     queue = _load_queue()
 
     # Add new experiment briefs for PAUSE/EXPERIMENT creatives
@@ -963,7 +986,7 @@ def run(window: int = 60) -> str:
     queue = _update_queue(queue, scores, active_ids)
     _save_queue(queue)
 
-    # 5. Build report
+    # 6. Build report
     return _build_report(scores, queue, window)
 
 

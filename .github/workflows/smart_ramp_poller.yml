@@ -4,6 +4,9 @@ on:
   schedule:
     # Every 15 minutes, 24/7 — GitHub Actions cron is UTC
     - cron: "0,15,30,45 * * * *"
+    # Daily feedback run at 08:00 UTC — pulls LinkedIn metrics, scores campaigns,
+    # updates campaign_registry.xlsx, deprecates underperformers
+    - cron: "0 8 * * *"
   # Allow manual trigger from GitHub Actions UI for testing / forced runs
   workflow_dispatch:
     inputs:
