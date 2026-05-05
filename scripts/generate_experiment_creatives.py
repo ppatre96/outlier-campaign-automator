@@ -2,7 +2,7 @@
 Generate challenger ad creatives for the 3 pending experiments in data/experiment_queue.json.
 
 Briefs were produced by ad-creative-brief-generator agents on 2026-04-16.
-This script calls generate_midjourney_creative() for each and saves composed PNGs
+This script calls generate_imagen_creative() for each and saves composed PNGs
 to data/experiment_outputs/.
 
 Run:
@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 import config
-from src.midjourney_creative import generate_midjourney_creative
+from src.gemini_creative import generate_imagen_creative
 from src.gdrive import upload_creative
 
 OUTPUT_DIR = Path(__file__).parent.parent / "data" / "experiment_outputs"
@@ -90,7 +90,7 @@ def run():
         print(f"Sub:        {exp['variant']['subheadline']}")
 
         try:
-            tmp_path = generate_midjourney_creative(
+            tmp_path = generate_imagen_creative(
                 variant=exp["variant"],
                 photo_subject=exp["photo_subject"],
             )

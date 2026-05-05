@@ -42,7 +42,7 @@ from src.redash_db import RedashClient
 from src.features import engineer_features, build_frequency_maps, binary_features
 from src.analysis import stage_a, stage_b
 from src.figma_creative import build_copy_variants
-from src.midjourney_creative import generate_midjourney_creative
+from src.gemini_creative import generate_imagen_creative
 from src.gdrive import upload_creative
 from src.figma_upload import prepare_for_figma, png_to_base64
 from src.brand_voice_validator import BrandVoiceValidator
@@ -158,7 +158,12 @@ def run(
     print(f"\n[Stage 1] Fetching screening data ...")
     from datetime import date
     end_date = date.today().isoformat()   # always use today — avoids stale SCREENING_END_DATE
-    df_raw = snowflake.fetch_screenings(flow_id, config_name, end_date=end_date)
+    # Pass project_id so the SQL populates T3 (tasking) + T2 (course-pass) columns
+    df_raw = snowflake.fetch_screenings(
+        flow_id, config_name,
+        project_id=project_id,
+        end_date=end_date,
+    )
     if df_raw.empty:
         print("  ERROR: No rows returned. Screening data may not exist yet.")
         sys.exit(1)
@@ -167,9 +172,17 @@ def run(
     if "resume_screening_result" in df_raw.columns:
         passes = int(df_raw["resume_screening_result"].astype(str).str.upper().eq("PASS").sum())
         fails  = int(df_raw["resume_screening_result"].astype(str).str.upper().eq("FAIL").sum())
-        print(f"  Total rows: {total:,}  |  PASS: {passes:,}  |  FAIL: {fails:,}")
+        print(f"  Total rows: {total:,}  |  PASS (T1): {passes:,}  |  FAIL: {fails:,}")
     else:
         print(f"  Total rows: {total:,}")
+
+    # Tier counts — surface T2/T3 if the SQL populated those columns
+    if "tasked_on_project" in df_raw.columns:
+        t3 = int(df_raw["tasked_on_project"].fillna(False).astype(bool).sum())
+        print(f"  T3 (activation — tasks on project_id): {t3:,}")
+    if "eligible_for_project" in df_raw.columns:
+        t2 = int(df_raw["eligible_for_project"].fillna(False).astype(bool).sum())
+        print(f"  T2 (course-pass — completed all required courses): {t2:,}")
 
     # ── Stage 2: Feature engineering ─────────────────────────────────────────
     print(f"\n[Stage 2] Feature engineering ...")
@@ -344,7 +357,7 @@ def run(
 
             # Generate image
             try:
-                tmp_path = generate_midjourney_creative(variant=variant, photo_subject=photo_subject)
+                tmp_path = generate_imagen_creative(variant=variant, photo_subject=photo_subject)
                 slug     = cohort._stg_id.replace("STG-", "").replace("-", "")
                 out_path = output_dir / f"dry_{slug}_{angle_label}.png"
                 shutil.copy2(tmp_path, out_path)
