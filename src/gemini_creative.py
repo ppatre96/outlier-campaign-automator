@@ -151,14 +151,14 @@ LinkedIn ad targeting {tg_label} — the subject must immediately read as a cred
 senior {tg_label} professional in their authentic work environment.
 
 HEAD PLACEMENT (MOST CRITICAL — follow exactly):
-- The TOP of the subject's hair must sit at EXACTLY 38% from the top of the frame.
-- The top 35% of the frame must be COMPLETELY FREE of any subject pixels, hair, or \
-  flyaways — this space is reserved for a multi-line text overlay added in post.
-- A clearly visible 5-8% gap must separate the bottom of the text zone and the hairline.
-- Do NOT place the subject's head higher than 38% — headline text (which can span \
-  2 lines) will clip the hair.
-- Do NOT place the subject's head lower than 48% — creates excessive empty space.
-- Subject's face should fill the middle of the frame. Body/torso visible below shoulders.
+- The TOP of the subject's hair MUST sit at exactly 35% from the top of the frame.
+  Imagine a horizontal line drawn at the 35% mark — the very top of the hair (including \
+  any stray flyaway strands) must touch this line, not be above it.
+- The top 30% of the frame must be COMPLETELY FREE of any subject pixels — clear sky / \
+  background only. This is the text-safe zone for a 1 or 2-line headline overlay.
+- Do NOT place the subject's head higher than 35% — text will clip the hair.
+- Do NOT place the subject's head lower than 42% — creates excessive empty space.
+- Subject's face fills the middle of the frame. Body/torso visible below shoulders.
 
 BACKGROUND:
 - Top 30% of the frame MUST be mid-tone to dark (warm wood shelves, plant foliage, \
@@ -622,24 +622,28 @@ def compose_ad(
     draw       = ImageDraw.Draw(canvas)
     max_text_w = int(photo_w * 0.88)
 
-    # Font: 62px top-anchored at 2% from photo top.
-    # At 62px, two lines + spacing = ~136px, ending at ~14% of the 1200px frame.
-    # Gemini is instructed to place hair at 38% — giving ~24% safety margin.
-    # This means the headline NEVER touches the subject regardless of line count,
-    # even if Gemini places hair slightly above 38%.
-    hl_size = int(size * 0.052)   # ~62px
-    hl_min  = int(size * 0.040)   # floor: ~48px
+    # Font: 72px bottom-anchored so the LAST LINE always ends at 30% of the frame.
+    # Gemini prompt instructs hair at 35% → fixed ~5% gap from last line to hairline,
+    # whether the headline is 1 or 2 lines. The headline TOP shifts up for 2-line
+    # headlines; the BOTTOM stays put.
+    hl_size = int(size * 0.060)   # ~72px
+    hl_min  = int(size * 0.045)   # floor: ~54px
     hl_font  = _load_font(hl_size, bold=True)
     hl_lines = _wrap_text(headline, hl_font, max_text_w)
     while len(hl_lines) > 2 and hl_size > hl_min:
         hl_size -= int(size * 0.003)
         hl_font  = _load_font(hl_size, bold=True)
         hl_lines = _wrap_text(headline, hl_font, max_text_w)
+
+    LINE_SPACING = 12
+    hl_height    = hl_size * len(hl_lines) + LINE_SPACING * (len(hl_lines) - 1)
+    hl_bottom    = int(size * 0.30)        # last-line bottom at 30% of frame
+    hl_top       = max(photo_y + int(photo_h * 0.01), hl_bottom - hl_height)
     _draw_text_left(
         draw, hl_lines, hl_font,
-        photo_y + int(photo_h * 0.02),
+        hl_top,
         0, (255, 255, 255, 255),
-        line_spacing=10, canvas_width=size,
+        line_spacing=LINE_SPACING, canvas_width=size,
     )
 
     sh_font  = _load_font(int(size * 0.044))
