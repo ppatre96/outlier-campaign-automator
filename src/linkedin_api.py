@@ -124,6 +124,15 @@ class LinkedInClient:
         self._session.headers.update({"Authorization": f"Bearer {new_token}"})
         return self._session.request(method, url, **kwargs)
 
+    def _default_headers(self) -> dict:
+        """Return a copy of the default request headers for one-off calls that bypass _session."""
+        return {
+            "Authorization":             f"Bearer {self._token}",
+            "LinkedIn-Version":          config.LINKEDIN_VERSION,
+            "X-Restli-Protocol-Version": "2.0.0",
+            "Content-Type":              "application/json",
+        }
+
     def _req(self, method: str, url: str, **kwargs) -> requests.Response:
         """Make a request; auto-refresh and retry once on 401."""
         resp = self._session.request(method, url, **kwargs)
@@ -438,6 +447,9 @@ class LinkedInClient:
 
         # Step 1 — create the InMail content object via REST API (no MDP required)
         content_payload = {
+            "account": f"urn:li:sponsoredAccount:{config.LINKEDIN_AD_ACCOUNT_ID}",
+            "name": f"inmail_{int(__import__('time').time())}",
+            "sender": sender_urn,
             "htmlBody": body[:1000],
             "subject": subject[:60],
             "subContent": {

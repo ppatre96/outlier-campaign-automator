@@ -2185,6 +2185,7 @@ def _process_static_campaigns(
                 angle_idx        = angle_labels.index(angle_label)
                 selected_variant = variants[angle_idx] if angle_idx < len(variants) else {}
                 png_path: Path | None = None
+                qc_report: dict = {}
 
                 if not skip_image_gen:
                     if has_figma and variants:
@@ -2230,7 +2231,7 @@ def _process_static_campaigns(
                     "angle_label": angle_label,
                     "variants":    variants,
                     "png_path":    png_path,
-                    "qc_report":   qc_report if "qc_report" in dir() else {},
+                    "qc_report":   qc_report,
                 })
 
     if dry_run:
@@ -2299,7 +2300,8 @@ def _process_static_campaigns(
                      campaign_urn, base_id, geo_group.cluster_label, angle_label)
 
             # Log to campaign registry immediately at creation
-            variant = variants[angle_idx] if angle_idx < len(variants) else {}
+            variant   = variants[angle_idx] if angle_idx < len(variants) else {}
+            qc_report = spec.get("qc_report", {})
             try:
                 _reg_log(
                     smart_ramp_id=ramp_id or "",
@@ -2315,6 +2317,7 @@ def _process_static_campaigns(
                     headline=variant.get("headline", ""),
                     subheadline=variant.get("subheadline", ""),
                     photo_subject=variant.get("photo_subject", ""),
+                    gemini_prompt=qc_report.get("gemini_prompt", ""),
                 )
             except Exception as _exc:
                 log.warning("Registry log failed (non-fatal): %s", _exc)

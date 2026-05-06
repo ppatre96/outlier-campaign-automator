@@ -28,14 +28,29 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
 
+_GEO_SUBJECT_DEFAULTS = {
+    "northern_european": "female German clinical cardiologist, reviewing cardiology reports on a laptop at a home office desk",
+    "southern_european": "male French clinical cardiologist, reviewing patient data on a laptop at a home desk",
+    "anglo":             "female White British clinical cardiologist, reviewing cardiac imaging on a laptop at home",
+    "south_asian":       "male South Asian senior cardiologist, reviewing cardiac imaging scans on a laptop at a home desk",
+}
+
 def _build_variant(rec: dict) -> dict:
+    photo_subject = rec.get("photo_subject", "")
+    if not photo_subject:
+        # Fallback for registry rows that were backfilled without copy gen
+        geo_cluster = rec.get("geo_cluster", "")
+        photo_subject = _GEO_SUBJECT_DEFAULTS.get(
+            geo_cluster,
+            "clinical cardiologist reviewing patient reports on a laptop at a home desk",
+        )
     return {
         "angle":         rec.get("angle", "A"),
-        "headline":      rec.get("headline", ""),
-        "subheadline":   rec.get("subheadline", ""),
-        "photo_subject": rec.get("photo_subject", ""),
-        "ad_headline":   rec.get("headline", ""),
-        "ad_description": rec.get("subheadline", ""),
+        "headline":      rec.get("headline", "") or "Your cardiology expertise is in demand",
+        "subheadline":   rec.get("subheadline", "") or "Earn $50/hr reviewing AI outputs. Remote.",
+        "photo_subject": photo_subject,
+        "ad_headline":   rec.get("headline", "") or "Your cardiology expertise is in demand",
+        "ad_description": rec.get("subheadline", "") or "Earn $50/hr reviewing AI outputs. Remote.",
         "cta":           "Apply Now",
         "tgLabel":       rec.get("cohort_signature", ""),
         "intro_text":    "",
@@ -44,7 +59,20 @@ def _build_variant(rec: dict) -> dict:
 
 def run(dry_run: bool = False) -> None:
     records = _load()
-    to_attach = [r for r in records if not r.get("creative_urn") and r.get("linkedin_campaign_urn")]
+    out_dir = ROOT / "data" / "ramp_creatives" / "GMR-0006"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def _dest_path(rec: dict) -> Path:
+        # Match the naming from the first script run (replacements BEFORE slice)
+        cohort = rec.get("cohort_signature", "").replace("/", "_").replace(" ", "_").replace("+", "and")[:40]
+        geo    = rec.get("geo_cluster_label", "").replace("/", "_")
+        angle  = rec.get("angle", "A")
+        return out_dir / f"{cohort}_{geo}_{angle}.png"
+
+    to_attach = [
+        r for r in records
+        if r.get("linkedin_campaign_urn") and not _dest_path(r).exists()
+    ]
     log.info("%d of %d campaigns need creatives", len(to_attach), len(records))
 
     if not to_attach:
@@ -90,14 +118,21 @@ def run(dry_run: bool = False) -> None:
             log.warning("  No valid PNG — skipping")
             continue
 
-        # Save to named output dir regardless of LinkedIn status
-        out_dir = ROOT / "data" / "ramp_creatives" / "GMR-0006"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        safe_cohort = cohort.replace("/", "_").replace(" ", "_").replace("+", "and")[:40]
-        dest = out_dir / f"{safe_cohort}_{geo_label.replace('/', '_')}_{angle}.png"
+        # Save to named output dir
+        dest = _dest_path(rec)
         import shutil
         shutil.copy2(str(png_path), str(dest))
         log.info("  Saved: %s", dest.name)
+
+        # Store Gemini prompt in registry for this campaign
+        gemini_prompt = (qc_report or {}).get("gemini_prompt", "")
+        if gemini_prompt:
+            records = _load()
+            for r in records:
+                if r.get("linkedin_campaign_urn") == campaign_urn:
+                    r["gemini_prompt"] = gemini_prompt
+                    break
+            _save(records)
 
         if dry_run:
             log.info("  [dry-run] would attach to %s", campaign_urn)
