@@ -20,6 +20,7 @@ Visual style — ground-truth from Outlier Static Ads v2 reference analysis:
   - Reference image + Outlier logo SVG embedded inline in Gemini prompt (not Drive URL)
 """
 import base64
+import json
 import logging
 import os
 import re
@@ -150,15 +151,15 @@ A close-up environmental portrait of a {photo_subject}. This image will be used 
 LinkedIn ad targeting {tg_label} — the subject must immediately read as a credible, \
 senior {tg_label} professional in their authentic work environment.
 
-HEAD PLACEMENT (MOST CRITICAL — follow exactly):
-- The TOP of the subject's hair MUST sit at exactly 35% from the top of the frame.
-  Imagine a horizontal line drawn at the 35% mark — the very top of the hair (including \
-  any stray flyaway strands) must touch this line, not be above it.
-- The top 30% of the frame must be COMPLETELY FREE of any subject pixels — clear sky / \
-  background only. This is the text-safe zone for a 1 or 2-line headline overlay.
-- Do NOT place the subject's head higher than 35% — text will clip the hair.
-- Do NOT place the subject's head lower than 42% — creates excessive empty space.
-- Subject's face fills the middle of the frame. Body/torso visible below shoulders.
+COMPOSITION (frame the subject so there is clear background space for a text overlay):
+- Place the subject in the LEFT or RIGHT half of the frame — NOT dead-centre. Leave the \
+  opposite half mostly clear (background only, no subject pixels) so a 1-2 line headline \
+  and a short subheadline can be composited next to the subject without overlap.
+- The empty half should show natural background (bookshelves, plants, walls, soft \
+  ambient light) with mid-tone to dark colour values so white text reads against it.
+- Subject's face is naturally framed mid-height — body/torso visible below shoulders. \
+  The exact head Y position is not critical because text placement is computed \
+  dynamically based on detected subject location.
 
 BACKGROUND:
 - Top 30% of the frame MUST be mid-tone to dark (warm wood shelves, plant foliage, \
@@ -551,6 +552,102 @@ def _add_bottom_strip(canvas: Image.Image, bottom_text: str, strip_height_frac: 
     return canvas
 
 
+# ── Subject bbox detection (post-Gemini, pre-composition) ─────────────────────
+
+_BBOX_PROMPT_TMPL = (
+    "Locate the human subject in this {w}x{h} image. Return JSON only with "
+    "pixel coordinates (0-indexed, top-left origin):\n"
+    "{{\n"
+    '  "hair_top_y": <int>,\n'
+    '  "face_left_x": <int>,\n'
+    '  "face_right_x": <int>,\n'
+    '  "shoulder_top_y": <int>,\n'
+    '  "subject_side": "left" | "right" | "center"\n'
+    "}}\n"
+    "hair_top_y = Y of topmost hair pixel including flyaways. "
+    "face_left_x / face_right_x = leftmost / rightmost head boundaries (hair + ears). "
+    "shoulder_top_y = Y of top of shoulders. "
+    "subject_side = 'left' if face center is in the left third, 'right' if in the right "
+    "third, otherwise 'center'. Return JSON only — no prose, no markdown."
+)
+
+
+def detect_subject_bbox(bg_image: Image.Image) -> dict | None:
+    """
+    Use Gemini Vision to detect the subject's head bounding box in the photo.
+    Returns pixel coordinates relative to bg_image, or None on any failure
+    (caller falls back to fixed positions).
+    """
+    api_key = config.GEMINI_API_KEY
+    if not api_key:
+        return None
+    try:
+        buf = BytesIO()
+        bg_image.convert("RGB").save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+        prompt = _BBOX_PROMPT_TMPL.format(w=bg_image.width, h=bg_image.height)
+        url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"gemini-2.5-flash:generateContent?key={api_key}"
+        )
+        payload = {
+            "contents": [{
+                "parts": [
+                    {"text": prompt},
+                    {"inline_data": {"mime_type": "image/png", "data": b64}},
+                ],
+            }],
+            "generationConfig": {"responseMimeType": "application/json", "temperature": 0.0},
+        }
+        resp = requests.post(url, json=payload, timeout=30)
+        if resp.status_code != 200:
+            log.warning("Subject bbox detection: %d %s", resp.status_code, resp.text[:200])
+            return None
+        text_parts = (
+            resp.json().get("candidates", [{}])[0]
+            .get("content", {}).get("parts", [])
+        )
+        raw = "".join(p.get("text", "") for p in text_parts).strip()
+        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw).strip()
+        bbox = json.loads(raw)
+
+        # Sanity check the values
+        h, w = bg_image.height, bg_image.width
+        if not (0 <= bbox.get("hair_top_y", -1) < h):
+            return None
+        if not (0 <= bbox.get("face_left_x", -1) < bbox.get("face_right_x", -1) <= w):
+            return None
+        if bbox.get("subject_side") not in ("left", "right", "center"):
+            bbox["subject_side"] = "center"
+        log.info(
+            "Subject bbox: hair_top=%d face_x=[%d,%d] shoulders=%d side=%s",
+            bbox["hair_top_y"], bbox["face_left_x"], bbox["face_right_x"],
+            bbox.get("shoulder_top_y", -1), bbox["subject_side"],
+        )
+        return bbox
+    except Exception as exc:
+        log.warning("Subject bbox detection failed: %s", exc)
+        return None
+
+
+def _draw_text_in_zone(
+    draw, lines, font, y_top, x_left, x_right, color, line_spacing=10,
+):
+    """
+    Draw text lines left-aligned within a horizontal zone [x_left, x_right].
+    Lines are anchored to x_left (no centering) so they align cleanly along
+    the zone's left edge — matches reference creatives where text sits to
+    one side of the subject.
+    """
+    y = y_top
+    for line in lines:
+        draw.text((x_left, y), line, font=font, fill=color)
+        bbox = draw.textbbox((x_left, y), line, font=font)
+        y += (bbox[3] - bbox[1]) + line_spacing
+    return y
+
+
 def compose_ad(
     bg_image: Image.Image,
     headline: str,
@@ -618,42 +715,87 @@ def compose_ad(
     canvas = Image.new("RGBA", (size, size), (255, 255, 255, 255))
     canvas.paste(photo_comp, (photo_x, photo_y), photo_comp)
 
-    # ── 6. Text (centered on full canvas width, y relative to photo area) ──────
-    draw       = ImageDraw.Draw(canvas)
-    max_text_w = int(photo_w * 0.88)
+    # ── 6. Text — dynamically placed using detected subject bbox ──────────────
+    draw = ImageDraw.Draw(canvas)
+    pad  = int(size * 0.05)   # ~60px text inset from canvas edge
 
-    # Font: 72px bottom-anchored so the LAST LINE always ends at 30% of the frame.
-    # Gemini prompt instructs hair at 35% → fixed ~5% gap from last line to hairline,
-    # whether the headline is 1 or 2 lines. The headline TOP shifts up for 2-line
-    # headlines; the BOTTOM stays put.
-    hl_size = int(size * 0.060)   # ~72px
-    hl_min  = int(size * 0.045)   # floor: ~54px
+    # Detect subject location in the (already resized) photo.  Coordinates are
+    # relative to bg_resized (photo_w × photo_h). On detection failure we fall
+    # back to fixed positions so the pipeline never breaks.
+    bbox = detect_subject_bbox(bg_resized)
+
+    # ── Vertical: anchor headline 4% above the detected hairline ──────────────
+    if bbox:
+        hair_top_canvas_y = photo_y + int(bbox["hair_top_y"])
+        hl_bottom = hair_top_canvas_y - int(size * 0.04)
+        # Floor: never push above the photo's first 1% or above the canvas top
+        hl_bottom = max(photo_y + int(size * 0.08), hl_bottom)
+    else:
+        hl_bottom = int(size * 0.30)
+
+    # ── Horizontal zone for the HEADLINE: opposite side from the subject ──────
+    if bbox and bbox["subject_side"] == "right":
+        hl_x_left, hl_x_right = pad, int(size * 0.55)
+    elif bbox and bbox["subject_side"] == "left":
+        hl_x_left, hl_x_right = int(size * 0.45), size - pad
+    else:
+        # Centered subject (or no detection): use full width.
+        hl_x_left, hl_x_right = pad, size - pad
+    hl_max_w = hl_x_right - hl_x_left
+
+    # Font sizing: 72px starting, shrink to fit ≤2 lines in the zone.
+    hl_size = int(size * 0.060)
+    hl_min  = int(size * 0.045)
     hl_font  = _load_font(hl_size, bold=True)
-    hl_lines = _wrap_text(headline, hl_font, max_text_w)
+    hl_lines = _wrap_text(headline, hl_font, hl_max_w)
     while len(hl_lines) > 2 and hl_size > hl_min:
         hl_size -= int(size * 0.003)
         hl_font  = _load_font(hl_size, bold=True)
-        hl_lines = _wrap_text(headline, hl_font, max_text_w)
+        hl_lines = _wrap_text(headline, hl_font, hl_max_w)
 
     LINE_SPACING = 12
     hl_height    = hl_size * len(hl_lines) + LINE_SPACING * (len(hl_lines) - 1)
-    hl_bottom    = int(size * 0.30)        # last-line bottom at 30% of frame
     hl_top       = max(photo_y + int(photo_h * 0.01), hl_bottom - hl_height)
-    _draw_text_left(
-        draw, hl_lines, hl_font,
-        hl_top,
-        0, (255, 255, 255, 255),
-        line_spacing=LINE_SPACING, canvas_width=size,
-    )
 
-    sh_font  = _load_font(int(size * 0.044))
-    sh_lines = _wrap_text(subheadline, sh_font, int(photo_w * 0.82))
-    _draw_text_left(
-        draw, sh_lines, sh_font,
-        photo_y + int(photo_h * 0.84),
-        0, (255, 255, 255, 255),
-        line_spacing=10, canvas_width=size,
-    )
+    if bbox and bbox["subject_side"] in ("left", "right"):
+        _draw_text_in_zone(
+            draw, hl_lines, hl_font, hl_top, hl_x_left, hl_x_right,
+            (255, 255, 255, 255), line_spacing=LINE_SPACING,
+        )
+    else:
+        # Center across the full canvas (current behaviour for centered subjects)
+        _draw_text_left(
+            draw, hl_lines, hl_font, hl_top,
+            0, (255, 255, 255, 255),
+            line_spacing=LINE_SPACING, canvas_width=size,
+        )
+
+    # ── Subheadline ───────────────────────────────────────────────────────────
+    sh_font = _load_font(int(size * 0.044))
+
+    # Same horizontal zone rule as the headline (subhead sits on the same side)
+    if bbox and bbox["subject_side"] == "right":
+        sh_x_left, sh_x_right = pad, int(size * 0.55)
+    elif bbox and bbox["subject_side"] == "left":
+        sh_x_left, sh_x_right = int(size * 0.45), size - pad
+    else:
+        sh_x_left, sh_x_right = pad, size - pad
+    sh_max_w = sh_x_right - sh_x_left
+    sh_lines = _wrap_text(subheadline, sh_font, sh_max_w)
+
+    sh_y = photo_y + int(photo_h * 0.84)
+
+    if bbox and bbox["subject_side"] in ("left", "right"):
+        _draw_text_in_zone(
+            draw, sh_lines, sh_font, sh_y, sh_x_left, sh_x_right,
+            (255, 255, 255, 255), line_spacing=10,
+        )
+    else:
+        _draw_text_left(
+            draw, sh_lines, sh_font, sh_y,
+            0, (255, 255, 255, 255),
+            line_spacing=10, canvas_width=size,
+        )
 
     # ── 7. Bottom strip ────────────────────────────────────────────────────────
     canvas = canvas.convert("RGB")
