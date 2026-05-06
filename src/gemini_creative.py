@@ -599,8 +599,11 @@ def compose_ad(
     draw       = ImageDraw.Draw(canvas)
     max_text_w = int(photo_w * 0.88)
 
-    hl_size = int(size * 0.085)   # ~102px — matches large bold headline in reference
-    hl_min  = int(size * 0.060)   # floor: still legible at 72px
+    # Smaller starting font (78px) so two lines of headline end well above the
+    # subject's hairline even when Gemini places hair slightly higher than instructed.
+    # Headline starts at 3% of photo height (top of the dark background zone).
+    hl_size = int(size * 0.065)   # ~78px — fits 2 lines with enough hair clearance
+    hl_min  = int(size * 0.048)   # floor: ~58px, still legible
     hl_font  = _load_font(hl_size, bold=True)
     hl_lines = _wrap_text(headline, hl_font, max_text_w)
     while len(hl_lines) > 2 and hl_size > hl_min:
@@ -609,9 +612,9 @@ def compose_ad(
         hl_lines = _wrap_text(headline, hl_font, max_text_w)
     _draw_text_left(
         draw, hl_lines, hl_font,
-        photo_y + int(photo_h * 0.06),
+        photo_y + int(photo_h * 0.03),
         0, (255, 255, 255, 255),
-        line_spacing=14, canvas_width=size,
+        line_spacing=12, canvas_width=size,
     )
 
     sh_font  = _load_font(int(size * 0.044))
