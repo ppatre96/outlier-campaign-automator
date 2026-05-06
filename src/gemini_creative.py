@@ -715,87 +715,51 @@ def compose_ad(
     canvas = Image.new("RGBA", (size, size), (255, 255, 255, 255))
     canvas.paste(photo_comp, (photo_x, photo_y), photo_comp)
 
-    # ── 6. Text — dynamically placed using detected subject bbox ──────────────
-    draw = ImageDraw.Draw(canvas)
-    pad  = int(size * 0.05)   # ~60px text inset from canvas edge
+    # ── 6. Text — always placed at the TOP, full-width centered. Vertical Y
+    # is dynamically anchored above the detected hairline so the text never
+    # overlaps the subject regardless of where Gemini places them.
+    draw       = ImageDraw.Draw(canvas)
+    max_text_w = int(photo_w * 0.88)
 
-    # Detect subject location in the (already resized) photo.  Coordinates are
-    # relative to bg_resized (photo_w × photo_h). On detection failure we fall
-    # back to fixed positions so the pipeline never breaks.
+    # Detect subject location for vertical positioning only (no horizontal zoning).
+    # Coordinates are relative to bg_resized (photo_w × photo_h). Fallback to a
+    # fixed 30% bottom if vision call fails.
     bbox = detect_subject_bbox(bg_resized)
-
-    # ── Vertical: anchor headline 4% above the detected hairline ──────────────
     if bbox:
         hair_top_canvas_y = photo_y + int(bbox["hair_top_y"])
-        hl_bottom = hair_top_canvas_y - int(size * 0.04)
-        # Floor: never push above the photo's first 1% or above the canvas top
-        hl_bottom = max(photo_y + int(size * 0.08), hl_bottom)
+        hl_bottom = hair_top_canvas_y - int(size * 0.04)  # 4% gap above hair
+        hl_bottom = max(photo_y + int(size * 0.08), hl_bottom)  # floor
     else:
         hl_bottom = int(size * 0.30)
 
-    # ── Horizontal zone for the HEADLINE: opposite side from the subject ──────
-    if bbox and bbox["subject_side"] == "right":
-        hl_x_left, hl_x_right = pad, int(size * 0.55)
-    elif bbox and bbox["subject_side"] == "left":
-        hl_x_left, hl_x_right = int(size * 0.45), size - pad
-    else:
-        # Centered subject (or no detection): use full width.
-        hl_x_left, hl_x_right = pad, size - pad
-    hl_max_w = hl_x_right - hl_x_left
-
-    # Font sizing: 72px starting, shrink to fit ≤2 lines in the zone.
+    # Headline font: 72px starting, shrink to fit ≤2 lines in full canvas width.
     hl_size = int(size * 0.060)
     hl_min  = int(size * 0.045)
     hl_font  = _load_font(hl_size, bold=True)
-    hl_lines = _wrap_text(headline, hl_font, hl_max_w)
+    hl_lines = _wrap_text(headline, hl_font, max_text_w)
     while len(hl_lines) > 2 and hl_size > hl_min:
         hl_size -= int(size * 0.003)
         hl_font  = _load_font(hl_size, bold=True)
-        hl_lines = _wrap_text(headline, hl_font, hl_max_w)
+        hl_lines = _wrap_text(headline, hl_font, max_text_w)
 
     LINE_SPACING = 12
     hl_height    = hl_size * len(hl_lines) + LINE_SPACING * (len(hl_lines) - 1)
     hl_top       = max(photo_y + int(photo_h * 0.01), hl_bottom - hl_height)
+    _draw_text_left(
+        draw, hl_lines, hl_font, hl_top,
+        0, (255, 255, 255, 255),
+        line_spacing=LINE_SPACING, canvas_width=size,
+    )
 
-    if bbox and bbox["subject_side"] in ("left", "right"):
-        _draw_text_in_zone(
-            draw, hl_lines, hl_font, hl_top, hl_x_left, hl_x_right,
-            (255, 255, 255, 255), line_spacing=LINE_SPACING,
-        )
-    else:
-        # Center across the full canvas (current behaviour for centered subjects)
-        _draw_text_left(
-            draw, hl_lines, hl_font, hl_top,
-            0, (255, 255, 255, 255),
-            line_spacing=LINE_SPACING, canvas_width=size,
-        )
-
-    # ── Subheadline ───────────────────────────────────────────────────────────
-    sh_font = _load_font(int(size * 0.044))
-
-    # Same horizontal zone rule as the headline (subhead sits on the same side)
-    if bbox and bbox["subject_side"] == "right":
-        sh_x_left, sh_x_right = pad, int(size * 0.55)
-    elif bbox and bbox["subject_side"] == "left":
-        sh_x_left, sh_x_right = int(size * 0.45), size - pad
-    else:
-        sh_x_left, sh_x_right = pad, size - pad
-    sh_max_w = sh_x_right - sh_x_left
-    sh_lines = _wrap_text(subheadline, sh_font, sh_max_w)
-
-    sh_y = photo_y + int(photo_h * 0.84)
-
-    if bbox and bbox["subject_side"] in ("left", "right"):
-        _draw_text_in_zone(
-            draw, sh_lines, sh_font, sh_y, sh_x_left, sh_x_right,
-            (255, 255, 255, 255), line_spacing=10,
-        )
-    else:
-        _draw_text_left(
-            draw, sh_lines, sh_font, sh_y,
-            0, (255, 255, 255, 255),
-            line_spacing=10, canvas_width=size,
-        )
+    # Subheadline — full-width centered, anchored to bottom of photo area
+    sh_font  = _load_font(int(size * 0.044))
+    sh_lines = _wrap_text(subheadline, sh_font, int(photo_w * 0.82))
+    _draw_text_left(
+        draw, sh_lines, sh_font,
+        photo_y + int(photo_h * 0.84),
+        0, (255, 255, 255, 255),
+        line_spacing=10, canvas_width=size,
+    )
 
     # ── 7. Bottom strip ────────────────────────────────────────────────────────
     canvas = canvas.convert("RGB")
