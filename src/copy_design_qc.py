@@ -676,7 +676,7 @@ def _call_gemini_vision(prompt: str, creative_path: str, reference_path: str | N
             "temperature": 0.0,
         },
     }
-    resp = requests.post(url, json=payload, timeout=120)
+    resp = requests.post(url, json=payload, timeout=30)
     if resp.status_code != 200:
         raise RuntimeError(f"Gemini vision QC error {resp.status_code}: {resp.text[:400]}")
 

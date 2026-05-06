@@ -56,6 +56,9 @@ class NullSheetsClient:
     def write_creative(self, *a, **kw) -> None:
         log.debug("NullSheetsClient.write_creative — no-op")
 
+    def write_registry_row(self, *a, **kw) -> None:
+        log.debug("NullSheetsClient.write_registry_row — no-op")
+
     def get_urn_sheet(self) -> None:
         return None
 
@@ -248,6 +251,41 @@ class SheetsClient:
             datetime.utcnow().isoformat(timespec="seconds") + "Z",
         ], value_input_option="RAW")
         log.info("Wrote creative %s → %s", stg_id, creative_name)
+
+    # ── Campaign Registry tab ─────────────────────────────────────────────────
+
+    def _get_or_create_registry_tab(self):
+        """Return the Campaign Registry worksheet (cached), creating it with headers if missing."""
+        if getattr(self, "_registry_ws_cache", None) is not None:
+            return self._registry_ws_cache
+
+        from src.campaign_registry import COLUMNS
+        try:
+            ws = self._triggers.worksheet(config.REGISTRY_TAB)
+        except Exception:
+            ws = self._triggers.add_worksheet(
+                title=config.REGISTRY_TAB, rows=1000, cols=len(COLUMNS)
+            )
+            headers = [c.replace("_", " ").title() for c in COLUMNS]
+            ws.update("A1", [headers])
+            ws.freeze(rows=1)
+            log.info("Created '%s' tab with %d columns", config.REGISTRY_TAB, len(COLUMNS))
+
+        self._registry_ws_cache = ws
+        return ws
+
+    def write_registry_row(self, record: dict) -> None:
+        """Append one campaign registry row to the Campaign Registry tab."""
+        from src.campaign_registry import COLUMNS
+        ws = self._get_or_create_registry_tab()
+        row = [record.get(col, "") or "" for col in COLUMNS]
+        ws.append_row(row, value_input_option="USER_ENTERED")
+        log.info(
+            "Registry sheet: appended row campaign=%s angle=%s geo=%s",
+            record.get("linkedin_campaign_urn", ""),
+            record.get("angle", ""),
+            record.get("geo_cluster_label", ""),
+        )
 
     # ── URN sheets ────────────────────────────────────────────────────────────
 

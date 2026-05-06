@@ -807,7 +807,7 @@ def generate_imagen_creative(
     return out_path
 
 
-_QC_MAX_RETRIES_DEFAULT = int(os.getenv("QC_MAX_RETRIES", "9"))
+_QC_MAX_RETRIES_DEFAULT = int(os.getenv("QC_MAX_RETRIES", "4"))
 
 
 def generate_imagen_creative_with_qc(

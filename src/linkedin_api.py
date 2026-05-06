@@ -192,8 +192,16 @@ class LinkedInClient:
             "status":   "DRAFT",
             "runSchedule": {"start": _now_ms()},
         }
-        resp = self._req("POST", self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/adCampaignGroups"), json=payload)
-        self._raise_for_status(resp, "createCampaignGroup")
+        for attempt in range(3):
+            try:
+                resp = self._req("POST", self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/adCampaignGroups"), json=payload)
+                self._raise_for_status(resp, "createCampaignGroup")
+                break
+            except Exception as exc:
+                if attempt == 2:
+                    raise
+                log.warning("createCampaignGroup attempt %d failed (%s) — retrying", attempt + 1, exc)
+                import time; time.sleep(3)
         group_id = resp.headers.get("x-linkedin-id") or _id_from_location(resp)
         urn = f"urn:li:sponsoredCampaignGroup:{group_id}"
         log.info("Created campaign group %s (name=%s)", urn, name)
@@ -230,6 +238,58 @@ class LinkedInClient:
         )
         self._raise_for_status(resp, "renameCampaign")
         log.info("Renamed campaign %s → %s", campaign_id, new_name)
+
+    def get_campaign(self, campaign_urn_or_id: str) -> dict:
+        """Fetch full campaign JSON from LinkedIn API (includes targetingCriteria)."""
+        campaign_id = str(campaign_urn_or_id).rsplit(":", 1)[-1]
+        resp = self._req(
+            "GET",
+            self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/adCampaigns/{campaign_id}"),
+        )
+        self._raise_for_status(resp, "getCampaign")
+        return resp.json()
+
+    def clone_campaign(self, source_urn: str, new_name: str) -> str:
+        """
+        Create a new DRAFT campaign by cloning the targeting criteria from an
+        existing campaign. The new campaign is placed in the same campaign group.
+        Returns new campaign URN.
+        """
+        source = self.get_campaign(source_urn)
+        targeting    = source.get("targetingCriteria") or {}
+        group_urn    = source.get("campaignGroup") or ""
+        daily_budget = source.get("dailyBudget") or {"currencyCode": "USD", "amount": "50.00"}
+        unit_cost    = source.get("unitCost")    or {"currencyCode": "USD", "amount": "10.00"}
+        locale       = source.get("locale")      or {"country": "US", "language": "en"}
+        obj_type     = source.get("objectiveType") or "WEBSITE_VISIT"
+
+        name = self._prefixed(new_name)
+        payload = {
+            "account":                f"urn:li:sponsoredAccount:{config.LINKEDIN_AD_ACCOUNT_ID}",
+            "campaignGroup":          group_urn,
+            "name":                   name,
+            "type":                   "SPONSORED_UPDATES",
+            "costType":               "CPM",
+            "dailyBudget":            daily_budget,
+            "unitCost":               unit_cost,
+            "targetingCriteria":      targeting,
+            "status":                 "DRAFT",
+            "locale":                 locale,
+            "objectiveType":          obj_type,
+            "offsiteDeliveryEnabled": False,
+            "politicalIntent":        "NOT_POLITICAL",
+            "runSchedule":            {"start": _now_ms()},
+        }
+        resp = self._req(
+            "POST",
+            self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/adCampaigns"),
+            json=payload,
+        )
+        self._raise_for_status(resp, "cloneCampaign")
+        campaign_id = resp.headers.get("x-linkedin-id") or _id_from_location(resp)
+        urn = f"urn:li:sponsoredCampaign:{campaign_id}"
+        log.info("Cloned campaign %s → %s '%s'", source_urn, urn, name)
+        return urn
 
     # ── Campaign ───────────────────────────────────────────────────────────────
 
@@ -649,14 +709,17 @@ def _build_targeting_criteria(
     out: dict = {"include": {"and": include}}
 
     if exclude_facet_urns:
-        exclude_or = []
+        # LinkedIn exclude.or must be a dict (DataMap) not a list:
+        #   {"exclude": {"or": {"urn:li:adTargetingFacet:titles": ["urn:li:title:1"]}}}
+        # All excluded facets are merged into one DataMap object (OR semantics across all keys).
+        exclude_map: dict[str, list[str]] = {}
         for facet, urns in exclude_facet_urns.items():
             if not urns:
                 continue
             full_key = _FACET_SHORT_TO_URN.get(facet, facet)
-            exclude_or.append({"or": {full_key: urns}})
-        if exclude_or:
-            out["exclude"] = {"or": exclude_or}
+            exclude_map[full_key] = urns
+        if exclude_map:
+            out["exclude"] = {"or": exclude_map}
 
     return out
 

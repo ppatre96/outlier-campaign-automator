@@ -11,6 +11,7 @@ URN_SHEET_ID      = "10S5QhB46l-f_ncR7fEGnkT9E2QIAs07RBuoLnahJhW0"
 TRIGGERS_TAB      = "Triggers 2"
 CREATIVES_TAB     = "Creatives"
 CONFIG_TAB        = "Config"
+REGISTRY_TAB      = "Campaign Registry"
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS", "credentials.json")
 
 # ── Redash ────────────────────────────────────────────────────────────────────
