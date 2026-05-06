@@ -167,6 +167,10 @@ BACKGROUND:
 - Setting: lush home interior — bookshelves, potted plants, wall art, warm natural \
   window light. 85mm prime lens, shallow depth of field. {expression}. Shot on film, \
   analog color grade, authentic lifestyle photo. NOT a stock photo. NOT a corporate headshot.
+- COLOR MOOD: Warm pinkish-amber light in the top-left of the frame (as if a warm lamp \
+  sits just outside the frame top-left). Cool teal/blue ambient light in the bottom-left \
+  corner (evening window light or ambient fill). This natural lighting palette will be \
+  enhanced by branded color overlays added in post-processing.
 - If a laptop or screen is visible, show natural document/text content appropriate for \
   the profession (clinical notes, emails, documents, code) — NOT data charts, graphs, \
   dashboards, or medical imaging displays.
@@ -356,36 +360,51 @@ def _generate_imagen(
 
 def _make_gradient_overlay(width: int, height: int, angle: str) -> Image.Image:
     """
-    Left-side soft wash gradient matching Outlier Static Ads v2 reference.
+    Outlier Static Ads v2 branded gradient overlay — added in post by compose_ad()
+    so the result is always consistent regardless of what Gemini generates.
 
-    Ground truth from 7 reference ads:
-    - Pink/coral cloud radiating from TOP-LEFT, spreading ~50% across image width
-    - Teal/blue cloud radiating from BOTTOM-LEFT, spreading ~50% across image width
-    - Right half of image mostly unaffected (gradient fades to zero)
-    - Both clouds are soft/diffuse — NOT tight corner dots
-    - Opacity: ~40-45% at strongest point, fading outward
-
-    This spread is what makes text readable when overlaid on the face area
-    (left portion of frame where text sits).
+    Layout (matches reference creatives):
+    - Pink/coral cloud radiating from TOP-LEFT (~50% spread, fades right and down)
+    - Teal/blue cloud radiating from BOTTOM-LEFT (~50% spread, fades right and up)
+    - Right half mostly unaffected
+    - Dark bands in text zones (top 28% + bottom 28%) for white text contrast
     """
-    # NOTE: Gemini now bakes the pink/coral + teal corner washes directly into the photo
-    # (see GEMINI_PROMPT_TEMPLATE → "GRADIENT WASH" section). PIL should NOT add its own
-    # colored clouds on top — that caused the "gradient border" artefact the user flagged.
-    # We only add subtle DARK wash bands in the text zones so white text stays readable
-    # regardless of what Gemini produces.
     overlay = np.zeros((height, width, 4), dtype=np.float32)
-    y_grid, _ = np.meshgrid(
+    y_grid, x_grid = np.meshgrid(
         np.linspace(0, 1, height),
         np.linspace(0, 1, width),
         indexing="ij",
     )
 
-    # Dark wash bands behind text zones — gentle, no colored tint.
-    top_band    = np.clip(1.0 - y_grid / 0.28, 0, 1) ** 1.5 * 0.32
-    bottom_band = np.clip((y_grid - 0.72) / 0.20, 0, 1) ** 1.5 * 0.28
-    dark_alpha  = np.maximum(top_band, bottom_band)
-    overlay[:, :, 3] = np.clip(dark_alpha, 0, 1)
-    return Image.fromarray((np.clip(overlay, 0, 1) * 255).astype(np.uint8), "RGBA")
+    # ── Pink/coral wash — top-left origin ─────────────────────────────────────
+    # Gaussian centred at (x=0, y=0), spreading ~55% across width/height
+    sigma_x, sigma_y = 0.55, 0.50
+    pink_dist = np.exp(-0.5 * ((x_grid / sigma_x) ** 2 + (y_grid / sigma_y) ** 2))
+    pink_alpha = np.clip(pink_dist * 0.42, 0, 1)
+    overlay[:, :, 0] = np.maximum(overlay[:, :, 0], 1.0 * pink_alpha)   # R
+    overlay[:, :, 1] = np.maximum(overlay[:, :, 1], 0.55 * pink_alpha)  # G
+    overlay[:, :, 2] = np.maximum(overlay[:, :, 2], 0.50 * pink_alpha)  # B
+    overlay[:, :, 3] = np.maximum(overlay[:, :, 3], pink_alpha)
+
+    # ── Teal/blue wash — bottom-left origin ───────────────────────────────────
+    teal_dist = np.exp(-0.5 * ((x_grid / sigma_x) ** 2 + ((1 - y_grid) / sigma_y) ** 2))
+    teal_alpha = np.clip(teal_dist * 0.38, 0, 1)
+    overlay[:, :, 0] = np.maximum(overlay[:, :, 0], 0.20 * teal_alpha)  # R
+    overlay[:, :, 1] = np.maximum(overlay[:, :, 1], 0.75 * teal_alpha)  # G
+    overlay[:, :, 2] = np.maximum(overlay[:, :, 2], 0.80 * teal_alpha)  # B
+    overlay[:, :, 3] = np.maximum(overlay[:, :, 3], teal_alpha)
+
+    # ── Dark bands for text readability ───────────────────────────────────────
+    top_dark    = np.clip(1.0 - y_grid / 0.28, 0, 1) ** 1.5 * 0.28
+    bottom_dark = np.clip((y_grid - 0.72) / 0.20, 0, 1) ** 1.5 * 0.24
+    dark        = np.maximum(top_dark, bottom_dark)
+    # Dark band is black (RGB=0) overlaid using its own alpha
+    dark_layer  = np.zeros((height, width, 4), dtype=np.float32)
+    dark_layer[:, :, 3] = dark
+
+    # Composite: dark layer on top of the colour washes
+    combined = np.clip(overlay + dark_layer * (1 - overlay[:, :, 3:4]), 0, 1)
+    return Image.fromarray((combined * 255).astype(np.uint8), "RGBA")
 
 
 def _load_font(size: int, bold: bool = False):
