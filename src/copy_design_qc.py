@@ -564,7 +564,7 @@ If you are unsure, count it as a FAIL. Borderline = FAIL.
 SCAN PROTOCOL (execute in this order before scoring):
 (1) Count every occurrence of the word "Outlier" (or stylized equivalent) anywhere in the image. Expected: exactly 1.
 (2) Read the photo area like a page. Transcribe EVERY piece of text you see inside the photo that is NOT the crisp headline/subheadline overlay or the bottom-strip earnings line. NOTE: Blurry or illegible text/data visible on a laptop or monitor screen (e.g. code, charts, medical data, documents) is acceptable and should NOT be flagged — only flag clearly legible text that looks like it was deliberately rendered as part of the creative.
-(3) Measure the visible gap between the BOTTOM edge of the headline text (letter descenders, including the lowest descender on letters like 'g', 'p', 'y') and the TOP of the subject's hair (including any flyaway strands above the main mass). Be STRICT: if a single hair pixel appears within OR right against the headline's bounding box, that is TOO CLOSE — answer TOO CLOSE. Report it as: TOO CLOSE (text touching, overlapping, or directly abutting hair — even by 1-2 pixels), JUST RIGHT (clearly visible empty band between text and head, ~3-8% of frame height), or TOO FAR (large wasted band, >10% of frame height). When in doubt between TOO CLOSE and JUST RIGHT, answer TOO CLOSE — borderline is FAIL.
+(3) Measure the visible gap between the BOTTOM edge of the headline text (letter descenders, including the lowest descender on letters like 'g', 'p', 'y') and the TOP of the subject's hair (including any flyaway strands above the main mass). Be STRICT: if a single hair pixel appears within OR right against the headline's bounding box, that is TOO CLOSE — answer TOO CLOSE. Report it as: TOO CLOSE (text touching, overlapping, or directly abutting hair — even by 1-2 pixels), JUST RIGHT (clearly visible empty band between text and head, ~5-12% of frame height), or TOO FAR (very large wasted band, >15% of frame height). When in doubt between TOO CLOSE and JUST RIGHT, answer TOO CLOSE — borderline is FAIL.
 (4) Look at the bottom-right Outlier logo. Is it the actual Outlier wordmark (clean, proportional brown letterforms "O-u-t-l-i-e-r") or does it look warped, cut off, tiled, or like generic bold text?
 (5) Check the subject: does the person look like a real human (authentic skin, natural asymmetry) or clearly AI-generated (plastic, uncanny, glitched)?
 
@@ -593,8 +593,8 @@ Respond with a single JSON object (JSON only, no prose, no markdown fences):
     "detail": "FAIL if ANY pixel of hair (including flyaways) is within or right against the headline's text bounding box, even by 1-2 pixels. FAIL if there is an unusually large empty band between the text and the hairline. JUST RIGHT is a clearly visible 3-8% empty band between descenders and hairline."
   }},
   "headroom_gap_appropriate": {{
-    "pass": <true iff scan step 3 gap_classification is JUST RIGHT>,
-    "detail": "FAIL if gap is TOO FAR (>10% of frame height) — this wastes vertical space and looks amateur. FAIL if gap is TOO CLOSE (touching) — covered by text_overlaps_subject."
+    "pass": true,
+    "detail": "auto-pass — gap size is not checked; only overlap is enforced via text_overlaps_subject"
   }},
   "photo_fills_frame": {{
     "pass": <true iff the photo fills the entire photo-area rectangle with NO white gaps, no transparent strips, and no obvious horizontal/vertical bands where the photo failed to extend>,
@@ -847,7 +847,7 @@ def qc_creative(
         "rendered_text_in_photo":      ("No rendered text in photo",     "Gemini rendered text/letters/logos INTO the photo. Add explicit 'ZERO TEXT in image. No words, letters, logos, wordmarks, earnings figures, or caption-like shapes anywhere'."),
         "duplicate_logo":              ("No duplicate logos",            "A second Outlier logo is visible inside the photograph. Tell Gemini 'Do NOT render any Outlier logo, brand mark, or wordmark — the logo is composited post-hoc.'"),
         "text_overlaps_subject":       ("Text doesn't overlap subject",  "Headline is touching the subject's hair. Tell Gemini 'the TOP of the subject\\'s hair must sit at approximately 28% from the top of the frame, giving a small 3-5% visible gap between the bottom of the headline and the top of the hair. Text must NEVER touch hair, flyaways, or any subject pixels'."),
-        "headroom_gap_appropriate":    ("Headroom gap not too big",      "The empty gap between the headline and the top of the subject's hair is TOO LARGE — looks like wasted space. Tell Gemini 'place the subject HIGHER in the frame: top of hair should sit at ~28% from the top, not lower. We want a small clean 3-5% gap between the headline bottom and the hairline — NOT a huge empty band'. Reduce the head-clearance requirement."),
+        # headroom_gap_appropriate removed — a large gap is acceptable; only overlap is not
         # gradient_position_correct removed — gradients are now added by compose_ad() in post, not by Gemini
         # edge_border_artefact removed — same reason
         "photo_fills_frame":           ("Photo fills frame",             "Photo has white gaps or unfilled strips inside the intended photo rectangle. Verify bg_image sizing and cropping in compose_ad()."),
