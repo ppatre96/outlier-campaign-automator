@@ -144,91 +144,67 @@ _ANGLE_EXPRESSIONS = {
 GEMINI_PROMPT_TEMPLATE = """\
 PHOTO GENERATION PROMPT:
 
-A close-up environmental portrait of a {photo_subject}. HEAD PLACEMENT (CRITICAL): the \
-TOP of the subject's hair must sit at approximately 28% from the top of the frame — \
-NOT higher (text would clip hair), NOT lower (creates excessive empty gap). The top \
-~25% of the frame is a text-safe strip (no subject pixels, no hair, no flyaways); the \
-top of the hair then appears at ~28%, with a small clean 3-5% visible gap between the \
-bottom of the future headline overlay and the hairline. Subject's face centered \
-vertically in the MIDDLE THIRD of the frame. Body/torso clearly visible below shoulders. \
-EMPTY SPACE on the left and right sides of the subject — text will overlay beside/below \
-subject, NOT on them. Lush plant-filled home interior: bookshelves, potted plants, wall \
-art, warm natural window light. 85mm prime lens, shallow depth of field. {expression}. \
-Shot on film, analog color grade, authentic lifestyle photo. NOT stock photo. NOT \
-corporate headshot.
+TARGET AUDIENCE: {tg_label}
 
-GRADIENT WASH — EXACTLY MATCH THE REFERENCE IMAGE (attached). Two specific corner washes only:
+A close-up environmental portrait of a {photo_subject}. This image will be used as a \
+LinkedIn ad targeting {tg_label} — the subject must immediately read as a credible, \
+senior {tg_label} professional in their authentic work environment.
 
-1. TOP-LEFT corner: soft pastel PINK/CORAL wash. Must originate in the TOP-LEFT quadrant \
-   of the frame. Must NOT appear in the top-right, bottom-left, or bottom-right. Must be \
-   CENTRED around roughly (x=15%, y=15%) and fade outward from there.
+HEAD PLACEMENT (MOST CRITICAL — follow exactly):
+- The TOP of the subject's hair must sit at EXACTLY 28% from the top of the frame.
+- The top 25% of the frame must be COMPLETELY FREE of any subject pixels, hair, or \
+  flyaways — this space is reserved for a text overlay that will be added in post.
+- A clean 3-5% visible gap must separate the bottom of the text zone and the hairline.
+- Do NOT place the subject's head higher than 28% — headline text will clip the hair.
+- Do NOT place the subject's head lower than 35% — creates excessive empty space.
+- Subject's face should fill the MIDDLE THIRD of the frame. Body/torso visible below shoulders.
 
-2. BOTTOM-LEFT corner: soft pastel TEAL/BLUE wash. Must originate in the BOTTOM-LEFT \
-   quadrant of the frame. Must NOT appear in the top-left, top-right, or bottom-right. \
-   Must be CENTRED around roughly (x=15%, y=85%) and fade outward from there.
-
-EXPLICIT NEGATIVES (these are the most common failure modes):
-- DO NOT place pink/coral in the top-right, bottom-left, or anywhere else besides the top-left quadrant.
-- DO NOT place teal/blue in the top-left, top-right, or anywhere else besides the bottom-left quadrant.
-- DO NOT spread the washes across the entire top or entire bottom — they stay in the LEFT half.
-- DO NOT produce a symmetric or radial pattern — the washes are ONLY on the left side.
-- The ENTIRE RIGHT HALF of the frame must remain neutral (natural photo tones, no colored washes).
-
-EDGE RULE: The gradient washes must FADE COMPLETELY TO NEUTRAL before reaching the outer \
-5% of any edge. The outermost 5% of every edge (top, bottom, left, right) must show \
-natural photo content with NO colored line, NO gradient band, NO graphic stripe. \
-Colored washes NEVER touch the frame edge.
-
-These washes are PART OF THE PHOTO — baked into the lighting. Do NOT draw separate overlay \
-graphics or border stripes.
-
-TEXT-SAFE ZONE CONTRAST (CRITICAL for white text overlay readability):
-- Top 30% of the frame MUST be a mid-tone to dark background (warm wood shelves, deeper plant \
-  foliage, shadowed walls). Combined with the pink/coral wash, this gives white headline text \
-  enough contrast to read. NO white walls, NO bright windows in the top band.
-- Bottom third around subject's waist/desk area must also be mid-tone / darker — the teal wash \
-  sits here. White subheadline text will overlay this zone.
+BACKGROUND:
+- Top 30% of the frame MUST be mid-tone to dark (warm wood shelves, plant foliage, \
+  shadowed walls). No bright white walls or blown-out windows in this zone — white \
+  headline text will overlay it and needs contrast to read.
+- Bottom third must also be mid-tone/darker for white subheadline text readability.
+- Setting: lush home interior — bookshelves, potted plants, wall art, warm natural \
+  window light. 85mm prime lens, shallow depth of field. {expression}. Shot on film, \
+  analog color grade, authentic lifestyle photo. NOT a stock photo. NOT a corporate headshot.
 
 CRITICAL OUTPUT CONSTRAINTS:
-- DO NOT render any text, words, letters, logos, or wordmarks in the image
-- DO NOT add the Outlier logo, earnings strip, or any branding — these are composited separately in post-processing
-- OUTPUT ONLY THE PHOTOGRAPH — no overlays, no text, no graphics, no solid-color borders
-- The headline + subheadline text will be limited to MAX 2 LINES each (≤6 words headline, \
-  ≤7 words subheadline) — compose the photo assuming this text will fit in the top/bottom \
-  safe zones without overlapping the subject's face.
-
-The attached reference image shows the target COMPOSITION LAYOUT ONLY (subject framing, \
-top-clear space, side margins, background color tones). Match that composition exactly. \
-Ignore any text, logos, or branding visible in the reference — generate ONLY the clean \
-background photograph.\
+- DO NOT render any text, words, letters, numbers, logos, or wordmarks in the image.
+- DO NOT add any Outlier branding — logo, earnings strip, and gradient overlays are \
+  composited separately in post-processing.
+- OUTPUT ONLY THE CLEAN PHOTOGRAPH — no text overlays, no graphic elements, no \
+  solid-color borders.\
 """
 
 # Reference image URL (Google Drive folder with reference PNG + logo SVG)
 _REFERENCE_IMAGE_URL = "https://drive.google.com/drive/folders/1EYVpR40lXOiZFPBV-HkZ3Jx0CImjsHvV?usp=drive_link"
 
 
-def _build_imagen_prompt(photo_subject: str, angle: str) -> tuple[str, str]:
+def _build_imagen_prompt(photo_subject: str, angle: str, tg_label: str = "") -> tuple[str, str]:
     """
-    Build Gemini image prompt matching Outlier Static Ads v2 aesthetic.
+    Build Gemini image prompt for a clean lifestyle portrait.
 
-    Returns a (prompt_text, reference_image_b64) tuple:
-      - prompt_text: full formatted prompt
-      - reference_image_b64: base64-encoded Finance-Branded-BankerMale-Futureproof-1x1.png
-        (attached as image part in direct Gemini API calls; empty string if not found)
+    Gradients, logo, and text overlays are added by compose_ad() in post — Gemini
+    is only responsible for the background photograph with correct head placement.
+
+    Returns (prompt_text, ""). Reference image is no longer attached — it showed
+    gradient/branding context that conflicted with the simplified clean-photo brief.
 
     Args:
-        photo_subject: Specific description of the subject (gender, ethnicity, profession, activity)
-        angle: Copy variant angle ("A", "B", or "C") — determines expression in the prompt
+        photo_subject: Specific subject description (gender, ethnicity, profession, activity)
+        angle: Copy variant angle ("A", "B", or "C") — determines expression
+        tg_label: Target-group label injected into the prompt (e.g. "Cardiologists")
     """
     expression = _ANGLE_EXPRESSIONS.get(angle, _ANGLE_EXPRESSIONS["A"])
+    label = tg_label or photo_subject.split(",")[0].strip()
 
-    # Format the full template with actual values
     prompt_text = GEMINI_PROMPT_TEMPLATE.format(
         photo_subject=photo_subject,
         expression=expression,
+        tg_label=label,
     )
 
-    return prompt_text, _REFERENCE_IMAGE_B64
+    return prompt_text, ""
 
 
 # ── Reference image handling ────────────────────────────────────────────────
@@ -313,9 +289,10 @@ def _generate_imagen(
             raise RuntimeError(f"LiteLLM image response missing b64_json: {resp.text[:300]}")
         raise RuntimeError(f"LiteLLM image generation failed ({resp.status_code}): {resp.text[:300]}")
 
+    _model = config.GEMINI_IMAGE_MODEL.removeprefix("gemini/")
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models"
-        f"/gemini-2.5-flash-image:generateContent?key={api_key}"
+        f"/{_model}:generateContent?key={api_key}"
     )
 
     # Build request parts: text prompt first, then reference image inline,
@@ -753,7 +730,8 @@ def generate_imagen_creative(
 
     validate_photo_subject(subject)  # raises ValueError if generic
 
-    prompt, ref_img_b64 = _build_imagen_prompt(subject, angle)
+    tg_label = variant.get("tgLabel", "") if variant else ""
+    prompt, ref_img_b64 = _build_imagen_prompt(subject, angle, tg_label=tg_label)
     if prompt_suffix:
         prompt = prompt + "\n\nADDITIONAL QC FEEDBACK (apply strictly):\n" + prompt_suffix
     if not attach_reference_image:
@@ -898,6 +876,7 @@ def generate_imagen_creative_with_qc(
     _base_prompt, _ = _build_imagen_prompt(
         photo_subject or variant.get("photo_subject", ""),
         variant.get("angle", "A"),
+        tg_label=variant.get("tgLabel", ""),
     )
     last_report["gemini_prompt"] = _base_prompt
     path = Path("/dev/null")
