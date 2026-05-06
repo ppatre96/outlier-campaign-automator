@@ -167,6 +167,9 @@ BACKGROUND:
 - Setting: lush home interior — bookshelves, potted plants, wall art, warm natural \
   window light. 85mm prime lens, shallow depth of field. {expression}. Shot on film, \
   analog color grade, authentic lifestyle photo. NOT a stock photo. NOT a corporate headshot.
+- If a laptop or screen is visible, show natural document/text content appropriate for \
+  the profession (clinical notes, emails, documents, code) — NOT data charts, graphs, \
+  dashboards, or medical imaging displays.
 
 CRITICAL OUTPUT CONSTRAINTS:
 - DO NOT render any text, words, letters, numbers, logos, or wordmarks in the image.
@@ -548,12 +551,12 @@ def compose_ad(
       - White bottom strip: earnings + Outlier wordmark
     """
     size    = AD_SIZE
-    border  = int(size * 0.033)          # ~40px white border on L / R / T
+    border  = int(size * 0.018)          # ~22px white border — reduced to minimise top strip
 
     strip_h = int(size * 0.14) if with_bottom_strip else border
     photo_x = border
     photo_y = border
-    photo_w = size - 2 * border          # 1120px
+    photo_w = size - 2 * border          # ~1156px
     photo_h = size - strip_h - border   # 992px  (top border + bottom strip consumed)
 
     # ── 1. Crop generated image to exact photo aspect ratio, then resize ───────
@@ -599,22 +602,27 @@ def compose_ad(
     draw       = ImageDraw.Draw(canvas)
     max_text_w = int(photo_w * 0.88)
 
-    # Smaller starting font (78px) so two lines of headline end well above the
-    # subject's hairline even when Gemini places hair slightly higher than instructed.
-    # Headline starts at 3% of photo height (top of the dark background zone).
-    hl_size = int(size * 0.065)   # ~78px — fits 2 lines with enough hair clearance
-    hl_min  = int(size * 0.048)   # floor: ~58px, still legible
+    # Headline font: 78px so two lines fit with 5% clearance above the 28% hair line.
+    # Bottom-anchored at 23% of frame height — headline always ends ~5% before hair.
+    hl_size = int(size * 0.065)   # ~78px
+    hl_min  = int(size * 0.048)   # floor: ~58px
     hl_font  = _load_font(hl_size, bold=True)
     hl_lines = _wrap_text(headline, hl_font, max_text_w)
     while len(hl_lines) > 2 and hl_size > hl_min:
         hl_size -= int(size * 0.004)
         hl_font  = _load_font(hl_size, bold=True)
         hl_lines = _wrap_text(headline, hl_font, max_text_w)
+
+    LINE_SPACING = 12
+    hl_height    = hl_size * len(hl_lines) + LINE_SPACING * (len(hl_lines) - 1)
+    # Hair expected at 28% of frame → headline bottom at 23% gives ~5% gap
+    hl_bottom    = int(size * 0.23)
+    hl_top       = max(photo_y + int(photo_h * 0.01), hl_bottom - hl_height)
     _draw_text_left(
         draw, hl_lines, hl_font,
-        photo_y + int(photo_h * 0.03),
+        hl_top,
         0, (255, 255, 255, 255),
-        line_spacing=12, canvas_width=size,
+        line_spacing=LINE_SPACING, canvas_width=size,
     )
 
     sh_font  = _load_font(int(size * 0.044))
