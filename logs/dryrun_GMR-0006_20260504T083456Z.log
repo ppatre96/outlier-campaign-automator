@@ -1,0 +1,720 @@
+2026-05-04 14:04:56,748 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=GMR-0006 dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-05-04.log
+2026-05-04 14:05:00,619 INFO smart_ramp_poller Running pipeline for ramp=GMR-0006 version=1 dry_run=True
+2026-05-04 14:05:06,433 INFO src.redash_db RedashClient ready → https://redash.scale.com (data_source_id=30)
+2026-05-04 14:05:06,437 INFO src.redash_db Resolving project_id=698a172324c01532c2f92a0d to signup_flow_id + config_name
+2026-05-04 14:05:09,151 INFO src.redash_db Resolved project → signup_flow_id=69a7a186d91acccdf955b912 config='Clinical Medicine - Cardiology' (passes=109)
+2026-05-04 14:05:09,151 INFO src.redash_db Fetching screenings via Redash for flow=69a7a186d91acccdf955b912 config=Clinical Medicine - Cardiology
+2026-05-04 14:05:21,445 INFO src.redash_db Fetched 408 screening rows
+2026-05-04 14:05:21,448 INFO main _resolve_cohorts: raw data 408 rows
+2026-05-04 14:05:21,481 INFO main _resolve_cohorts: 377 binary features
+2026-05-04 14:05:35,883 INFO main _resolve_cohorts: Smart Ramp brief = 'US-based cardiologists who have completed their fellowship training' (will fold into ICP derivation + copy gen)
+2026-05-04 14:05:42,019 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:05:42,027 INFO src.icp_from_jobpost Derived ICP from job post: label='US-Based Cardiologists (Fellowship Trained)' domain='medical' geography='United States' (skills=7, degrees=4)
+2026-05-04 14:05:42,031 INFO src.icp_from_jobpost Base-role candidates from [job_name='[Medicine] Clinical Medicine - Cardiology', domain='Clinical Medicine', flow_name='Experts Health EKG', proj_name=None, worker_skills=[]]: ['Physician', 'Doctor', 'Medical Doctor', 'Cardiologist', 'Radiologist', 'MBBS', 'MD']
+2026-05-04 14:05:42,032 INFO src.icp_from_jobpost Family-specific exclusions for ['physician']: [('titles', 'Medical Sales Representative'), ('titles', 'Pharmaceutical Sales Representative'), ('titles', 'Medical Device Sales')]
+2026-05-04 14:05:42,036 INFO src.analysis Tier T1 (_is_pass): 338 positives
+2026-05-04 14:05:42,036 INFO src.analysis Tier fallback: stronger tiers were thin — dropped down to T1 (338 ≥ 30). Cohort analysis will target this tier's positive class.
+2026-05-04 14:05:42,036 INFO main _resolve_cohorts: target tier=T1 col=_is_pass n_icp=338
+2026-05-04 14:05:42,036 INFO src.analysis stage_a_negative: only 70 non-activators (< 100 threshold) — skipping data-driven exclusions. The negative class is too thin to trust.
+2026-05-04 14:05:42,036 INFO src.analysis stage_a dispatch → lift mode (T1 / resume-pass target: '_is_pass' — lift is the correct framing for pass-vs-fail)
+2026-05-04 14:05:42,038 INFO src.analysis Stage A target: T1 (resume-pass)
+2026-05-04 14:05:42,038 INFO src.analysis Global baseline: 82.8% (338/408)
+2026-05-04 14:05:42,092 INFO src.analysis Univariates: 6 accepted / 377 tested
+2026-05-04 14:05:42,101 INFO src.analysis Synthesized 7 base-role anchored candidate(s).
+2026-05-04 14:05:42,101 INFO src.analysis Enforced base-role anchor: 7 candidate(s) kept, 14 dropped (no base-role feature).
+2026-05-04 14:05:42,107 INFO src.stage_c Stage C: validating 7 cohorts against LinkedIn Audience Counts
+2026-05-04 14:05:44,167 INFO src.linkedin_urn Loaded 25386 URNs from tab 'Titles'
+2026-05-04 14:05:44,955 INFO src.linkedin_urn Loaded 2171 URNs from tab 'FieldsOfStudy'
+2026-05-04 14:05:46,493 INFO src.linkedin_urn Loaded 41943 URNs from tab 'Skills'
+2026-05-04 14:05:46,535 INFO src.stage_c Stage C: 7 cohorts have resolvable URNs
+2026-05-04 14:05:47,610 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-05-04 14:05:47,610 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Atitles%3AList%28urn%3Ali%3Atitle%3A6241%29%29%29%29%29%29
+2026-05-04 14:05:47,610 WARNING src.stage_c Audience count failed for 'job_titles_norm__cardiologist + experience_band__10plus': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Atitles%3AList%28urn%3Ali%3Atitle%3A6241%29%29%29%29%29%29 — skipping
+2026-05-04 14:05:48,076 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-05-04 14:05:48,077 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Atitles%3AList%28urn%3Ali%3Atitle%3A6241%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A101274%29%29%29%29%29%29
+2026-05-04 14:05:48,077 WARNING src.stage_c Audience count failed for 'job_titles_norm__cardiologist + fields_of_study__medicine': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Atitles%3AList%28urn%3Ali%3Atitle%3A6241%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A101274%29%29%29%29%29%29 — skipping
+2026-05-04 14:05:48,388 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-05-04 14:05:48,388 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Atitles%3AList%28urn%3Ali%3Atitle%3A6241%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2521%29%29%29%29%29%29
+2026-05-04 14:05:48,388 WARNING src.stage_c Audience count failed for 'job_titles_norm__cardiologist + skills__cardiology': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Atitles%3AList%28urn%3Ali%3Atitle%3A6241%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2521%29%29%29%29%29%29 — skipping
+2026-05-04 14:05:48,895 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-05-04 14:05:48,895 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Atitles%3AList%28urn%3Ali%3Atitle%3A6241%29%29%29%29%29%29
+2026-05-04 14:05:48,896 WARNING src.stage_c Audience count failed for 'job_titles_norm__cardiologist': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Atitles%3AList%28urn%3Ali%3Atitle%3A6241%29%29%29%29%29%29 — skipping
+2026-05-04 14:05:49,198 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-05-04 14:05:49,199 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Atitles%3AList%28urn%3Ali%3Atitle%3A1750%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A101274%29%29%29%29%29%29
+2026-05-04 14:05:49,199 WARNING src.stage_c Audience count failed for 'job_titles_norm__medical_doctor + fields_of_study__medicine': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Atitles%3AList%28urn%3Ali%3Atitle%3A1750%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A101274%29%29%29%29%29%29 — skipping
+2026-05-04 14:05:49,502 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-05-04 14:05:49,502 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Atitles%3AList%28urn%3Ali%3Atitle%3A6241%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A3734%29%29%29%29%29%29
+2026-05-04 14:05:49,503 WARNING src.stage_c Audience count failed for 'job_titles_norm__cardiologist + skills__diagnosis': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Atitles%3AList%28urn%3Ali%3Atitle%3A6241%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A3734%29%29%29%29%29%29 — skipping
+2026-05-04 14:05:49,813 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-05-04 14:05:49,813 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Atitles%3AList%28urn%3Ali%3Atitle%3A1750%29%29%29%29%29%29
+2026-05-04 14:05:49,813 WARNING src.stage_c Audience count failed for 'job_titles_norm__medical_doctor': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Atitles%3AList%28urn%3Ali%3Atitle%3A1750%29%29%29%29%29%29 — skipping
+2026-05-04 14:05:49,813 INFO src.stage_c Stage C: 0 cohorts pass audience threshold
+2026-05-04 14:05:49,813 INFO src.stage_c Stage C complete: 0/5 cohorts selected
+2026-05-04 14:05:49,813 INFO main _resolve_cohorts: 5 cohorts selected
+2026-05-04 14:05:49,815 INFO src.redash_db Fetching prestige columns for 338 cb_ids
+2026-05-04 14:05:57,321 INFO src.redash_db Fetched 290 prestige rows
+2026-05-04 14:05:57,450 INFO main _resolve_cohorts: prestige signal — 21% of 290 positives are top-tier (school=21%, global-co=0%, country-co=0%) — below threshold, ignore
+2026-05-04 14:05:57,451 INFO src.redash_db Fetching signal columns for 338 cb_ids
+2026-05-04 14:06:04,961 INFO src.redash_db Fetched 290 signal rows
+2026-05-04 14:06:04,979 INFO main _resolve_cohorts: requirement 'Clinical cardiology' → 0/290 (0%) — drop
+2026-05-04 14:06:04,979 INFO main _resolve_cohorts: requirement 'Diagnostic imaging interpretation' → 0/290 (0%) — drop
+2026-05-04 14:06:04,979 INFO main _resolve_cohorts: requirement 'MRI scan reading' → 0/290 (0%) — drop
+2026-05-04 14:06:04,979 INFO main _resolve_cohorts: requirement 'CT scan reading' → 0/290 (0%) — drop
+2026-05-04 14:06:04,979 INFO main _resolve_cohorts: requirement 'Clinical case synthesis' → 0/290 (0%) — drop
+2026-05-04 14:06:04,979 INFO main _resolve_cohorts: requirement 'Medical peer review' → 0/290 (0%) — drop
+2026-05-04 14:06:04,979 INFO main _resolve_cohorts: requirement 'English proficiency (reading/writing)' → 0/290 (0%) — drop
+2026-05-04 14:06:04,979 INFO main _resolve_cohorts: requirement 'US-Based' → 0/290 (0%) — drop
+2026-05-04 14:06:04,979 INFO main _resolve_cohorts: requirement 'Cardiologists' → 1/290 (0%) — drop
+2026-05-04 14:06:04,979 INFO main _resolve_cohorts: requirement 'Fellowship' → 28/290 (10%) — drop
+2026-05-04 14:06:04,979 INFO main _resolve_cohorts: requirement 'Trained' → 0/290 (0%) — drop
+2026-05-04 14:06:04,979 INFO main _resolve_cohorts: requirement 'completed' → 1/290 (0%) — drop
+2026-05-04 14:06:04,982 INFO main [dry-run] InMail cohort 0 'job_titles_norm__cardiologist + experience_band__10plus' tg=MEDICAL angle=A
+2026-05-04 14:06:15,495 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:06:15,499 INFO src.inmail_copy_writer InMail angle F generated for 'job_titles_norm__cardiologist + experience_band__10plus'
+2026-05-04 14:06:24,199 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:06:24,206 INFO src.inmail_copy_writer InMail angle A generated for 'job_titles_norm__cardiologist + experience_band__10plus'
+2026-05-04 14:06:35,674 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:06:35,680 INFO src.inmail_copy_writer InMail angle B generated for 'job_titles_norm__cardiologist + experience_band__10plus'
+2026-05-04 14:06:43,624 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:06:43,625 INFO src.inmail_copy_writer InMail angle C generated for 'job_titles_norm__cardiologist + experience_band__10plus'
+2026-05-04 14:06:43,626 INFO main [dry-run] Subject: Cardiologist + AI = Flexible $50/hr
+2026-05-04 14:06:43,626 INFO main [dry-run] Body (first 100): $50/hr is what Outlier pays cardiology experts to help shape the next generation of AI models — no c…
+2026-05-04 14:06:43,626 INFO main [dry-run] CTA: See Open Tasks
+2026-05-04 14:06:43,632 WARNING main InMail angle A: 2 brand voice violations
+2026-05-04 14:06:43,632 WARNING main   Must fix: 2
+2026-05-04 14:06:43,632 WARNING main   Should fix: 0
+2026-05-04 14:06:43,632 ERROR main InMail angle A has MUST-FIX violations
+2026-05-04 14:06:43,632 ERROR main     Active Voice Only: 'is issued' → Convert to active voice: use a strong verb instead
+2026-05-04 14:06:43,632 ERROR main     Active Voice Only: 'are matched' → Convert to active voice: use a strong verb instead
+2026-05-04 14:06:43,633 INFO main [dry-run] InMail cohort 1 'job_titles_norm__cardiologist + fields_of_study__medicine' tg=MEDICAL angle=B
+2026-05-04 14:06:52,981 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:06:53,010 INFO src.inmail_copy_writer InMail angle F generated for 'job_titles_norm__cardiologist + fields_of_study__medicine'
+2026-05-04 14:07:01,220 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:07:01,222 INFO src.inmail_copy_writer InMail angle A generated for 'job_titles_norm__cardiologist + fields_of_study__medicine'
+2026-05-04 14:07:09,715 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:07:09,717 INFO src.inmail_copy_writer InMail angle B generated for 'job_titles_norm__cardiologist + fields_of_study__medicine'
+2026-05-04 14:07:18,765 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:07:18,775 INFO src.inmail_copy_writer InMail angle C generated for 'job_titles_norm__cardiologist + fields_of_study__medicine'
+2026-05-04 14:07:18,777 INFO main [dry-run] Subject: Cardiologists earn $50/hr improving AI health tools
+2026-05-04 14:07:18,777 INFO main [dry-run] Body (first 100): Your ability to interpret a complex ECG, weigh competing diagnoses, and communicate clinical nuance …
+2026-05-04 14:07:18,777 INFO main [dry-run] CTA: Start Contributing
+2026-05-04 14:07:18,780 WARNING main InMail angle B: 2 brand voice violations
+2026-05-04 14:07:18,780 WARNING main   Must fix: 1
+2026-05-04 14:07:18,780 WARNING main   Should fix: 1
+2026-05-04 14:07:18,780 ERROR main InMail angle B has MUST-FIX violations
+2026-05-04 14:07:18,780 ERROR main     Active Voice Only: 'is approved' → Convert to active voice: use a strong verb instead
+2026-05-04 14:07:18,781 INFO main [dry-run] InMail cohort 2 'job_titles_norm__cardiologist + skills__cardiology' tg=MEDICAL angle=C
+2026-05-04 14:07:39,070 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:07:39,082 INFO src.inmail_copy_writer InMail angle F generated for 'job_titles_norm__cardiologist + skills__cardiology'
+2026-05-04 14:07:47,462 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:07:47,464 INFO src.inmail_copy_writer InMail angle A generated for 'job_titles_norm__cardiologist + skills__cardiology'
+2026-05-04 14:07:55,775 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:07:55,778 INFO src.inmail_copy_writer InMail angle B generated for 'job_titles_norm__cardiologist + skills__cardiology'
+2026-05-04 14:08:04,425 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:08:04,429 INFO src.inmail_copy_writer InMail angle C generated for 'job_titles_norm__cardiologist + skills__cardiology'
+2026-05-04 14:08:04,429 INFO main [dry-run] Subject: 1,000+ cardiologists earn $50/hr with Outlier
+2026-05-04 14:08:04,429 INFO main [dry-run] Body (first 100): Over 1,000 cardiology professionals are already earning $50/hr contributing to AI development throug…
+2026-05-04 14:08:04,429 INFO main [dry-run] CTA: View Opportunities
+2026-05-04 14:08:04,430 WARNING main InMail angle C: 2 brand voice violations
+2026-05-04 14:08:04,430 WARNING main   Must fix: 2
+2026-05-04 14:08:04,430 WARNING main   Should fix: 0
+2026-05-04 14:08:04,430 ERROR main InMail angle C has MUST-FIX violations
+2026-05-04 14:08:04,430 ERROR main     Active Voice Only: 'is processed' → Convert to active voice: use a strong verb instead
+2026-05-04 14:08:04,430 ERROR main     No Superlatives: 'the most' → Remove 'the most' — replace with specific facts or benefits
+2026-05-04 14:08:04,430 INFO main [dry-run] InMail cohort 3 'job_titles_norm__cardiologist' tg=MEDICAL angle=A
+2026-05-04 14:08:13,144 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:08:13,151 INFO src.inmail_copy_writer InMail angle F generated for 'job_titles_norm__cardiologist'
+2026-05-04 14:08:25,366 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:08:25,370 INFO src.inmail_copy_writer InMail angle A generated for 'job_titles_norm__cardiologist'
+2026-05-04 14:08:32,861 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:08:32,864 INFO src.inmail_copy_writer InMail angle B generated for 'job_titles_norm__cardiologist'
+2026-05-04 14:08:42,420 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:08:42,423 INFO src.inmail_copy_writer InMail angle C generated for 'job_titles_norm__cardiologist'
+2026-05-04 14:08:42,423 INFO main [dry-run] Subject: Cardiologist + AI = Flexible $50/hr
+2026-05-04 14:08:42,423 INFO main [dry-run] Body (first 100): $50/hr to apply your cardiology expertise — that's what Outlier pays contributors who help improve A…
+2026-05-04 14:08:42,423 INFO main [dry-run] CTA: See Open Tasks
+2026-05-04 14:08:42,428 WARNING main InMail angle A: 2 brand voice violations
+2026-05-04 14:08:42,428 WARNING main   Must fix: 1
+2026-05-04 14:08:42,428 WARNING main   Should fix: 1
+2026-05-04 14:08:42,428 ERROR main InMail angle A has MUST-FIX violations
+2026-05-04 14:08:42,428 ERROR main     Active Voice Only: 'is processed' → Convert to active voice: use a strong verb instead
+2026-05-04 14:08:42,428 INFO main [dry-run] InMail cohort 4 'job_titles_norm__medical_doctor + fields_of_study__medicine' tg=MEDICAL angle=B
+2026-05-04 14:08:54,123 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:08:54,139 INFO src.inmail_copy_writer InMail angle F generated for 'job_titles_norm__medical_doctor + fields_of_study__medicine'
+2026-05-04 14:09:03,347 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:09:03,348 INFO src.inmail_copy_writer InMail angle A generated for 'job_titles_norm__medical_doctor + fields_of_study__medicine'
+2026-05-04 14:09:13,075 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:09:13,083 INFO src.inmail_copy_writer InMail angle B generated for 'job_titles_norm__medical_doctor + fields_of_study__medicine'
+2026-05-04 14:09:22,763 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:09:22,765 INFO src.inmail_copy_writer InMail angle C generated for 'job_titles_norm__medical_doctor + fields_of_study__medicine'
+2026-05-04 14:09:22,765 INFO main [dry-run] Subject: Your medical expertise is worth $50/hr to AI
+2026-05-04 14:09:22,765 INFO main [dry-run] Body (first 100): The years you spent mastering clinical medicine represent exactly the kind of knowledge that AI mode…
+2026-05-04 14:09:22,766 INFO main [dry-run] CTA: See Open Tasks
+2026-05-04 14:09:22,768 WARNING main InMail angle B: 3 brand voice violations
+2026-05-04 14:09:22,768 WARNING main   Must fix: 2
+2026-05-04 14:09:22,768 WARNING main   Should fix: 1
+2026-05-04 14:09:22,768 ERROR main InMail angle B has MUST-FIX violations
+2026-05-04 14:09:22,769 ERROR main     Active Voice Only: 'is processed' → Convert to active voice: use a strong verb instead
+2026-05-04 14:09:22,769 ERROR main     Active Voice Only: 'is established' → Convert to active voice: use a strong verb instead
+2026-05-04 14:09:22,772 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-05-04 14:09:22,773 INFO src.figma_creative Copy gen using Smart Ramp description hint: 'US-based cardiologists who have completed their fellowship training'
+2026-05-04 14:09:22,774 INFO src.figma_creative LiteLLM copy gen — cohort=job_titles_norm__cardiologist + experien signals=2 populated=0
+2026-05-04 14:09:35,890 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:09:35,893 INFO src.figma_creative Generated 3 copy variants for 'job_titles_norm__cardiologist + experience_band__10plus'
+2026-05-04 14:09:35,920 INFO src.gemini_creative Creative generation attempt 1/10 (angle=A)
+2026-05-04 14:09:35,920 INFO src.gemini_creative Gemini call — angle=A photo_subject='male South Asian cardiologist, reviewing cardiac imaging on a laptop at a home d'
+2026-05-04 14:09:35,920 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male South Asian cardiologist, reviewing cardiac imaging on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of the subject'
+2026-05-04 14:09:35,920 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-05-04 14:09:35,920 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-05-04 14:09:48,307 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:09:48,373 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:09:48,758 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpxl3cn6aw_gemini_male_south_asian_cardiologist__A.png (1442442 bytes)
+2026-05-04 14:09:48,762 INFO src.copy_design_qc Copy length violations found (will continue to vision + pixel checks): ["ad_headline contains em dash (banned in contributor copy): 'Cardiologists are reviewing AI outputs for Outlier — from home'"]
+2026-05-04 14:10:11,086 INFO src.gemini_creative QC attempt 1: FAIL (target=copywriter, 4 violations)
+2026-05-04 14:10:11,087 INFO src.gemini_creative Copy QC failed — invoking copy_rewriter
+2026-05-04 14:10:44,992 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:10:44,996 INFO src.figma_creative Copy rewritten (angle A, fields=['ad_headline']): {'ad_headline': 'Cardiologists are reviewing AI outputs for Outlier, from home'}
+2026-05-04 14:10:44,996 INFO src.gemini_creative Combined-defect retry: 3 image hint(s) propagated alongside copy rewrite
+2026-05-04 14:10:44,996 INFO src.gemini_creative Creative generation attempt 2/10 (angle=A)
+2026-05-04 14:10:44,996 INFO src.gemini_creative Gemini call — angle=A photo_subject='male South Asian cardiologist, reviewing cardiac imaging on a laptop at a home d'
+2026-05-04 14:10:44,996 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male South Asian cardiologist, reviewing cardiac imaging on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of the subject'
+2026-05-04 14:10:44,997 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-05-04 14:10:44,997 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- The gradient washes are in the WRONG position — pink/coral must be in TOP-LEFT corner only, teal/blue in BOTTOM-LEFT corner only. Right ha
+2026-05-04 14:10:44,997 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-05-04 14:10:58,827 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:10:58,913 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:10:59,443 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpbqul2tfh_gemini_male_south_asian_cardiologist__A.png (1221269 bytes)
+2026-05-04 14:11:41,594 INFO src.gemini_creative QC attempt 2: FAIL (target=gemini, 9 violations)
+2026-05-04 14:11:41,594 INFO src.gemini_creative Attaching 1 failure-region crop(s) to next attempt
+2026-05-04 14:11:41,594 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-05-04 14:11:41,594 INFO src.gemini_creative Creative generation attempt 3/10 (angle=A)
+2026-05-04 14:11:41,594 INFO src.gemini_creative Gemini call — angle=A photo_subject='male South Asian cardiologist, reviewing cardiac imaging on a laptop at a home d'
+2026-05-04 14:11:41,594 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male South Asian cardiologist, reviewing cardiac imaging on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of the subject'
+2026-05-04 14:11:41,594 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:11:41,594 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- TEXT STILL APPEARING. Tell Gemini 'I will manually delete any letterform you draw. The headline, subheadline, earnings strip, and Outlier 
+2026-05-04 14:11:41,594 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:11:41,594 INFO src.gemini_creative QC feedback crop #1 attached inline (128316 chars base64)
+2026-05-04 14:11:52,076 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:11:52,147 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:11:52,459 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmp_iuuxvbj_gemini_male_south_asian_cardiologist__A.png (1521645 bytes)
+2026-05-04 14:12:21,631 INFO src.gemini_creative QC attempt 3: FAIL (target=gemini, 3 violations)
+2026-05-04 14:12:21,631 INFO src.gemini_creative Attaching 3 failure-region crop(s) to next attempt
+2026-05-04 14:12:21,631 INFO src.gemini_creative Creative generation attempt 4/10 (angle=A)
+2026-05-04 14:12:21,631 INFO src.gemini_creative Gemini call — angle=A photo_subject='male South Asian cardiologist, reviewing cardiac imaging on a laptop at a home d'
+2026-05-04 14:12:21,631 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male South Asian cardiologist, reviewing cardiac imaging on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of the subject'
+2026-05-04 14:12:21,631 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:12:21,631 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- STILL UNCANNY. Tell Gemini 'pretend this is a frame from a Vimeo travel vlog — handheld, slightly imperfect focus, natural variation in li
+2026-05-04 14:12:21,632 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:12:21,632 INFO src.gemini_creative QC feedback crop #1 attached inline (138376 chars base64)
+2026-05-04 14:12:21,632 INFO src.gemini_creative QC feedback crop #2 attached inline (137908 chars base64)
+2026-05-04 14:12:21,632 INFO src.gemini_creative QC feedback crop #3 attached inline (150364 chars base64)
+2026-05-04 14:12:33,572 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:12:33,641 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:12:33,944 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpto34vi8f_gemini_male_south_asian_cardiologist__A.png (1533079 bytes)
+2026-05-04 14:13:01,412 INFO src.gemini_creative QC attempt 4: PASS (target=none, 0 violations)
+2026-05-04 14:13:01,413 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-05-04 14:13:01,414 INFO src.figma_creative Copy gen using Smart Ramp description hint: 'US-based cardiologists who have completed their fellowship training'
+2026-05-04 14:13:01,414 INFO src.figma_creative LiteLLM copy gen — cohort=job_titles_norm__cardiologist + fields_o signals=2 populated=0
+2026-05-04 14:13:14,638 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:13:14,643 INFO src.figma_creative Generated 3 copy variants for 'job_titles_norm__cardiologist + fields_of_study__medicine'
+2026-05-04 14:13:14,661 WARNING src.gemini_creative Pre-flight copy violations for angle B: ["Headline wraps to 3 lines (max 2): 'Cardiologists are earning with Outlier'"]
+2026-05-04 14:13:17,349 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:13:17,352 INFO src.figma_creative Copy rewritten (angle B, fields=['headline']): {'headline': 'Cardiologists Earn with Outlier'}
+2026-05-04 14:13:17,365 INFO src.gemini_creative Creative generation attempt 1/10 (angle=B)
+2026-05-04 14:13:17,366 INFO src.gemini_creative Gemini call — angle=B photo_subject='male White American cardiologist, reviewing clinical notes on a laptop at a home'
+2026-05-04 14:13:17,366 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male White American cardiologist, reviewing clinical notes on a laptop at a home kitchen table. HEAD PLACEMENT (CRITICAL): the TOP of t
+2026-05-04 14:13:17,366 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-05-04 14:13:17,366 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-05-04 14:13:31,090 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:13:31,167 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:13:31,630 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpu_uc_uki_gemini_male_white_american_cardiologi_B.png (1317270 bytes)
+2026-05-04 14:14:04,367 INFO src.gemini_creative QC attempt 1: FAIL (target=gemini, 7 violations)
+2026-05-04 14:14:04,367 INFO src.gemini_creative Attaching 1 failure-region crop(s) to next attempt
+2026-05-04 14:14:04,367 INFO src.gemini_creative Creative generation attempt 2/10 (angle=B)
+2026-05-04 14:14:04,368 INFO src.gemini_creative Gemini call — angle=B photo_subject='male White American cardiologist, reviewing clinical notes on a laptop at a home'
+2026-05-04 14:14:04,368 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male White American cardiologist, reviewing clinical notes on a laptop at a home kitchen table. HEAD PLACEMENT (CRITICAL): the TOP of t
+2026-05-04 14:14:04,368 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-05-04 14:14:04,368 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- A second Outlier logo is visible inside the photograph. Tell Gemini 'Do NOT render any Outlier logo, brand mark, or wordmark — the logo is
+2026-05-04 14:14:04,368 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-05-04 14:14:04,368 INFO src.gemini_creative QC feedback crop #1 attached inline (121252 chars base64)
+2026-05-04 14:14:16,467 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:14:16,536 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:14:16,890 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmp65p611rp_gemini_male_white_american_cardiologi_B.png (1497042 bytes)
+2026-05-04 14:14:48,995 INFO src.gemini_creative QC attempt 2: FAIL (target=gemini, 5 violations)
+2026-05-04 14:14:48,996 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-05-04 14:14:48,996 INFO src.gemini_creative Creative generation attempt 3/10 (angle=B)
+2026-05-04 14:14:48,996 INFO src.gemini_creative Gemini call — angle=B photo_subject='male White American cardiologist, reviewing clinical notes on a laptop at a home'
+2026-05-04 14:14:48,996 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male White American cardiologist, reviewing clinical notes on a laptop at a home kitchen table. HEAD PLACEMENT (CRITICAL): the TOP of t
+2026-05-04 14:14:48,996 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:14:48,996 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- DUPLICATE LOGO STILL APPEARING. Tell Gemini 'There must be ZERO branding, ZERO text shapes that look like words, ZERO letterforms in the p
+2026-05-04 14:14:48,996 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:15:00,421 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:15:00,490 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:15:00,800 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpe91jxslv_gemini_male_white_american_cardiologi_B.png (1508088 bytes)
+2026-05-04 14:15:28,780 INFO src.gemini_creative QC attempt 3: FAIL (target=gemini, 3 violations)
+2026-05-04 14:15:28,780 INFO src.gemini_creative Attaching 2 failure-region crop(s) to next attempt
+2026-05-04 14:15:28,780 INFO src.gemini_creative Creative generation attempt 4/10 (angle=B)
+2026-05-04 14:15:28,780 INFO src.gemini_creative Gemini call — angle=B photo_subject='male White American cardiologist, reviewing clinical notes on a laptop at a home'
+2026-05-04 14:15:28,780 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male White American cardiologist, reviewing clinical notes on a laptop at a home kitchen table. HEAD PLACEMENT (CRITICAL): the TOP of t
+2026-05-04 14:15:28,780 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:15:28,780 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- DUPLICATE LOGO STILL APPEARING. Tell Gemini 'There must be ZERO branding, ZERO text shapes that look like words, ZERO letterforms in the p
+2026-05-04 14:15:28,781 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:15:28,781 INFO src.gemini_creative QC feedback crop #1 attached inline (134720 chars base64)
+2026-05-04 14:15:28,781 INFO src.gemini_creative QC feedback crop #2 attached inline (151152 chars base64)
+2026-05-04 14:15:41,923 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:15:41,999 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:15:42,307 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpfnvwpgiz_gemini_male_white_american_cardiologi_B.png (1503183 bytes)
+2026-05-04 14:16:09,741 INFO src.gemini_creative QC attempt 4: FAIL (target=gemini, 1 violations)
+2026-05-04 14:16:09,741 INFO src.gemini_creative Creative generation attempt 5/10 (angle=B)
+2026-05-04 14:16:09,741 INFO src.gemini_creative Gemini call — angle=B photo_subject='male White American cardiologist, reviewing clinical notes on a laptop at a home'
+2026-05-04 14:16:09,742 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male White American cardiologist, reviewing clinical notes on a laptop at a home kitchen table. HEAD PLACEMENT (CRITICAL): the TOP of t
+2026-05-04 14:16:09,742 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:16:09,742 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- DUPLICATE LOGO STILL APPEARING. Tell Gemini 'There must be ZERO branding, ZERO text shapes that look like words, ZERO letterforms in the p
+2026-05-04 14:16:09,742 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:16:19,176 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:16:19,256 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:16:19,582 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpd3vflbj2_gemini_male_white_american_cardiologi_B.png (1484340 bytes)
+2026-05-04 14:16:50,353 INFO src.gemini_creative QC attempt 5: FAIL (target=gemini, 5 violations)
+2026-05-04 14:16:50,353 INFO src.gemini_creative Attaching 3 failure-region crop(s) to next attempt
+2026-05-04 14:16:50,353 INFO src.gemini_creative Creative generation attempt 6/10 (angle=B)
+2026-05-04 14:16:50,353 INFO src.gemini_creative Gemini call — angle=B photo_subject='male White American cardiologist, reviewing clinical notes on a laptop at a home'
+2026-05-04 14:16:50,353 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male White American cardiologist, reviewing clinical notes on a laptop at a home kitchen table. HEAD PLACEMENT (CRITICAL): the TOP of t
+2026-05-04 14:16:50,353 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:16:50,353 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- TEXT STILL APPEARING. Tell Gemini 'I will manually delete any letterform you draw. The headline, subheadline, earnings strip, and Outlier 
+2026-05-04 14:16:50,355 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:16:50,355 INFO src.gemini_creative QC feedback crop #1 attached inline (131556 chars base64)
+2026-05-04 14:16:50,355 INFO src.gemini_creative QC feedback crop #2 attached inline (139028 chars base64)
+2026-05-04 14:16:50,355 INFO src.gemini_creative QC feedback crop #3 attached inline (141948 chars base64)
+2026-05-04 14:17:01,863 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:17:02,046 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:17:04,911 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpzpt6diqz_gemini_male_white_american_cardiologi_B.png (1449622 bytes)
+2026-05-04 14:17:29,166 INFO src.gemini_creative QC attempt 6: FAIL (target=gemini, 3 violations)
+2026-05-04 14:17:29,167 INFO src.gemini_creative Attaching 2 failure-region crop(s) to next attempt
+2026-05-04 14:17:29,167 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-05-04 14:17:29,167 INFO src.gemini_creative Creative generation attempt 7/10 (angle=B)
+2026-05-04 14:17:29,167 INFO src.gemini_creative Gemini call — angle=B photo_subject='male White American cardiologist, reviewing clinical notes on a laptop at a home'
+2026-05-04 14:17:29,167 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male White American cardiologist, reviewing clinical notes on a laptop at a home kitchen table. HEAD PLACEMENT (CRITICAL): the TOP of t
+2026-05-04 14:17:29,167 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:17:29,167 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- DUPLICATE LOGO STILL APPEARING. Tell Gemini 'There must be ZERO branding, ZERO text shapes that look like words, ZERO letterforms in the p
+2026-05-04 14:17:29,168 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:17:29,168 INFO src.gemini_creative QC feedback crop #1 attached inline (130324 chars base64)
+2026-05-04 14:17:29,168 INFO src.gemini_creative QC feedback crop #2 attached inline (131948 chars base64)
+2026-05-04 14:17:40,541 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:17:40,872 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:17:44,343 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpr5zmp0y6_gemini_male_white_american_cardiologi_B.png (1518482 bytes)
+2026-05-04 14:18:11,478 INFO src.gemini_creative QC attempt 7: FAIL (target=gemini, 4 violations)
+2026-05-04 14:18:11,479 INFO src.gemini_creative Attaching 1 failure-region crop(s) to next attempt
+2026-05-04 14:18:11,479 INFO src.gemini_creative Creative generation attempt 8/10 (angle=B)
+2026-05-04 14:18:11,479 INFO src.gemini_creative Gemini call — angle=B photo_subject='male White American cardiologist, reviewing clinical notes on a laptop at a home'
+2026-05-04 14:18:11,479 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male White American cardiologist, reviewing clinical notes on a laptop at a home kitchen table. HEAD PLACEMENT (CRITICAL): the TOP of t
+2026-05-04 14:18:11,479 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:18:11,479 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- DUPLICATE LOGO STILL APPEARING. Tell Gemini 'There must be ZERO branding, ZERO text shapes that look like words, ZERO letterforms in the p
+2026-05-04 14:18:11,479 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:18:11,479 INFO src.gemini_creative QC feedback crop #1 attached inline (136504 chars base64)
+2026-05-04 14:18:23,900 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:18:24,083 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:18:28,106 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpalqbyw73_gemini_male_white_american_cardiologi_B.png (1460211 bytes)
+2026-05-04 14:18:54,774 INFO src.gemini_creative QC attempt 8: FAIL (target=gemini, 4 violations)
+2026-05-04 14:18:54,774 INFO src.gemini_creative Attaching 2 failure-region crop(s) to next attempt
+2026-05-04 14:18:54,774 INFO src.gemini_creative Creative generation attempt 9/10 (angle=B)
+2026-05-04 14:18:54,774 INFO src.gemini_creative Gemini call — angle=B photo_subject='male White American cardiologist, reviewing clinical notes on a laptop at a home'
+2026-05-04 14:18:54,774 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male White American cardiologist, reviewing clinical notes on a laptop at a home kitchen table. HEAD PLACEMENT (CRITICAL): the TOP of t
+2026-05-04 14:18:54,775 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:18:54,775 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- DUPLICATE LOGO STILL APPEARING. Tell Gemini 'There must be ZERO branding, ZERO text shapes that look like words, ZERO letterforms in the p
+2026-05-04 14:18:54,776 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:18:54,776 INFO src.gemini_creative QC feedback crop #1 attached inline (142844 chars base64)
+2026-05-04 14:18:54,776 INFO src.gemini_creative QC feedback crop #2 attached inline (133336 chars base64)
+2026-05-04 14:19:05,338 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:19:05,650 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:19:10,104 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmp0teisdot_gemini_male_white_american_cardiologi_B.png (1490842 bytes)
+2026-05-04 14:19:37,365 INFO src.gemini_creative QC attempt 9: FAIL (target=gemini, 5 violations)
+2026-05-04 14:19:37,365 INFO src.gemini_creative Attaching 1 failure-region crop(s) to next attempt
+2026-05-04 14:19:37,365 INFO src.gemini_creative Creative generation attempt 10/10 (angle=B)
+2026-05-04 14:19:37,366 INFO src.gemini_creative Gemini call — angle=B photo_subject='male White American cardiologist, reviewing clinical notes on a laptop at a home'
+2026-05-04 14:19:37,366 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male White American cardiologist, reviewing clinical notes on a laptop at a home kitchen table. HEAD PLACEMENT (CRITICAL): the TOP of t
+2026-05-04 14:19:37,366 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:19:37,366 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- DUPLICATE LOGO STILL APPEARING. Tell Gemini 'There must be ZERO branding, ZERO text shapes that look like words, ZERO letterforms in the p
+2026-05-04 14:19:37,366 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:19:37,366 INFO src.gemini_creative QC feedback crop #1 attached inline (133112 chars base64)
+2026-05-04 14:19:49,904 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:19:50,305 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:19:54,686 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpno0nay1v_gemini_male_white_american_cardiologi_B.png (1444809 bytes)
+2026-05-04 14:20:23,668 INFO src.gemini_creative QC attempt 10: FAIL (target=gemini, 1 violations)
+2026-05-04 14:20:23,669 WARNING src.gemini_creative Creative still failing QC after 10 attempts — returning best-so-far attempt with 1 violations (last had 1)
+2026-05-04 14:20:23,670 ERROR main Static QC FAIL for 'job_titles_norm__cardiologist + fields_of_study__medicine' after 1 attempts; REJECTING creative. Campaign will be created without an image. Violations: ["No duplicate logos: Bottom right of the white strip, and within the headline 'Cardiologists Earn with Outlier'."]
+2026-05-04 14:20:23,673 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-05-04 14:20:23,674 INFO src.figma_creative Copy gen using Smart Ramp description hint: 'US-based cardiologists who have completed their fellowship training'
+2026-05-04 14:20:23,674 INFO src.figma_creative LiteLLM copy gen — cohort=job_titles_norm__cardiologist + skills__ signals=2 populated=1
+2026-05-04 14:20:42,554 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:20:42,568 WARNING src.figma_creative Copy limits violated (attempt 1): ["Angle C subheadline has 8 words (max 7): 'Contribute to AI tasks on your own time.'"]
+2026-05-04 14:20:58,939 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:20:58,944 WARNING src.figma_creative Copy limits violated (attempt 2): ["Angle C subheadline has 8 words (max 7): 'Contribute to AI from home, on your time.'"]
+2026-05-04 14:21:08,878 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:21:08,879 INFO src.figma_creative Generated 3 copy variants for 'job_titles_norm__cardiologist + skills__cardiology'
+2026-05-04 14:21:08,895 INFO src.gemini_creative Creative generation attempt 1/10 (angle=C)
+2026-05-04 14:21:08,895 INFO src.gemini_creative Gemini call — angle=C photo_subject='male Northern European cardiologist, reading medical research on a laptop at a h'
+2026-05-04 14:21:08,895 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Northern European cardiologist, reading medical research on a laptop at a home office window. HEAD PLACEMENT (CRITICAL): the TOP o
+2026-05-04 14:21:08,895 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-05-04 14:21:08,895 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-05-04 14:21:23,670 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:21:24,107 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:21:29,608 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmp76l7jg6l_gemini_male_northern_european_cardiol_C.png (1308475 bytes)
+2026-05-04 14:21:29,621 INFO src.copy_design_qc Copy length violations found (will continue to vision + pixel checks): ["ad_description contains banned token 'required': 'Pick up tasks when it suits you. No minimum hours required.'"]
+2026-05-04 14:22:02,991 INFO src.gemini_creative QC attempt 1: FAIL (target=copywriter, 10 violations)
+2026-05-04 14:22:02,993 INFO src.gemini_creative Copy QC failed — invoking copy_rewriter
+2026-05-04 14:22:06,026 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:22:06,028 INFO src.figma_creative Copy rewritten (angle C, fields=['ad_description']): {'ad_description': 'Pick up tasks when it suits you. No minimum hours or availability needed.'}
+2026-05-04 14:22:06,028 INFO src.gemini_creative Combined-defect retry: 9 image hint(s) propagated alongside copy rewrite
+2026-05-04 14:22:06,028 INFO src.gemini_creative Creative generation attempt 2/10 (angle=C)
+2026-05-04 14:22:06,028 INFO src.gemini_creative Gemini call — angle=C photo_subject='male Northern European cardiologist, reading medical research on a laptop at a h'
+2026-05-04 14:22:06,028 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Northern European cardiologist, reading medical research on a laptop at a home office window. HEAD PLACEMENT (CRITICAL): the TOP o
+2026-05-04 14:22:06,028 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-05-04 14:22:06,028 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- Gemini rendered text/letters/logos INTO the photo. Add explicit 'ZERO TEXT in image. No words, letters, logos, wordmarks, earnings figures
+2026-05-04 14:22:06,029 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-05-04 14:22:06,029 INFO src.gemini_creative QC feedback crop #1 attached inline (133464 chars base64)
+2026-05-04 14:22:19,817 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:22:20,132 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:22:22,971 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmp24u7nii__gemini_male_northern_european_cardiol_C.png (1528621 bytes)
+2026-05-04 14:22:43,365 INFO src.gemini_creative QC attempt 2: FAIL (target=gemini, 1 violations)
+2026-05-04 14:22:43,367 INFO src.gemini_creative Attaching 1 failure-region crop(s) to next attempt
+2026-05-04 14:22:43,367 INFO src.gemini_creative Creative generation attempt 3/10 (angle=C)
+2026-05-04 14:22:43,368 INFO src.gemini_creative Gemini call — angle=C photo_subject='male Northern European cardiologist, reading medical research on a laptop at a h'
+2026-05-04 14:22:43,369 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Northern European cardiologist, reading medical research on a laptop at a home office window. HEAD PLACEMENT (CRITICAL): the TOP o
+2026-05-04 14:22:43,369 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-05-04 14:22:43,369 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- EDGE STRIPE STILL DETECTED BY PIXEL CHECK. Tell Gemini 'I am sampling the outer 4 pixels of each edge programmatically and counting any sa
+2026-05-04 14:22:43,370 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-05-04 14:22:43,370 INFO src.gemini_creative QC feedback crop #1 attached inline (136564 chars base64)
+2026-05-04 14:22:57,562 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:22:57,768 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:23:01,389 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmp6sopn_q3_gemini_male_northern_european_cardiol_C.png (1304902 bytes)
+2026-05-04 14:23:26,601 INFO src.gemini_creative QC attempt 3: FAIL (target=gemini, 6 violations)
+2026-05-04 14:23:26,601 INFO src.gemini_creative Attaching 1 failure-region crop(s) to next attempt
+2026-05-04 14:23:26,602 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-05-04 14:23:26,602 INFO src.gemini_creative Creative generation attempt 4/10 (angle=C)
+2026-05-04 14:23:26,602 INFO src.gemini_creative Gemini call — angle=C photo_subject='male Northern European cardiologist, reading medical research on a laptop at a h'
+2026-05-04 14:23:26,602 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Northern European cardiologist, reading medical research on a laptop at a home office window. HEAD PLACEMENT (CRITICAL): the TOP o
+2026-05-04 14:23:26,602 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:23:26,602 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- Headline is touching the subject's hair. Tell Gemini 'the TOP of the subject\'s hair must sit at approximately 28% from the top of the fra
+2026-05-04 14:23:26,603 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:23:26,603 INFO src.gemini_creative QC feedback crop #1 attached inline (131068 chars base64)
+2026-05-04 14:23:36,291 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:23:36,611 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:23:40,390 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmphzmxoijx_gemini_male_northern_european_cardiol_C.png (1356624 bytes)
+2026-05-04 14:24:09,545 INFO src.gemini_creative QC attempt 4: FAIL (target=gemini, 6 violations)
+2026-05-04 14:24:09,546 INFO src.gemini_creative Attaching 1 failure-region crop(s) to next attempt
+2026-05-04 14:24:09,546 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-05-04 14:24:09,546 INFO src.gemini_creative Creative generation attempt 5/10 (angle=C)
+2026-05-04 14:24:09,546 INFO src.gemini_creative Gemini call — angle=C photo_subject='male Northern European cardiologist, reading medical research on a laptop at a h'
+2026-05-04 14:24:09,547 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Northern European cardiologist, reading medical research on a laptop at a home office window. HEAD PLACEMENT (CRITICAL): the TOP o
+2026-05-04 14:24:09,547 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:24:09,547 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- Headline is touching the subject's hair. Tell Gemini 'the TOP of the subject\'s hair must sit at approximately 28% from the top of the fra
+2026-05-04 14:24:09,547 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:24:09,547 INFO src.gemini_creative QC feedback crop #1 attached inline (145368 chars base64)
+2026-05-04 14:24:21,623 INFO src.gemini_creative Imagen photo received (512x2048)
+2026-05-04 14:24:22,082 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:24:28,073 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmp9j6bph6w_gemini_male_northern_european_cardiol_C.png (1084022 bytes)
+2026-05-04 14:24:57,148 INFO src.gemini_creative QC attempt 5: FAIL (target=gemini, 3 violations)
+2026-05-04 14:24:57,151 INFO src.gemini_creative Attaching 1 failure-region crop(s) to next attempt
+2026-05-04 14:24:57,151 INFO src.gemini_creative Creative generation attempt 6/10 (angle=C)
+2026-05-04 14:24:57,152 INFO src.gemini_creative Gemini call — angle=C photo_subject='male Northern European cardiologist, reading medical research on a laptop at a h'
+2026-05-04 14:24:57,152 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Northern European cardiologist, reading medical research on a laptop at a home office window. HEAD PLACEMENT (CRITICAL): the TOP o
+2026-05-04 14:24:57,152 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:24:57,152 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- Headline is touching the subject's hair. Tell Gemini 'the TOP of the subject\'s hair must sit at approximately 28% from the top of the fra
+2026-05-04 14:24:57,153 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:24:57,153 INFO src.gemini_creative QC feedback crop #1 attached inline (99632 chars base64)
+2026-05-04 14:25:07,053 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:25:07,332 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:25:10,170 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpttgoqj7b_gemini_male_northern_european_cardiol_C.png (1580596 bytes)
+2026-05-04 14:25:41,473 INFO src.gemini_creative QC attempt 6: FAIL (target=gemini, 4 violations)
+2026-05-04 14:25:41,474 INFO src.gemini_creative Attaching 2 failure-region crop(s) to next attempt
+2026-05-04 14:25:41,474 INFO src.gemini_creative Creative generation attempt 7/10 (angle=C)
+2026-05-04 14:25:41,474 INFO src.gemini_creative Gemini call — angle=C photo_subject='male Northern European cardiologist, reading medical research on a laptop at a h'
+2026-05-04 14:25:41,474 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Northern European cardiologist, reading medical research on a laptop at a home office window. HEAD PLACEMENT (CRITICAL): the TOP o
+2026-05-04 14:25:41,474 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:25:41,474 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- TEXT STILL APPEARING. Tell Gemini 'I will manually delete any letterform you draw. The headline, subheadline, earnings strip, and Outlier 
+2026-05-04 14:25:41,476 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:25:41,476 INFO src.gemini_creative QC feedback crop #1 attached inline (140048 chars base64)
+2026-05-04 14:25:41,476 INFO src.gemini_creative QC feedback crop #2 attached inline (146268 chars base64)
+2026-05-04 14:25:53,021 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:25:53,318 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:25:56,297 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpielwht37_gemini_male_northern_european_cardiol_C.png (1493469 bytes)
+2026-05-04 14:26:25,569 INFO src.gemini_creative QC attempt 7: FAIL (target=gemini, 4 violations)
+2026-05-04 14:26:25,572 INFO src.gemini_creative Attaching 2 failure-region crop(s) to next attempt
+2026-05-04 14:26:25,572 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-05-04 14:26:25,572 INFO src.gemini_creative Creative generation attempt 8/10 (angle=C)
+2026-05-04 14:26:25,572 INFO src.gemini_creative Gemini call — angle=C photo_subject='male Northern European cardiologist, reading medical research on a laptop at a h'
+2026-05-04 14:26:25,572 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Northern European cardiologist, reading medical research on a laptop at a home office window. HEAD PLACEMENT (CRITICAL): the TOP o
+2026-05-04 14:26:25,572 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:26:25,572 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- Headline is touching the subject's hair. Tell Gemini 'the TOP of the subject\'s hair must sit at approximately 28% from the top of the fra
+2026-05-04 14:26:25,574 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:26:25,574 INFO src.gemini_creative QC feedback crop #1 attached inline (133592 chars base64)
+2026-05-04 14:26:25,574 INFO src.gemini_creative QC feedback crop #2 attached inline (132688 chars base64)
+2026-05-04 14:26:42,045 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:26:42,361 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:26:47,294 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpm__b7ats_gemini_male_northern_european_cardiol_C.png (1467080 bytes)
+2026-05-04 14:27:12,973 INFO src.gemini_creative QC attempt 8: FAIL (target=gemini, 4 violations)
+2026-05-04 14:27:12,974 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-05-04 14:27:12,974 INFO src.gemini_creative Creative generation attempt 9/10 (angle=C)
+2026-05-04 14:27:12,974 INFO src.gemini_creative Gemini call — angle=C photo_subject='male Northern European cardiologist, reading medical research on a laptop at a h'
+2026-05-04 14:27:12,974 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Northern European cardiologist, reading medical research on a laptop at a home office window. HEAD PLACEMENT (CRITICAL): the TOP o
+2026-05-04 14:27:12,975 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:27:12,975 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- Headline is touching the subject's hair. Tell Gemini 'the TOP of the subject\'s hair must sit at approximately 28% from the top of the fra
+2026-05-04 14:27:12,975 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:27:23,596 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:27:23,813 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:27:26,968 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpblmlv6fu_gemini_male_northern_european_cardiol_C.png (1443197 bytes)
+2026-05-04 14:27:51,351 INFO src.gemini_creative QC attempt 9: FAIL (target=gemini, 1 violations)
+2026-05-04 14:27:51,353 INFO src.gemini_creative Attaching 2 failure-region crop(s) to next attempt
+2026-05-04 14:27:51,354 INFO src.gemini_creative Creative generation attempt 10/10 (angle=C)
+2026-05-04 14:27:51,356 INFO src.gemini_creative Gemini call — angle=C photo_subject='male Northern European cardiologist, reading medical research on a laptop at a h'
+2026-05-04 14:27:51,357 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Northern European cardiologist, reading medical research on a laptop at a home office window. HEAD PLACEMENT (CRITICAL): the TOP o
+2026-05-04 14:27:51,357 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:27:51,358 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- PIXEL CHECK STILL FAILING. Gemini, this is mechanical: a script samples your output. Make the photo edges EQUAL to the photo center in sat
+2026-05-04 14:27:51,360 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:27:51,360 INFO src.gemini_creative QC feedback crop #1 attached inline (145640 chars base64)
+2026-05-04 14:27:51,360 INFO src.gemini_creative QC feedback crop #2 attached inline (141364 chars base64)
+2026-05-04 14:28:04,930 INFO src.gemini_creative Imagen photo received (512x2048)
+2026-05-04 14:28:05,155 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:28:13,270 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmplqtx4s22_gemini_male_northern_european_cardiol_C.png (1084794 bytes)
+2026-05-04 14:28:39,734 INFO src.gemini_creative QC attempt 10: FAIL (target=gemini, 1 violations)
+2026-05-04 14:28:39,734 INFO src.gemini_creative Attaching 2 failure-region crop(s) to next attempt
+2026-05-04 14:28:39,735 WARNING src.gemini_creative Creative still failing QC after 10 attempts — returning best-so-far attempt with 1 violations (last had 1)
+2026-05-04 14:28:39,735 ERROR main Static QC FAIL for 'job_titles_norm__cardiologist + skills__cardiology' after 1 attempts; REJECTING creative. Campaign will be created without an image. Violations: ['No gradient bleed at photo edges (pixel): Edge gradient bleed: left edge 15% colored (>10%)']
+2026-05-04 14:28:39,739 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-05-04 14:28:39,740 INFO src.figma_creative Copy gen using Smart Ramp description hint: 'US-based cardiologists who have completed their fellowship training'
+2026-05-04 14:28:39,740 INFO src.figma_creative LiteLLM copy gen — cohort=job_titles_norm__cardiologist signals=1 populated=0
+2026-05-04 14:28:53,670 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:28:53,676 INFO src.figma_creative Generated 3 copy variants for 'job_titles_norm__cardiologist'
+2026-05-04 14:28:53,704 INFO src.gemini_creative Creative generation attempt 1/10 (angle=A)
+2026-05-04 14:28:53,705 INFO src.gemini_creative Gemini call — angle=A photo_subject='male South Asian fellowship-trained cardiologist, reviewing cardiac imaging on a'
+2026-05-04 14:28:53,705 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male South Asian fellowship-trained cardiologist, reviewing cardiac imaging on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the 
+2026-05-04 14:28:53,705 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-05-04 14:28:53,705 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-05-04 14:29:07,388 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:29:08,119 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:29:12,127 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmp23tr96rv_gemini_male_south_asian_fellowship_tr_A.png (1398397 bytes)
+2026-05-04 14:29:12,140 INFO src.copy_design_qc Copy length violations found (will continue to vision + pixel checks): ["intro_text contains em dash (banned in contributor copy): 'Finished fellowship? AI models are being trained on clinical cardiology — and they need attending-level review to get it right.'", "ad_headline contains banned token 'training': 'Your cardiology expertise has real value in AI training'"]
+2026-05-04 14:29:35,571 INFO src.gemini_creative QC attempt 1: FAIL (target=copywriter, 5 violations)
+2026-05-04 14:29:35,572 INFO src.gemini_creative Copy QC failed — invoking copy_rewriter
+2026-05-04 14:29:38,809 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:29:38,811 INFO src.figma_creative Copy rewritten (angle A, fields=['intro_text', 'ad_headline']): {'intro_text': 'Finished fellowship? AI models covering clinical cardiology need attending-level review to get it right.', 'ad_headline': 'Your cardiology expertise has real value in AI projects'}
+2026-05-04 14:29:38,811 INFO src.gemini_creative Combined-defect retry: 3 image hint(s) propagated alongside copy rewrite
+2026-05-04 14:29:38,811 INFO src.gemini_creative Creative generation attempt 2/10 (angle=A)
+2026-05-04 14:29:38,811 INFO src.gemini_creative Gemini call — angle=A photo_subject='male South Asian fellowship-trained cardiologist, reviewing cardiac imaging on a'
+2026-05-04 14:29:38,811 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male South Asian fellowship-trained cardiologist, reviewing cardiac imaging on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the 
+2026-05-04 14:29:38,811 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-05-04 14:29:38,811 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- Headline is touching the subject's hair. Tell Gemini 'the TOP of the subject\'s hair must sit at approximately 28% from the top of the fra
+2026-05-04 14:29:38,812 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-05-04 14:29:38,812 INFO src.gemini_creative QC feedback crop #1 attached inline (121036 chars base64)
+2026-05-04 14:29:57,009 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:29:57,888 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:30:02,482 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpfwngjj9o_gemini_male_south_asian_fellowship_tr_A.png (1289565 bytes)
+2026-05-04 14:30:32,632 INFO src.gemini_creative QC attempt 2: FAIL (target=gemini, 5 violations)
+2026-05-04 14:30:32,633 INFO src.gemini_creative Attaching 2 failure-region crop(s) to next attempt
+2026-05-04 14:30:32,633 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-05-04 14:30:32,634 INFO src.gemini_creative Creative generation attempt 3/10 (angle=A)
+2026-05-04 14:30:32,634 INFO src.gemini_creative Gemini call — angle=A photo_subject='male South Asian fellowship-trained cardiologist, reviewing cardiac imaging on a'
+2026-05-04 14:30:32,634 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male South Asian fellowship-trained cardiologist, reviewing cardiac imaging on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the 
+2026-05-04 14:30:32,634 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:30:32,634 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- The gradient washes are in the WRONG position — pink/coral must be in TOP-LEFT corner only, teal/blue in BOTTOM-LEFT corner only. Right ha
+2026-05-04 14:30:32,636 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:30:32,636 INFO src.gemini_creative QC feedback crop #1 attached inline (137760 chars base64)
+2026-05-04 14:30:32,636 INFO src.gemini_creative QC feedback crop #2 attached inline (125504 chars base64)
+2026-05-04 14:30:43,937 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:30:44,372 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:30:49,754 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpm4mp1x4n_gemini_male_south_asian_fellowship_tr_A.png (1446436 bytes)
+2026-05-04 14:31:14,783 INFO src.gemini_creative QC attempt 3: FAIL (target=gemini, 3 violations)
+2026-05-04 14:31:14,784 INFO src.gemini_creative Attaching 1 failure-region crop(s) to next attempt
+2026-05-04 14:31:14,784 INFO src.gemini_creative Creative generation attempt 4/10 (angle=A)
+2026-05-04 14:31:14,784 INFO src.gemini_creative Gemini call — angle=A photo_subject='male South Asian fellowship-trained cardiologist, reviewing cardiac imaging on a'
+2026-05-04 14:31:14,785 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male South Asian fellowship-trained cardiologist, reviewing cardiac imaging on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the 
+2026-05-04 14:31:14,785 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:31:14,785 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- STILL UNCANNY. Tell Gemini 'pretend this is a frame from a Vimeo travel vlog — handheld, slightly imperfect focus, natural variation in li
+2026-05-04 14:31:14,786 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:31:14,786 INFO src.gemini_creative QC feedback crop #1 attached inline (128428 chars base64)
+2026-05-04 14:31:25,636 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:31:25,851 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:31:28,985 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmp2hglcu7g_gemini_male_south_asian_fellowship_tr_A.png (1405463 bytes)
+2026-05-04 14:32:02,681 INFO src.gemini_creative QC attempt 4: FAIL (target=gemini, 6 violations)
+2026-05-04 14:32:02,682 INFO src.gemini_creative Attaching 1 failure-region crop(s) to next attempt
+2026-05-04 14:32:02,682 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-05-04 14:32:02,682 INFO src.gemini_creative Creative generation attempt 5/10 (angle=A)
+2026-05-04 14:32:02,683 INFO src.gemini_creative Gemini call — angle=A photo_subject='male South Asian fellowship-trained cardiologist, reviewing cardiac imaging on a'
+2026-05-04 14:32:02,683 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male South Asian fellowship-trained cardiologist, reviewing cardiac imaging on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the 
+2026-05-04 14:32:02,683 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:32:02,683 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- Headline is touching the subject's hair. Tell Gemini 'the TOP of the subject\'s hair must sit at approximately 28% from the top of the fra
+2026-05-04 14:32:02,683 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:32:02,683 INFO src.gemini_creative QC feedback crop #1 attached inline (133928 chars base64)
+2026-05-04 14:32:13,928 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:32:14,723 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:32:19,150 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpidpt0l_4_gemini_male_south_asian_fellowship_tr_A.png (1479843 bytes)
+2026-05-04 14:32:39,925 INFO src.gemini_creative QC attempt 5: FAIL (target=gemini, 3 violations)
+2026-05-04 14:32:39,925 INFO src.gemini_creative Attaching 1 failure-region crop(s) to next attempt
+2026-05-04 14:32:39,925 INFO src.gemini_creative Creative generation attempt 6/10 (angle=A)
+2026-05-04 14:32:39,926 INFO src.gemini_creative Gemini call — angle=A photo_subject='male South Asian fellowship-trained cardiologist, reviewing cardiac imaging on a'
+2026-05-04 14:32:39,926 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male South Asian fellowship-trained cardiologist, reviewing cardiac imaging on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the 
+2026-05-04 14:32:39,926 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:32:39,926 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- Headline is touching the subject's hair. Tell Gemini 'the TOP of the subject\'s hair must sit at approximately 28% from the top of the fra
+2026-05-04 14:32:39,927 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:32:39,927 INFO src.gemini_creative QC feedback crop #1 attached inline (149008 chars base64)
+2026-05-04 14:32:50,314 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:32:52,170 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:32:57,739 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpvoalwpy3_gemini_male_south_asian_fellowship_tr_A.png (1451415 bytes)
+2026-05-04 14:33:22,679 INFO src.gemini_creative QC attempt 6: FAIL (target=gemini, 3 violations)
+2026-05-04 14:33:22,679 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-05-04 14:33:22,680 INFO src.gemini_creative Creative generation attempt 7/10 (angle=A)
+2026-05-04 14:33:22,680 INFO src.gemini_creative Gemini call — angle=A photo_subject='male South Asian fellowship-trained cardiologist, reviewing cardiac imaging on a'
+2026-05-04 14:33:22,680 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male South Asian fellowship-trained cardiologist, reviewing cardiac imaging on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the 
+2026-05-04 14:33:22,680 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:33:22,680 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- Headline is touching the subject's hair. Tell Gemini 'the TOP of the subject\'s hair must sit at approximately 28% from the top of the fra
+2026-05-04 14:33:22,680 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:33:31,967 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:33:32,309 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:33:35,014 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpeqnji94a_gemini_male_south_asian_fellowship_tr_A.png (1505380 bytes)
+2026-05-04 14:34:02,853 INFO src.gemini_creative QC attempt 7: PASS (target=none, 0 violations)
+2026-05-04 14:34:02,856 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-05-04 14:34:02,856 INFO src.figma_creative Copy gen using Smart Ramp description hint: 'US-based cardiologists who have completed their fellowship training'
+2026-05-04 14:34:02,857 INFO src.figma_creative LiteLLM copy gen — cohort=job_titles_norm__medical_doctor + fields signals=2 populated=0
+2026-05-04 14:34:29,081 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:34:29,086 INFO src.figma_creative Generated 3 copy variants for 'job_titles_norm__medical_doctor + fields_of_study__medicine'
+2026-05-04 14:34:29,105 INFO src.gemini_creative Creative generation attempt 1/10 (angle=B)
+2026-05-04 14:34:29,105 INFO src.gemini_creative Gemini call — angle=B photo_subject='male Black cardiologist, reading medical case notes on a laptop at a home desk n'
+2026-05-04 14:34:29,105 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Black cardiologist, reading medical case notes on a laptop at a home desk near a window. HEAD PLACEMENT (CRITICAL): the TOP of the
+2026-05-04 14:34:29,105 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-05-04 14:34:29,105 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-05-04 14:34:42,937 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:34:43,490 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:34:48,892 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpjwcy1o_q_gemini_male_black_cardiologist__readi_B.png (1233236 bytes)
+2026-05-04 14:34:48,908 INFO src.copy_design_qc Copy length violations found (will continue to vision + pixel checks): ["intro_text has 157 chars (max 140): 'Physicians across the US are contributing their clinical expertise to AI training on Outlier. Fellowship-trained cardiologists are among the highest earners.'", "intro_text contains banned token 'training': 'Physicians across the US are contributing their clinical expertise to AI training on Outlier. Fellowship-trained cardiologists are among the highest earners.'"]
+2026-05-04 14:35:17,800 INFO src.gemini_creative QC attempt 1: FAIL (target=copywriter, 7 violations)
+2026-05-04 14:35:17,801 INFO src.gemini_creative Copy QC failed — invoking copy_rewriter
+2026-05-04 14:35:50,925 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-04 14:35:50,929 WARNING src.figma_creative rewrite_variant_copy: hard-truncated intro_text from 152 to 135 chars: 'Physicians across the US are lending their clinical expertise to AI projects on Outlier. Fellowship-trained cardiologists are among the'
+2026-05-04 14:35:50,929 INFO src.figma_creative Copy rewritten (angle B, fields=['intro_text']): {'intro_text': 'Physicians across the US are lending their clinical expertise to AI projects on Outlier. Fellowship-trained cardiologists are among the'}
+2026-05-04 14:35:50,929 INFO src.gemini_creative Combined-defect retry: 5 image hint(s) propagated alongside copy rewrite
+2026-05-04 14:35:50,930 INFO src.gemini_creative Creative generation attempt 2/10 (angle=B)
+2026-05-04 14:35:50,930 INFO src.gemini_creative Gemini call — angle=B photo_subject='male Black cardiologist, reading medical case notes on a laptop at a home desk n'
+2026-05-04 14:35:50,930 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Black cardiologist, reading medical case notes on a laptop at a home desk near a window. HEAD PLACEMENT (CRITICAL): the TOP of the
+2026-05-04 14:35:50,930 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-05-04 14:35:50,930 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- A second Outlier logo is visible inside the photograph. Tell Gemini 'Do NOT render any Outlier logo, brand mark, or wordmark — the logo is
+2026-05-04 14:35:50,934 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-05-04 14:35:50,934 INFO src.gemini_creative QC feedback crop #1 attached inline (109436 chars base64)
+2026-05-04 14:35:50,934 INFO src.gemini_creative QC feedback crop #2 attached inline (101596 chars base64)
+2026-05-04 14:36:08,654 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:36:08,923 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:36:13,673 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpvm8ijdfv_gemini_male_black_cardiologist__readi_B.png (1198262 bytes)
+2026-05-04 14:36:35,300 INFO src.gemini_creative QC attempt 2: FAIL (target=gemini, 5 violations)
+2026-05-04 14:36:35,301 INFO src.gemini_creative Attaching 2 failure-region crop(s) to next attempt
+2026-05-04 14:36:35,301 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-05-04 14:36:35,301 INFO src.gemini_creative Creative generation attempt 3/10 (angle=B)
+2026-05-04 14:36:35,301 INFO src.gemini_creative Gemini call — angle=B photo_subject='male Black cardiologist, reading medical case notes on a laptop at a home desk n'
+2026-05-04 14:36:35,301 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Black cardiologist, reading medical case notes on a laptop at a home desk near a window. HEAD PLACEMENT (CRITICAL): the TOP of the
+2026-05-04 14:36:35,301 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-05-04 14:36:35,302 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- DUPLICATE LOGO STILL APPEARING. Tell Gemini 'There must be ZERO branding, ZERO text shapes that look like words, ZERO letterforms in the p
+2026-05-04 14:36:35,302 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-05-04 14:36:35,302 INFO src.gemini_creative QC feedback crop #1 attached inline (113972 chars base64)
+2026-05-04 14:36:35,303 INFO src.gemini_creative QC feedback crop #2 attached inline (110596 chars base64)
+2026-05-04 14:36:46,384 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-05-04 14:36:47,147 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-05-04 14:36:50,839 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpwddd1tuv_gemini_male_black_cardiologist__readi_B.png (1481797 bytes)
+2026-05-04 14:37:19,578 INFO src.gemini_creative QC attempt 3: PASS (target=none, 0 violations)
+2026-05-04 14:37:19,579 INFO main [dry-run] _process_static_campaigns: skipping LinkedIn calls (5 cohorts)
+2026-05-04 14:37:19,679 INFO smart_ramp_poller [DRY-RUN] would notify (kind=None) for ramp=GMR-0006
+EXIT=0

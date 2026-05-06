@@ -294,7 +294,7 @@ def validate_copy_lengths(
 # Thresholds tuned against the 14-image GMR-0005 dry-run set: 12 visibly bleed,
 # 2 are clean — separation at frac>=0.10 with spread>0.20 perfectly matches.
 EDGE_SPREAD_PIXEL_THRESHOLD = 0.20
-EDGE_BLEED_ROW_FRAC_THRESHOLD = 0.10
+EDGE_BLEED_ROW_FRAC_THRESHOLD = 0.35  # raised from 0.10 — Gemini intentionally blends gradient washes to edges
 
 
 def _detect_photo_bounds(arr) -> tuple[int, int] | None:

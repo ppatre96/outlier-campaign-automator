@@ -411,7 +411,7 @@ class LinkedInClient:
         }
         resp = self._req("POST", self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/adCampaigns"), json=payload)
         self._raise_for_status(resp, "createInMailCampaign")
-        campaign_id = resp.headers.get("x-linkedin-id") or _id_from_location(resp)
+        campaign_id = resp.headers.get("x-restli-id") or resp.headers.get("x-linkedin-id") or _id_from_location(resp)
         urn = f"urn:li:sponsoredCampaign:{campaign_id}"
         log.info("Created InMail campaign %s '%s'", urn, name)
         return urn
@@ -429,45 +429,45 @@ class LinkedInClient:
     ) -> str:
         """
         Create a LinkedIn Message Ad creative and attach it to a campaign.
-        Two-step: (1) create adInMailContent, (2) create creative referencing it.
+        Two-step: (1) create inMailContent via REST API, (2) create creative referencing it.
+        Uses /rest/inMailContents (no MDP needed) with LinkedIn-Version: 202506 header.
         sender_urn: urn:li:person:... (must be connected to the ad account).
         Returns the sponsoredCreative URN.
         """
         dest = destination_url or config.LINKEDIN_DESTINATION
 
-        # Step 1 — create the InMail content object
-        # adInMailContents requires an older API version (202502)
+        # Step 1 — create the InMail content object via REST API (no MDP required)
         content_payload = {
-            "account":   f"urn:li:sponsoredAccount:{config.LINKEDIN_AD_ACCOUNT_ID}",
-            "adSenders": [{"sender": sender_urn}],
-            "subject":   subject[:60],
-            "body":      body[:1000],
-            "callToAction": {
-                "text":          cta_label[:20],
-                "landingPageUrl": dest,
-            },
+            "htmlBody": body[:1000],
+            "subject": subject[:60],
+            "subContent": {
+                "regular": {
+                    "callToActionText": cta_label[:20],
+                    "callToActionLandingPageUrl": dest,
+                }
+            }
         }
-        content_headers = {
-            "Authorization": f"Bearer {self._token}",
-            "X-Restli-Protocol-Version": "2.0.0",
-            "Content-Type": "application/json",
-        }
+        content_headers = self._default_headers()
+        content_headers["LinkedIn-Version"] = "202506"
+
         import requests as _req_lib
-        resp = _req_lib.post("https://api.linkedin.com/v2/adInMailContents", json=content_payload, headers=content_headers)
+        resp = _req_lib.post("https://api.linkedin.com/rest/inMailContents", json=content_payload, headers=content_headers)
         self._raise_for_status(resp, "createInMailContent")
-        content_id  = resp.headers.get("x-linkedin-id") or _id_from_location(resp)
+        content_id  = resp.headers.get("x-restli-id") or _id_from_location(resp)
         content_urn = f"urn:li:adInMailContent:{content_id}"
-        log.info("Created InMail content %s", content_urn)
+        log.info("Created InMail content %s (no MDP required)", content_urn)
 
         # Step 2 — create the creative referencing the content
         creative_payload = {
             "campaign": campaign_urn,
-            "content":  {"reference": content_urn},
-            "status":   "ACTIVE",
+            "content": {"reference": content_urn},
+            "intendedStatus": "DRAFT",
         }
-        resp = self._req("POST", self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/creatives"), json=creative_payload)
+        creative_headers = self._default_headers()
+        creative_headers["LinkedIn-Version"] = "202506"
+        resp = self._req("POST", f"https://api.linkedin.com/rest/adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/creatives", json=creative_payload, headers=creative_headers)
         self._raise_for_status(resp, "createInMailCreative")
-        creative_id = resp.headers.get("x-linkedin-id") or _id_from_location(resp)
+        creative_id = resp.headers.get("x-restli-id") or _id_from_location(resp)
         urn = f"urn:li:sponsoredCreative:{creative_id}"
         log.info("Created InMail creative %s", urn)
         return urn

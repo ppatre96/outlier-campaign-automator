@@ -1,0 +1,173 @@
+2026-04-28 22:05:52,899 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=GMR-0005 dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-28.log
+2026-04-28 22:05:56,193 INFO smart_ramp_poller Running pipeline for ramp=GMR-0005 version=1 dry_run=True
+2026-04-28 22:06:02,638 INFO src.redash_db RedashClient ready → https://redash.scale.com (data_source_id=30)
+2026-04-28 22:06:02,641 INFO src.redash_db Resolving project_id=699768af59d27cc33ff9f3c1 to signup_flow_id + config_name
+2026-04-28 22:06:05,357 INFO src.redash_db Resolved project → signup_flow_id=699cb29c3defc15797e4590a config='[Experts] Singapore Law' (passes=16)
+2026-04-28 22:06:05,357 INFO src.redash_db Fetching screenings via Redash for flow=699cb29c3defc15797e4590a config=[Experts] Singapore Law
+2026-04-28 22:06:07,966 INFO src.redash_db Fetched 148 screening rows
+2026-04-28 22:06:07,967 INFO main _resolve_cohorts: raw data 148 rows
+2026-04-28 22:06:07,975 INFO main _resolve_cohorts: 102 binary features
+2026-04-28 22:06:07,975 WARNING main _resolve_cohorts: meta fetch failed (non-fatal): 'RedashClient' object has no attribute 'fetch_job_post_meta'
+2026-04-28 22:06:07,976 INFO src.icp_from_jobpost Base-role candidates from [job_name=None, domain=None, flow_name='SPRL - Singapore Legal Benchmark', proj_name=None, worker_skills=[]]: []
+2026-04-28 22:06:07,976 INFO src.analysis Tier T1 (_is_pass): 105 positives
+2026-04-28 22:06:07,976 INFO src.analysis Tier fallback: stronger tiers were thin — dropped down to T1 (105 ≥ 30). Cohort analysis will target this tier's positive class.
+2026-04-28 22:06:07,976 INFO main _resolve_cohorts: target tier=T1 col=_is_pass n_icp=105
+2026-04-28 22:06:07,976 INFO src.analysis stage_a_negative: only 43 non-activators (< 100 threshold) — skipping data-driven exclusions. The negative class is too thin to trust.
+2026-04-28 22:06:07,976 INFO src.analysis stage_a dispatch → lift mode (T1 / resume-pass target: '_is_pass' — lift is the correct framing for pass-vs-fail)
+2026-04-28 22:06:07,976 INFO src.analysis Stage A target: T1 (resume-pass)
+2026-04-28 22:06:07,976 INFO src.analysis Global baseline: 70.9% (105/148)
+2026-04-28 22:06:07,989 INFO src.analysis Univariates: 6 accepted / 102 tested
+2026-04-28 22:06:08,006 INFO src.stage_c Stage C: validating 12 cohorts against LinkedIn Audience Counts
+2026-04-28 22:06:10,422 INFO src.linkedin_urn Loaded 41943 URNs from tab 'Skills'
+2026-04-28 22:06:11,255 INFO src.linkedin_urn Loaded 2171 URNs from tab 'FieldsOfStudy'
+2026-04-28 22:06:12,039 INFO src.linkedin_urn Loaded 1406 URNs from tab 'Degrees'
+2026-04-28 22:06:12,045 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-28 22:06:12,050 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-28 22:06:12,070 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-28 22:06:12,086 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-28 22:06:12,111 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-28 22:06:12,124 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-28 22:06:12,126 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-28 22:06:12,129 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-28 22:06:12,132 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-28 22:06:12,132 INFO src.stage_c Stage C: 12 cohorts have resolvable URNs
+2026-04-28 22:06:13,390 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:06:13,390 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-28 22:06:13,391 WARNING src.stage_c Audience count failed for 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-28 22:06:13,760 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:06:13,760 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%29%29%29
+2026-04-28 22:06:13,760 WARNING src.stage_c Audience count failed for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%29%29%29 — skipping
+2026-04-28 22:06:14,262 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:06:14,262 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-28 22:06:14,263 WARNING src.stage_c Audience count failed for 'experience_band__10plus + highest_degree_level__Bachelors + fields_of_study__law': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-28 22:06:14,656 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:06:14,656 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-28 22:06:14,656 WARNING src.stage_c Audience count failed for 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-28 22:06:15,014 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:06:15,015 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-28 22:06:15,015 WARNING src.stage_c Audience count failed for 'skills__compliance + fields_of_study__law': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-28 22:06:15,388 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:06:15,388 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%29%29%29
+2026-04-28 22:06:15,388 WARNING src.stage_c Audience count failed for 'skills__compliance + highest_degree_level__Bachelors': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%29%29%29 — skipping
+2026-04-28 22:06:15,744 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:06:15,744 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%29%29%29
+2026-04-28 22:06:15,744 WARNING src.stage_c Audience count failed for 'skills__compliance + experience_band__10plus': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%29%29%29 — skipping
+2026-04-28 22:06:16,097 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:06:16,098 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-28 22:06:16,098 WARNING src.stage_c Audience count failed for 'skills__litigation + fields_of_study__law + highest_degree_level__Bachelors': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-28 22:06:16,464 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:06:16,465 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%29%29%29
+2026-04-28 22:06:16,465 WARNING src.stage_c Audience count failed for 'fields_of_study__law + highest_degree_level__Bachelors + skills__litigation': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%29%29%29 — skipping
+2026-04-28 22:06:16,831 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:06:16,831 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-28 22:06:16,832 WARNING src.stage_c Audience count failed for 'skills__litigation + highest_degree_level__Bachelors + fields_of_study__law': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-28 22:06:17,219 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:06:17,219 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-28 22:06:17,219 WARNING src.stage_c Audience count failed for 'skills__litigation + fields_of_study__law': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-28 22:06:17,646 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:06:17,646 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-28 22:06:17,647 WARNING src.stage_c Audience count failed for 'fields_of_study__law + highest_degree_level__Bachelors + experience_band__10plus': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-28 22:06:17,647 INFO src.stage_c Stage C: 0 cohorts pass audience threshold
+2026-04-28 22:06:17,647 INFO src.stage_c Stage C complete: 0/5 cohorts selected
+2026-04-28 22:06:17,647 INFO main _resolve_cohorts: 5 cohorts selected
+2026-04-28 22:06:17,650 INFO main [dry-run] InMail cohort 0 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors' tg=GENERAL angle=A
+2026-04-28 22:06:41,790 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:06:41,804 INFO src.inmail_copy_writer InMail angle F generated for 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors'
+2026-04-28 22:06:56,436 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:06:56,438 INFO src.inmail_copy_writer InMail angle A generated for 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors'
+2026-04-28 22:07:04,749 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:07:04,751 INFO src.inmail_copy_writer InMail angle B generated for 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors'
+2026-04-28 22:07:36,605 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:07:36,611 INFO src.inmail_copy_writer InMail angle C generated for 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors'
+2026-04-28 22:07:36,611 INFO main [dry-run] Subject: Law & Compliance Expert | Flexible Hours & $50/hr
+2026-04-28 22:07:36,611 INFO main [dry-run] Body (first 100): $50/hr is what Outlier pays contributors with legal and compliance backgrounds — and the work fits a…
+2026-04-28 22:07:36,611 INFO main [dry-run] CTA: View Opportunities
+2026-04-28 22:07:36,617 WARNING main InMail angle A: 2 brand voice violations
+2026-04-28 22:07:36,617 WARNING main   Must fix: 2
+2026-04-28 22:07:36,617 WARNING main   Should fix: 0
+2026-04-28 22:07:36,617 ERROR main InMail angle A has MUST-FIX violations
+2026-04-28 22:07:36,617 ERROR main     Active Voice Only: 'is processed' → Convert to active voice: use a strong verb instead
+2026-04-28 22:07:36,617 ERROR main     Active Voice Only: 'are matched' → Convert to active voice: use a strong verb instead
+2026-04-28 22:07:36,617 INFO main [dry-run] InMail cohort 1 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance' tg=GENERAL angle=B
+2026-04-28 22:07:52,006 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:07:52,008 INFO src.inmail_copy_writer InMail angle F generated for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance'
+2026-04-28 22:08:02,003 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:08:02,006 INFO src.inmail_copy_writer InMail angle A generated for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance'
+2026-04-28 22:08:10,519 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:08:10,521 INFO src.inmail_copy_writer InMail angle B generated for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance'
+2026-04-28 22:08:18,738 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:08:18,740 INFO src.inmail_copy_writer InMail angle C generated for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance'
+2026-04-28 22:08:18,740 INFO main [dry-run] Subject: Your legal eye is worth $50/hr to AI companies
+2026-04-28 22:08:18,740 INFO main [dry-run] Body (first 100): Your background in law and compliance puts you in a rare group of professionals AI companies are act…
+2026-04-28 22:08:18,740 INFO main [dry-run] CTA: See Open Tasks
+2026-04-28 22:08:18,743 INFO main InMail angle B passes brand voice check (confidence: 90%)
+2026-04-28 22:08:18,743 INFO main [dry-run] InMail cohort 2 'experience_band__10plus + highest_degree_level__Bachelors + fields_of_study__law' tg=GENERAL angle=C
+2026-04-28 22:08:33,949 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:08:33,952 INFO src.inmail_copy_writer InMail angle F generated for 'experience_band__10plus + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:08:42,224 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:08:42,225 INFO src.inmail_copy_writer InMail angle A generated for 'experience_band__10plus + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:08:54,802 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:08:54,808 INFO src.inmail_copy_writer InMail angle B generated for 'experience_band__10plus + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:09:03,246 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:09:03,248 INFO src.inmail_copy_writer InMail angle C generated for 'experience_band__10plus + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:09:03,248 INFO main [dry-run] Subject: 1,000+ law professionals earn $50/hr on Outlier
+2026-04-28 22:09:03,248 INFO main [dry-run] Body (first 100): Over 1,000 professionals with legal backgrounds are already earning $50/hr contributing to Outlier —…
+2026-04-28 22:09:03,248 INFO main [dry-run] CTA: See Open Tasks
+2026-04-28 22:09:03,250 INFO main InMail angle C passes brand voice check (confidence: 100%)
+2026-04-28 22:09:03,250 INFO main [dry-run] InMail cohort 3 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law' tg=GENERAL angle=A
+2026-04-28 22:09:12,458 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:09:12,460 INFO src.inmail_copy_writer InMail angle F generated for 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:09:21,916 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:09:21,918 INFO src.inmail_copy_writer InMail angle A generated for 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:09:28,958 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:09:28,960 INFO src.inmail_copy_writer InMail angle B generated for 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:09:39,301 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:09:39,303 INFO src.inmail_copy_writer InMail angle C generated for 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:09:39,303 INFO main [dry-run] Subject: Compliance & Law Experts Earn $50/hr with AI
+2026-04-28 22:09:39,303 INFO main [dry-run] Body (first 100): $50/hr is what Outlier pays contributors with your background in law and compliance — and the work i…
+2026-04-28 22:09:39,303 INFO main [dry-run] CTA: See Open Tasks
+2026-04-28 22:09:39,305 WARNING main InMail angle A: 2 brand voice violations
+2026-04-28 22:09:39,305 WARNING main   Must fix: 2
+2026-04-28 22:09:39,305 WARNING main   Should fix: 0
+2026-04-28 22:09:39,305 ERROR main InMail angle A has MUST-FIX violations
+2026-04-28 22:09:39,305 ERROR main     Active Voice Only: 'are matched' → Convert to active voice: use a strong verb instead
+2026-04-28 22:09:39,305 ERROR main     Active Voice Only: 'is issued' → Convert to active voice: use a strong verb instead
+2026-04-28 22:09:39,306 INFO main [dry-run] InMail cohort 4 'skills__compliance + fields_of_study__law' tg=GENERAL angle=B
+2026-04-28 22:10:24,614 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:10:24,618 INFO src.inmail_copy_writer InMail angle F generated for 'skills__compliance + fields_of_study__law'
+2026-04-28 22:10:32,902 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:10:32,904 INFO src.inmail_copy_writer InMail angle A generated for 'skills__compliance + fields_of_study__law'
+2026-04-28 22:10:43,414 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:10:43,417 INFO src.inmail_copy_writer InMail angle B generated for 'skills__compliance + fields_of_study__law'
+2026-04-28 22:11:20,260 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:11:20,264 INFO src.inmail_copy_writer InMail angle C generated for 'skills__compliance + fields_of_study__law'
+2026-04-28 22:11:20,264 INFO main [dry-run] Subject: Your compliance expertise is worth $50/hr in AI
+2026-04-28 22:11:20,264 INFO main [dry-run] Body (first 100): Compliance and legal professionals are exactly the kind of experts AI companies struggle to find — a…
+2026-04-28 22:11:20,264 INFO main [dry-run] CTA: See Open Tasks
+2026-04-28 22:11:20,267 WARNING main InMail angle B: 2 brand voice violations
+2026-04-28 22:11:20,267 WARNING main   Must fix: 1
+2026-04-28 22:11:20,267 WARNING main   Should fix: 1
+2026-04-28 22:11:20,267 ERROR main InMail angle B has MUST-FIX violations
+2026-04-28 22:11:20,267 ERROR main     Active Voice Only: 'are completed' → Convert to active voice: use a strong verb instead
+2026-04-28 22:11:20,269 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-04-28 22:11:20,269 INFO src.figma_creative LiteLLM copy gen — cohort=skills__compliance + fields_of_study__la signals=3 populated=1
+2026-04-28 22:11:38,650 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:11:38,653 INFO src.figma_creative Generated 3 copy variants for 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors'
+2026-04-28 22:11:38,654 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-04-28 22:11:38,654 INFO src.figma_creative LiteLLM copy gen — cohort=fields_of_study__law + highest_degree_le signals=3 populated=1
+2026-04-28 22:11:59,494 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:11:59,501 INFO src.figma_creative Generated 3 copy variants for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance'
+2026-04-28 22:11:59,502 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-04-28 22:11:59,503 INFO src.figma_creative LiteLLM copy gen — cohort=experience_band__10plus + highest_degree signals=3 populated=0
+2026-04-28 22:12:25,302 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:12:25,304 INFO src.figma_creative Generated 3 copy variants for 'experience_band__10plus + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:12:25,304 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-04-28 22:12:25,304 INFO src.figma_creative LiteLLM copy gen — cohort=skills__compliance + highest_degree_leve signals=3 populated=1
+2026-04-28 22:12:44,089 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:12:44,094 INFO src.figma_creative Generated 3 copy variants for 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:12:44,097 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-04-28 22:12:44,098 INFO src.figma_creative LiteLLM copy gen — cohort=skills__compliance + fields_of_study__la signals=2 populated=1
+2026-04-28 22:13:05,676 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:13:05,679 INFO src.figma_creative Generated 3 copy variants for 'skills__compliance + fields_of_study__law'
+2026-04-28 22:13:05,679 INFO main [dry-run] _process_static_campaigns: skipping LinkedIn calls (5 cohorts)
+2026-04-28 22:13:05,695 INFO smart_ramp_poller [DRY-RUN] would notify (kind=None) for ramp=GMR-0005

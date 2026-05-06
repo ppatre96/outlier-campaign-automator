@@ -1,0 +1,22 @@
+2026-04-28 14:18:35,862 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=GMR-0005 dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-28.log
+2026-04-28 14:18:39,010 INFO smart_ramp_poller Running pipeline for ramp=GMR-0005 version=1 dry_run=True
+2026-04-28 14:18:42,619 INFO src.redash_db RedashClient ready → https://redash.scale.com (data_source_id=30)
+2026-04-28 14:18:42,625 ERROR main run_launch_for_ramp: row failed for ramp=GMR-0005 cohort=c9a1fde4-3de8-441e-a876-3fca3f2f2eb1 — continuing with next row
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/main.py", line 2285, in run_launch_for_ramp
+    outcome = _process_row_both_modes(
+        row,
+    ...<12 lines>...
+        figma_node=row.get("figma_node", ""),
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/main.py", line 2083, in _process_row_both_modes
+    resolved = _resolve_cohorts(
+        row,
+    ...<3 lines>...
+        location=location, dry_run=dry_run,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/main.py", line 1658, in _resolve_cohorts
+    df_raw = snowflake.fetch_stage1_contributors(project_id)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'RedashClient' object has no attribute 'fetch_stage1_contributors'
+2026-04-28 14:18:42,630 INFO smart_ramp_poller [DRY-RUN] would notify (kind=None) for ramp=GMR-0005

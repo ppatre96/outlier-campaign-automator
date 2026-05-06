@@ -1,0 +1,13 @@
+{
+  "generated_at": "2026-05-04T16:00:36.195569+00:00",
+  "sources_queried": [
+    "reddit",
+    "trustpilot",
+    "glassdoor",
+    "discourse",
+    "zendesk",
+    "intercom"
+  ],
+  "sources_skipped": [],
+  "themes": []
+}

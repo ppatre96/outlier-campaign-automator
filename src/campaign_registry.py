@@ -70,6 +70,7 @@ COLUMNS = [
     "created_at",
     "status",                   # active | paused | deprecated
     "deprecation_reason",
+    "gemini_prompt",            # base Gemini image gen prompt (first attempt, no QC suffix)
     # ── Performance metrics (filled by feedback agent) ─────────────────────────
     "impressions",
     "clicks",
@@ -104,6 +105,7 @@ class CampaignEntry:
     created_at:             str = ""
     status:                 str = "active"
     deprecation_reason:     str = ""
+    gemini_prompt:          str = ""
     # metrics — empty until feedback agent runs
     impressions:            int | None = None
     clicks:                 int | None = None
@@ -203,6 +205,7 @@ def log_campaign(
     photo_subject: str = "",
     inmail_subject: str = "",
     inmail_body: str = "",
+    gemini_prompt: str = "",
 ) -> None:
     """Append one campaign row to the registry. Safe to call from both arms."""
     entry = CampaignEntry(
@@ -222,6 +225,7 @@ def log_campaign(
         photo_subject=photo_subject,
         inmail_subject=inmail_subject,
         inmail_body_preview=inmail_body[:150] if inmail_body else "",
+        gemini_prompt=gemini_prompt,
         created_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         status="active",
     )

@@ -1,0 +1,98 @@
+*🚀 Outlier Campaign Run — 2026-05-06 02:11*
+
+*📋 Input*
+• Project: `698a172324c01532c2f92a0d`
+• Flow ID: `69a7a186d91acccdf955b912`
+• Config: Experts Health EKG
+• Cohort: job_titles_norm__medical_doctor + fields_of_study__medicine
+• ICP target: T1 (resume-pass — weakest signal, fallback)
+• ICP count: 338 / None applicants
+• Analysis mode: Stage A/B statistical cohort lift
+• Resume pass rate: 100.00% (None/None)
+• Cohort lift vs baseline: +17.2pp
+• Stage used: A
+
+*🧠 Agent outputs*
+
+_1. outlier-data-analyst_
+  • None screened → None pass
+  • Cohort selected via Stage A
+
+_2. ad-creative-brief-generator_
+  • A: female South Asian medical doctor, reviewing patient case notes on a laptop at a home desk
+  • B: male Middle Eastern medical doctor, reading medical literature on a laptop at a home kitch
+  • C: female Black medical doctor, relaxing with a laptop on a home sofa reviewing a document
+
+_3. outlier-copy-writer_
+  *A — Expertise Hook*
+    • Headline: `AI needs clinical judgment.`
+    • Subheadline: `Your diagnostic eye has real value.`
+    • Intro text: `Between clinical cases, your medical reasoning is exactly what AI models lack. Outlier pays doctors to fix that.`
+    • Ad headline: `Medical doctors are reviewing AI outputs — from home, on their time.`
+    • Ad description: `Rate, improve, and challenge AI in medicine. No extra certifications needed.`
+    • CTA: `APPLY`
+  *B — Earnings Hook*
+    • Headline: `Doctors are getting paid for this.`
+    • Subheadline: `AI training tasks, done between shifts.`
+    • Intro text: `Hundreds of medical doctors have been paid by Outlier to review and improve AI outputs. Your peers are already in.`
+    • Ad headline: `MDs across the world earn payment doing flexible AI tasks remotely.`
+    • Ad description: `No commute. No clinic politics. Contribute from wherever you are.`
+    • CTA: `APPLY`
+  *C — Flexibility Hook*
+    • Headline: `Clinical shifts don't own your income.`
+    • Subheadline: `Contribute to AI projects on your hours.`
+    • Intro text: `On-call rotas control your days. Your medical expertise can still earn outside them — no fixed hours, no clinic approval needed.`
+    • Ad headline: `Flexible AI tasks built around a doctor's irregular hours.`
+    • Ad description: `Pick up tasks between shifts. Payment for real medical expertise.`
+    • CTA: `APPLY`
+
+_4. outlier-creative-generator_
+  • A: — (not generated)
+  • B: — (not generated)
+  • C: — (not generated)
+
+_5. outlier-copy-design-qc_
+  • A: • — (? attempts)
+  • B: ❌ FAIL (1 attempt) — No gradient bleed at photo edges (pixel): Edge gradient bleed: left edge 17% colored (>10%)
+  • C: • — (? attempts)
+
+*📣 LinkedIn (status: DRAFT)*
+• Campaign group: agent_Outlier 69a7a186d91acccdf955b912
+  → https://www.linkedin.com/campaignmanager/accounts/510956407/campaign-groups/944307756/campaigns
+• Campaign: agent_69a7a186d91acccdf955b912 | Job Titles Norm Medical Doctor + Fields
+  → https://www.linkedin.com/campaignmanager/accounts/510956407/campaigns/655119866
+
+*⚠️ Blockers*
+• Creative attachment (MDP): DSC post creation returns 403 — LinkedIn app needs Marketing Developer Platform approval.
+• Google Drive upload: GDRIVE_ENABLED=false — creatives saved locally only.
+
+*👥 ICP Exemplars (PII-stripped)*
+
+_1. cb_id `69aa433c1aa33361d8cad7b0` — tier T1_
+    ‣ Passed the resume screening for this project
+    ‣ 29+ years professional experience
+    ‣ Bachelors
+
+_2. cb_id `69b9742054fb60690344316e` — tier T1_
+    ‣ Passed the resume screening for this project
+    ‣ Other
+    ‣ Accreditations: american board of internal medicine (abim) certification; diplomate of the ameri
+
+_3. cb_id `69b99e27603031c5707c7bb5` — tier T1_
+    ‣ Passed the resume screening for this project
+    ‣ 15+ years professional experience
+    ‣ Other
+
+_4. cb_id `69b99d84d1c2f620394c46df` — tier T1_
+    ‣ Passed the resume screening for this project
+    ‣ 8 years professional experience
+    ‣ Other
+
+_5. cb_id `69b98b99c74da831f55240ce` — tier T1_
+    ‣ Passed the resume screening for this project
+    ‣ 8 years professional experience
+    ‣ Masters
+
+*✅ Next steps*
+• Review DRAFT campaign in Campaign Manager → https://www.linkedin.com/campaignmanager/accounts/510956407/campaigns/655119866
+• Enable GDRIVE_ENABLED=true + add service account to Shared Drive to archive creatives.

@@ -1,0 +1,640 @@
+2026-04-27 09:02:59,956 INFO weekly_feedback_loop Weekly Feedback Loop starting (dry_run=False, force=False, only=None) -> /Users/pranavpatre/outlier-campaign-agent/logs/weekly_feedback_loop/2026-04-27.log
+2026-04-27 09:02:59,957 WARNING weekly_feedback_loop No active projects configured; drift step will no-op. Create /Users/pranavpatre/outlier-campaign-agent/data/active_projects.json or set OUTLIER_TRACKING_PROJECT_ID in .env.
+2026-04-27 09:02:59,957 INFO weekly_feedback_loop Step A: v1 weekly alerts
+2026-04-27 09:03:00,754 INFO scripts.post_weekly_reports === Weekly InMail Report ===
+2026-04-27 09:03:00,755 INFO src.inmail_weekly_report Running weekly InMail report
+2026-04-27 09:03:00,755 INFO src.redash_db RedashClient ready → https://redash.scale.com (data_source_id=30)
+2026-04-27 10:04:00,744 ERROR scripts.post_weekly_reports InMail report failed: HTTPSConnectionPool(host='redash.scale.com', port=443): Max retries exceeded with url: /api/queries?api_key=9W4SOwp0VJzrQCJFrZ4sD4HdPtDnCQOnL744fafP (Caused by NameResolutionError("HTTPSConnection(host='redash.scale.com', port=443): Failed to resolve 'redash.scale.com' ([Errno 8] nodename nor servname provided, or not known)"))
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connection.py", line 204, in _new_conn
+    sock = connection.create_connection(
+        (self._dns_host, self.port),
+    ...<2 lines>...
+        socket_options=self.socket_options,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/util/connection.py", line 60, in create_connection
+    for res in socket.getaddrinfo(host, port, family, socket.SOCK_STREAM):
+               ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/socket.py", line 977, in getaddrinfo
+    for res in _socket.getaddrinfo(host, port, family, type, proto, flags):
+               ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+socket.gaierror: [Errno 8] nodename nor servname provided, or not known
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+        conn,
+    ...<10 lines>...
+        **response_kw,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 488, in _make_request
+    raise new_e
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 464, in _make_request
+    self._validate_conn(conn)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 1093, in _validate_conn
+    conn.connect()
+    ~~~~~~~~~~~~^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connection.py", line 759, in connect
+    self.sock = sock = self._new_conn()
+                       ~~~~~~~~~~~~~~^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connection.py", line 211, in _new_conn
+    raise NameResolutionError(self.host, self, e) from e
+urllib3.exceptions.NameResolutionError: HTTPSConnection(host='redash.scale.com', port=443): Failed to resolve 'redash.scale.com' ([Errno 8] nodename nor servname provided, or not known)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/adapters.py", line 645, in send
+    resp = conn.urlopen(
+        method=request.method,
+    ...<9 lines>...
+        chunked=chunked,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 841, in urlopen
+    retries = retries.increment(
+        method, url, error=new_e, _pool=self, _stacktrace=sys.exc_info()[2]
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/util/retry.py", line 535, in increment
+    raise MaxRetryError(_pool, url, reason) from reason  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='redash.scale.com', port=443): Max retries exceeded with url: /api/queries?api_key=9W4SOwp0VJzrQCJFrZ4sD4HdPtDnCQOnL744fafP (Caused by NameResolutionError("HTTPSConnection(host='redash.scale.com', port=443): Failed to resolve 'redash.scale.com' ([Errno 8] nodename nor servname provided, or not known)"))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/post_weekly_reports.py", line 115, in main
+    inmail_text = inmail_report()
+  File "/Users/pranavpatre/outlier-campaign-agent/src/inmail_weekly_report.py", line 149, in run_weekly_report
+    rows = _fetch_data()
+  File "/Users/pranavpatre/outlier-campaign-agent/src/inmail_weekly_report.py", line 163, in _fetch_data
+    df = db._run_query(sql, label="inmail-weekly")
+  File "/Users/pranavpatre/outlier-campaign-agent/src/redash_db.py", line 659, in _run_query
+    qid  = self._create_query(sql, label)
+  File "/Users/pranavpatre/outlier-campaign-agent/src/redash_db.py", line 664, in _create_query
+    resp = requests.post(
+        f"{self._base}/api/queries?api_key={self._api_key}",
+    ...<6 lines>...
+        timeout=30,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/api.py", line 115, in post
+    return request("post", url, data=data, json=json, **kwargs)
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/sessions.py", line 592, in request
+    resp = self.send(prep, **send_kwargs)
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/sessions.py", line 706, in send
+    r = adapter.send(request, **kwargs)
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/adapters.py", line 678, in send
+    raise ConnectionError(e, request=request)
+requests.exceptions.ConnectionError: HTTPSConnectionPool(host='redash.scale.com', port=443): Max retries exceeded with url: /api/queries?api_key=9W4SOwp0VJzrQCJFrZ4sD4HdPtDnCQOnL744fafP (Caused by NameResolutionError("HTTPSConnection(host='redash.scale.com', port=443): Failed to resolve 'redash.scale.com' ([Errno 8] nodename nor servname provided, or not known)"))
+2026-04-27 10:04:00,761 INFO scripts.post_weekly_reports === Weekly Static Report ===
+2026-04-27 10:04:00,771 INFO src.static_weekly_report Running weekly Static Creatives report
+2026-04-27 10:04:00,771 INFO src.redash_db RedashClient ready → https://redash.scale.com (data_source_id=30)
+2026-04-27 10:54:03,586 ERROR scripts.post_weekly_reports Static report failed: HTTPSConnectionPool(host='redash.scale.com', port=443): Max retries exceeded with url: /api/queries?api_key=9W4SOwp0VJzrQCJFrZ4sD4HdPtDnCQOnL744fafP (Caused by NameResolutionError("HTTPSConnection(host='redash.scale.com', port=443): Failed to resolve 'redash.scale.com' ([Errno 8] nodename nor servname provided, or not known)"))
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connection.py", line 204, in _new_conn
+    sock = connection.create_connection(
+        (self._dns_host, self.port),
+    ...<2 lines>...
+        socket_options=self.socket_options,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/util/connection.py", line 60, in create_connection
+    for res in socket.getaddrinfo(host, port, family, socket.SOCK_STREAM):
+               ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/socket.py", line 977, in getaddrinfo
+    for res in _socket.getaddrinfo(host, port, family, type, proto, flags):
+               ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+socket.gaierror: [Errno 8] nodename nor servname provided, or not known
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+        conn,
+    ...<10 lines>...
+        **response_kw,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 488, in _make_request
+    raise new_e
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 464, in _make_request
+    self._validate_conn(conn)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 1093, in _validate_conn
+    conn.connect()
+    ~~~~~~~~~~~~^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connection.py", line 759, in connect
+    self.sock = sock = self._new_conn()
+                       ~~~~~~~~~~~~~~^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connection.py", line 211, in _new_conn
+    raise NameResolutionError(self.host, self, e) from e
+urllib3.exceptions.NameResolutionError: HTTPSConnection(host='redash.scale.com', port=443): Failed to resolve 'redash.scale.com' ([Errno 8] nodename nor servname provided, or not known)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/adapters.py", line 645, in send
+    resp = conn.urlopen(
+        method=request.method,
+    ...<9 lines>...
+        chunked=chunked,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 841, in urlopen
+    retries = retries.increment(
+        method, url, error=new_e, _pool=self, _stacktrace=sys.exc_info()[2]
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/util/retry.py", line 535, in increment
+    raise MaxRetryError(_pool, url, reason) from reason  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='redash.scale.com', port=443): Max retries exceeded with url: /api/queries?api_key=9W4SOwp0VJzrQCJFrZ4sD4HdPtDnCQOnL744fafP (Caused by NameResolutionError("HTTPSConnection(host='redash.scale.com', port=443): Failed to resolve 'redash.scale.com' ([Errno 8] nodename nor servname provided, or not known)"))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/post_weekly_reports.py", line 124, in main
+    static_text = static_report()
+  File "/Users/pranavpatre/outlier-campaign-agent/src/static_weekly_report.py", line 160, in run_weekly_report
+    rows = _fetch_data()
+  File "/Users/pranavpatre/outlier-campaign-agent/src/static_weekly_report.py", line 174, in _fetch_data
+    df = db._run_query(sql, label="static-weekly")
+  File "/Users/pranavpatre/outlier-campaign-agent/src/redash_db.py", line 659, in _run_query
+    qid  = self._create_query(sql, label)
+  File "/Users/pranavpatre/outlier-campaign-agent/src/redash_db.py", line 664, in _create_query
+    resp = requests.post(
+        f"{self._base}/api/queries?api_key={self._api_key}",
+    ...<6 lines>...
+        timeout=30,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/api.py", line 115, in post
+    return request("post", url, data=data, json=json, **kwargs)
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/sessions.py", line 592, in request
+    resp = self.send(prep, **send_kwargs)
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/sessions.py", line 706, in send
+    r = adapter.send(request, **kwargs)
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/adapters.py", line 678, in send
+    raise ConnectionError(e, request=request)
+requests.exceptions.ConnectionError: HTTPSConnectionPool(host='redash.scale.com', port=443): Max retries exceeded with url: /api/queries?api_key=9W4SOwp0VJzrQCJFrZ4sD4HdPtDnCQOnL744fafP (Caused by NameResolutionError("HTTPSConnection(host='redash.scale.com', port=443): Failed to resolve 'redash.scale.com' ([Errno 8] nodename nor servname provided, or not known)"))
+2026-04-27 10:54:03,598 INFO scripts.post_weekly_reports === Campaign Monitor Summary ===
+2026-04-27 10:54:33,904 WARNING urllib3.connectionpool Retrying (Retry(total=2, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NameResolutionError("HTTPSConnection(host='oauth2.googleapis.com', port=443): Failed to resolve 'oauth2.googleapis.com' ([Errno 8] nodename nor servname provided, or not known)")': /token
+2026-04-27 10:54:37,298 WARNING urllib3.connectionpool Retrying (Retry(total=1, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NameResolutionError("HTTPSConnection(host='oauth2.googleapis.com', port=443): Failed to resolve 'oauth2.googleapis.com' ([Errno 8] nodename nor servname provided, or not known)")': /token
+2026-04-27 10:54:37,323 WARNING urllib3.connectionpool Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NameResolutionError("HTTPSConnection(host='oauth2.googleapis.com', port=443): Failed to resolve 'oauth2.googleapis.com' ([Errno 8] nodename nor servname provided, or not known)")': /token
+2026-04-27 10:54:37,369 ERROR scripts.post_weekly_reports Monitor summary failed: HTTPSConnectionPool(host='oauth2.googleapis.com', port=443): Max retries exceeded with url: /token (Caused by NameResolutionError("HTTPSConnection(host='oauth2.googleapis.com', port=443): Failed to resolve 'oauth2.googleapis.com' ([Errno 8] nodename nor servname provided, or not known)"))
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connection.py", line 204, in _new_conn
+    sock = connection.create_connection(
+        (self._dns_host, self.port),
+    ...<2 lines>...
+        socket_options=self.socket_options,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/util/connection.py", line 60, in create_connection
+    for res in socket.getaddrinfo(host, port, family, socket.SOCK_STREAM):
+               ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/socket.py", line 977, in getaddrinfo
+    for res in _socket.getaddrinfo(host, port, family, type, proto, flags):
+               ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+socket.gaierror: [Errno 8] nodename nor servname provided, or not known
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+        conn,
+    ...<10 lines>...
+        **response_kw,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 488, in _make_request
+    raise new_e
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 464, in _make_request
+    self._validate_conn(conn)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 1093, in _validate_conn
+    conn.connect()
+    ~~~~~~~~~~~~^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connection.py", line 759, in connect
+    self.sock = sock = self._new_conn()
+                       ~~~~~~~~~~~~~~^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connection.py", line 211, in _new_conn
+    raise NameResolutionError(self.host, self, e) from e
+urllib3.exceptions.NameResolutionError: HTTPSConnection(host='oauth2.googleapis.com', port=443): Failed to resolve 'oauth2.googleapis.com' ([Errno 8] nodename nor servname provided, or not known)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/adapters.py", line 645, in send
+    resp = conn.urlopen(
+        method=request.method,
+    ...<9 lines>...
+        chunked=chunked,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 871, in urlopen
+    return self.urlopen(
+           ~~~~~~~~~~~~^
+        method,
+        ^^^^^^^
+    ...<13 lines>...
+        **response_kw,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 871, in urlopen
+    return self.urlopen(
+           ~~~~~~~~~~~~^
+        method,
+        ^^^^^^^
+    ...<13 lines>...
+        **response_kw,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 871, in urlopen
+    return self.urlopen(
+           ~~~~~~~~~~~~^
+        method,
+        ^^^^^^^
+    ...<13 lines>...
+        **response_kw,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 841, in urlopen
+    retries = retries.increment(
+        method, url, error=new_e, _pool=self, _stacktrace=sys.exc_info()[2]
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/util/retry.py", line 535, in increment
+    raise MaxRetryError(_pool, url, reason) from reason  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='oauth2.googleapis.com', port=443): Max retries exceeded with url: /token (Caused by NameResolutionError("HTTPSConnection(host='oauth2.googleapis.com', port=443): Failed to resolve 'oauth2.googleapis.com' ([Errno 8] nodename nor servname provided, or not known)"))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/google/auth/transport/requests.py", line 188, in __call__
+    response = self.session.request(
+        method, url, data=body, headers=headers, timeout=timeout, **kwargs
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/sessions.py", line 592, in request
+    resp = self.send(prep, **send_kwargs)
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/sessions.py", line 706, in send
+    r = adapter.send(request, **kwargs)
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/adapters.py", line 678, in send
+    raise ConnectionError(e, request=request)
+requests.exceptions.ConnectionError: HTTPSConnectionPool(host='oauth2.googleapis.com', port=443): Max retries exceeded with url: /token (Caused by NameResolutionError("HTTPSConnection(host='oauth2.googleapis.com', port=443): Failed to resolve 'oauth2.googleapis.com' ([Errno 8] nodename nor servname provided, or not known)"))
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/post_weekly_reports.py", line 134, in main
+    sheets = SheetsClient()
+  File "/Users/pranavpatre/outlier-campaign-agent/src/sheets.py", line 55, in __init__
+    self._triggers = self._gc.open_by_key(config.TRIGGERS_SHEET_ID)
+                     ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/gspread/client.py", line 168, in open_by_key
+    spreadsheet = Spreadsheet(self.http_client, {"id": key})
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/gspread/spreadsheet.py", line 29, in __init__
+    metadata = self.fetch_sheet_metadata()
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/gspread/spreadsheet.py", line 230, in fetch_sheet_metadata
+    return self.client.fetch_sheet_metadata(self.id, params=params)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/gspread/http_client.py", line 305, in fetch_sheet_metadata
+    r = self.request("get", url, params=params)
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/gspread/http_client.py", line 114, in request
+    response = self.session.request(
+        method=method,
+    ...<6 lines>...
+        timeout=self.timeout,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/google/auth/transport/requests.py", line 538, in request
+    self.credentials.before_request(auth_request, method, url, request_headers)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/google/auth/credentials.py", line 230, in before_request
+    self._blocking_refresh(request)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/google/auth/credentials.py", line 193, in _blocking_refresh
+    self.refresh(request)
+    ~~~~~~~~~~~~^^^^^^^^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/google/auth/credentials.py", line 367, in refresh
+    self._perform_refresh_token(request)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/google/oauth2/service_account.py", line 457, in _perform_refresh_token
+    access_token, expiry, _ = _client.jwt_grant(
+                              ~~~~~~~~~~~~~~~~~^
+        request, self._token_uri, assertion
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/google/oauth2/_client.py", line 303, in jwt_grant
+    response_data = _token_endpoint_request(
+        request,
+    ...<5 lines>...
+        },
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/google/oauth2/_client.py", line 263, in _token_endpoint_request
+    ) = _token_endpoint_request_no_throw(
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        request,
+        ^^^^^^^^
+    ...<6 lines>...
+        **kwargs
+        ^^^^^^^^
+    )
+    ^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/google/oauth2/_client.py", line 192, in _token_endpoint_request_no_throw
+    response = request(
+        method="POST", url=token_uri, headers=headers_to_use, body=body, **kwargs
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/google/auth/transport/requests.py", line 195, in __call__
+    raise new_exc from caught_exc
+google.auth.exceptions.TransportError: HTTPSConnectionPool(host='oauth2.googleapis.com', port=443): Max retries exceeded with url: /token (Caused by NameResolutionError("HTTPSConnection(host='oauth2.googleapis.com', port=443): Failed to resolve 'oauth2.googleapis.com' ([Errno 8] nodename nor servname provided, or not known)"))
+2026-04-27 10:54:37,641 INFO scripts.post_weekly_reports === Weekly Feedback Alert ===
+2026-04-27 10:54:37,641 INFO src.redash_db RedashClient ready → https://redash.scale.com (data_source_id=30)
+2026-04-27 10:54:37,642 INFO src.redash_db Querying cohort metrics (weeks_back=8)
+2026-04-27 10:55:01,648 ERROR scripts.post_weekly_reports Feedback alert failed: ('Connection aborted.', ConnectionResetError(54, 'Connection reset by peer'))
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+        conn,
+    ...<10 lines>...
+        **response_kw,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 488, in _make_request
+    raise new_e
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 464, in _make_request
+    self._validate_conn(conn)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 1093, in _validate_conn
+    conn.connect()
+    ~~~~~~~~~~~~^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connection.py", line 796, in connect
+    sock_and_verified = _ssl_wrap_socket_and_match_hostname(
+        sock=sock,
+    ...<14 lines>...
+        assert_fingerprint=self.assert_fingerprint,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connection.py", line 975, in _ssl_wrap_socket_and_match_hostname
+    ssl_sock = ssl_wrap_socket(
+        sock=sock,
+    ...<8 lines>...
+        tls_in_tls=tls_in_tls,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/util/ssl_.py", line 483, in ssl_wrap_socket
+    ssl_sock = _ssl_wrap_socket_impl(sock, context, tls_in_tls, server_hostname)
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/util/ssl_.py", line 527, in _ssl_wrap_socket_impl
+    return ssl_context.wrap_socket(sock, server_hostname=server_hostname)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/ssl.py", line 455, in wrap_socket
+    return self.sslsocket_class._create(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        sock=sock,
+        ^^^^^^^^^^
+    ...<5 lines>...
+        session=session
+        ^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/ssl.py", line 1076, in _create
+    self.do_handshake()
+    ~~~~~~~~~~~~~~~~~^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/ssl.py", line 1372, in do_handshake
+    self._sslobj.do_handshake()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^
+ConnectionResetError: [Errno 54] Connection reset by peer
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/adapters.py", line 645, in send
+    resp = conn.urlopen(
+        method=request.method,
+    ...<9 lines>...
+        chunked=chunked,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 841, in urlopen
+    retries = retries.increment(
+        method, url, error=new_e, _pool=self, _stacktrace=sys.exc_info()[2]
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/util/retry.py", line 490, in increment
+    raise reraise(type(error), error, _stacktrace)
+          ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/util/util.py", line 38, in reraise
+    raise value.with_traceback(tb)
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+        conn,
+    ...<10 lines>...
+        **response_kw,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 488, in _make_request
+    raise new_e
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 464, in _make_request
+    self._validate_conn(conn)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 1093, in _validate_conn
+    conn.connect()
+    ~~~~~~~~~~~~^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connection.py", line 796, in connect
+    sock_and_verified = _ssl_wrap_socket_and_match_hostname(
+        sock=sock,
+    ...<14 lines>...
+        assert_fingerprint=self.assert_fingerprint,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/connection.py", line 975, in _ssl_wrap_socket_and_match_hostname
+    ssl_sock = ssl_wrap_socket(
+        sock=sock,
+    ...<8 lines>...
+        tls_in_tls=tls_in_tls,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/util/ssl_.py", line 483, in ssl_wrap_socket
+    ssl_sock = _ssl_wrap_socket_impl(sock, context, tls_in_tls, server_hostname)
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/urllib3/util/ssl_.py", line 527, in _ssl_wrap_socket_impl
+    return ssl_context.wrap_socket(sock, server_hostname=server_hostname)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/ssl.py", line 455, in wrap_socket
+    return self.sslsocket_class._create(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        sock=sock,
+        ^^^^^^^^^^
+    ...<5 lines>...
+        session=session
+        ^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/ssl.py", line 1076, in _create
+    self.do_handshake()
+    ~~~~~~~~~~~~~~~~~^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/ssl.py", line 1372, in do_handshake
+    self._sslobj.do_handshake()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^
+urllib3.exceptions.ProtocolError: ('Connection aborted.', ConnectionResetError(54, 'Connection reset by peer'))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/post_weekly_reports.py", line 86, in post_weekly_feedback_alert
+    underperformers = agent.identify_underperforming_cohorts(days_back=7)
+  File "/Users/pranavpatre/outlier-campaign-agent/src/feedback_agent.py", line 154, in identify_underperforming_cohorts
+    df = self.redash_client.query_cohort_metrics(days_back=days_back)
+  File "/Users/pranavpatre/outlier-campaign-agent/src/redash_db.py", line 601, in query_cohort_metrics
+    df = self._run_query(sql, label=label)
+  File "/Users/pranavpatre/outlier-campaign-agent/src/redash_db.py", line 660, in _run_query
+    qrid = self._trigger_and_poll(qid, label)
+  File "/Users/pranavpatre/outlier-campaign-agent/src/redash_db.py", line 700, in _trigger_and_poll
+    job_resp = requests.get(
+        f"{self._base}/api/jobs/{job_id}?api_key={self._api_key}",
+        timeout=30,
+    )
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/api.py", line 73, in get
+    return request("get", url, params=params, **kwargs)
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/sessions.py", line 592, in request
+    resp = self.send(prep, **send_kwargs)
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/sessions.py", line 706, in send
+    r = adapter.send(request, **kwargs)
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/requests/adapters.py", line 660, in send
+    raise ConnectionError(err, request=request)
+requests.exceptions.ConnectionError: ('Connection aborted.', ConnectionResetError(54, 'Connection reset by peer'))
+2026-04-27 10:55:01,672 INFO weekly_feedback_loop Step B: funnel analysis
+2026-04-27 10:55:01,672 INFO src.redash_db RedashClient ready → https://redash.scale.com (data_source_id=30)
+2026-04-27 10:55:01,672 INFO src.redash_db Querying funnel metrics (account_id=510956407, days_back=7)
+2026-04-27 10:55:11,234 INFO src.redash_db Fetched 323 funnel rows for window=7 days
+2026-04-27 10:55:11,244 INFO src.feedback_agent Analyzed funnel for 323 creatives across 107 cohorts
+2026-04-27 10:55:11,296 INFO src.feedback_agent Funnel drop diagnosis: 107 cohorts analyzed, 7 with drops
+2026-04-27 10:55:11,296 INFO weekly_feedback_loop Step C: sentiment miner
+2026-04-27 10:55:14,355 INFO src.sentiment_miner reddit r/Outlier_AI: fetched 100 posts
+2026-04-27 10:55:16,470 INFO src.sentiment_miner reddit r/BeerMoney: fetched 100 posts
+2026-04-27 10:55:18,102 INFO src.sentiment_miner reddit r/WorkOnline: fetched 100 posts
+2026-04-27 10:55:18,104 INFO src.sentiment_miner source reddit: 300 records
+2026-04-27 10:55:18,332 WARNING src.sentiment_miner GET https://www.trustpilot.com/review/outlier.ai failed: 403 Client Error: Forbidden for url: https://www.trustpilot.com/review/outlier.ai
+2026-04-27 10:55:18,333 INFO src.sentiment_miner source trustpilot: 0 records
+2026-04-27 10:55:18,762 WARNING src.sentiment_miner GET https://www.glassdoor.com/Reviews/Outlier-Reviews-E8756349.htm failed: 403 Client Error: Forbidden for url: https://www.glassdoor.com/Reviews/Outlier-Reviews-E8756349.htm
+2026-04-27 10:55:18,763 INFO src.sentiment_miner glassdoor: blocked (HTTP error or 403/login wall)
+2026-04-27 10:55:18,764 INFO src.sentiment_miner source glassdoor: 0 records
+2026-04-27 10:55:20,454 WARNING src.sentiment_miner GET https://community.outlier.ai/latest.json failed: 403 Client Error: Forbidden for url: https://community.outlier.ai/latest.json
+2026-04-27 10:55:20,456 INFO src.sentiment_miner discourse: host unreachable - skip
+2026-04-27 10:55:20,456 INFO src.sentiment_miner source discourse: 0 records
+2026-04-27 10:55:20,456 WARNING src.sentiment_miner zendesk: credentials missing - skip
+2026-04-27 10:55:20,456 INFO src.sentiment_miner source zendesk: 0 records
+2026-04-27 10:55:20,456 WARNING src.sentiment_miner intercom: access token missing - skip
+2026-04-27 10:55:20,456 INFO src.sentiment_miner source intercom: 0 records
+2026-04-27 10:55:21,553 INFO openai._base_client Retrying request to /chat/completions in 0.375880 seconds
+2026-04-27 10:55:22,003 INFO openai._base_client Retrying request to /chat/completions in 0.854075 seconds
+2026-04-27 10:55:22,934 WARNING src.sentiment_miner extract_themes: LLM call failed: Connection error.
+2026-04-27 10:55:22,935 INFO src.sentiment_miner wrote data/sentiment_callouts.json with 0 surfaced themes
+2026-04-27 10:55:22,940 INFO src.sentiment_miner wrote data/sentiment_raw/2026-04-27.json with 300 snippets, 0 sub-threshold themes
+2026-04-27 10:55:22,940 INFO weekly_feedback_loop Step D: ICP drift (0 projects)
+2026-04-27 10:55:23,446 ERROR slack_sdk.web.base_client Failed to send a request to Slack API server: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1032)>
+2026-04-27 10:55:23,447 INFO slack_sdk.web.base_client A retry handler found: ConnectionErrorRetryHandler for POST https://slack.com/api/chat.postMessage - <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1032)>
+2026-04-27 10:55:24,773 INFO slack_sdk.web.base_client Going to retry the same request: POST https://slack.com/api/chat.postMessage
+2026-04-27 10:55:24,986 ERROR slack_sdk.web.base_client Failed to send a request to Slack API server: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1032)>
+2026-04-27 10:55:24,986 ERROR weekly_feedback_loop Consolidated Slack post failed: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1032)>
+Traceback (most recent call last):
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/urllib/request.py", line 1319, in do_open
+    h.request(req.get_method(), req.selector, req.data, headers,
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+              encode_chunked=req.has_header('Transfer-encoding'))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/http/client.py", line 1338, in request
+    self._send_request(method, url, body, headers, encode_chunked)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/http/client.py", line 1384, in _send_request
+    self.endheaders(body, encode_chunked=encode_chunked)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/http/client.py", line 1333, in endheaders
+    self._send_output(message_body, encode_chunked=encode_chunked)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/http/client.py", line 1093, in _send_output
+    self.send(msg)
+    ~~~~~~~~~^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/http/client.py", line 1037, in send
+    self.connect()
+    ~~~~~~~~~~~~^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/http/client.py", line 1479, in connect
+    self.sock = self._context.wrap_socket(self.sock,
+                ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+                                          server_hostname=server_hostname)
+                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/ssl.py", line 455, in wrap_socket
+    return self.sslsocket_class._create(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        sock=sock,
+        ^^^^^^^^^^
+    ...<5 lines>...
+        session=session
+        ^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/ssl.py", line 1076, in _create
+    self.do_handshake()
+    ~~~~~~~~~~~~~~~~~^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/ssl.py", line 1372, in do_handshake
+    self._sslobj.do_handshake()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^
+ssl.SSLCertVerificationError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1032)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/weekly_feedback_loop.py", line 468, in run_once
+    _post_to_slack(msg)
+    ~~~~~~~~~~~~~~^^^^^
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/post_weekly_reports.py", line 49, in _post_to_slack
+    client.chat_postMessage(
+    ~~~~~~~~~~~~~~~~~~~~~~~^
+        channel=config.SLACK_REPORT_USER,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        text=chunk,
+        ^^^^^^^^^^^
+    )
+    ^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/slack_sdk/web/client.py", line 2812, in chat_postMessage
+    return self.api_call("chat.postMessage", json=kwargs)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/slack_sdk/web/base_client.py", line 169, in api_call
+    return self._sync_send(api_url=api_url, req_args=req_args)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/slack_sdk/web/base_client.py", line 200, in _sync_send
+    return self._urllib_api_call(
+           ~~~~~~~~~~~~~~~~~~~~~^
+        token=token,
+        ^^^^^^^^^^^^
+    ...<5 lines>...
+        additional_headers=headers,  # type: ignore[arg-type]
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/slack_sdk/web/base_client.py", line 307, in _urllib_api_call
+    response = self._perform_urllib_http_request(url=url, args=request_args)  # type: ignore[arg-type]
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/slack_sdk/web/base_client.py", line 511, in _perform_urllib_http_request
+    raise err
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/slack_sdk/web/base_client.py", line 410, in _perform_urllib_http_request
+    resp = self._perform_urllib_http_request_internal(url, req)
+  File "/Users/pranavpatre/outlier-campaign-agent/venv/lib/python3.13/site-packages/slack_sdk/web/base_client.py", line 540, in _perform_urllib_http_request_internal
+    resp = urlopen(req, context=self.ssl, timeout=self.timeout)
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/urllib/request.py", line 189, in urlopen
+    return opener.open(url, data, timeout)
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/urllib/request.py", line 489, in open
+    response = self._open(req, data)
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/urllib/request.py", line 506, in _open
+    result = self._call_chain(self.handle_open, protocol, protocol +
+                              '_open', req)
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/urllib/request.py", line 466, in _call_chain
+    result = func(*args)
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/urllib/request.py", line 1367, in https_open
+    return self.do_open(http.client.HTTPSConnection, req,
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        context=self._context)
+                        ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/urllib/request.py", line 1322, in do_open
+    raise URLError(err)
+urllib.error.URLError: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1032)>
+2026-04-27 10:55:25,000 INFO weekly_feedback_loop Weekly Feedback Loop completed successfully

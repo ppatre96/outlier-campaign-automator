@@ -1,0 +1,66 @@
+2026-05-04 21:30:04,898 INFO weekly_feedback_loop Weekly Feedback Loop starting (dry_run=False, force=False, only=None) -> /Users/pranavpatre/outlier-campaign-agent/logs/weekly_feedback_loop/2026-05-04.log
+2026-05-04 21:30:04,900 WARNING weekly_feedback_loop No active projects configured; drift step will no-op. Create /Users/pranavpatre/outlier-campaign-agent/data/active_projects.json or set OUTLIER_TRACKING_PROJECT_ID in .env.
+2026-05-04 21:30:04,900 INFO weekly_feedback_loop Step A: v1 weekly alerts
+2026-05-04 21:30:05,953 INFO scripts.post_weekly_reports === Weekly InMail Report ===
+2026-05-04 21:30:05,956 INFO src.inmail_weekly_report Running weekly InMail report
+2026-05-04 21:30:05,956 INFO src.redash_db RedashClient ready → https://redash.scale.com (data_source_id=30)
+2026-05-04 21:30:08,941 INFO scripts.post_weekly_reports InMail report generated (7592 chars)
+2026-05-04 21:30:09,986 ERROR scripts.post_weekly_reports Slack Bot Token post failed: invalid_auth
+2026-05-04 21:30:09,986 INFO scripts.post_weekly_reports === Weekly Static Report ===
+2026-05-04 21:30:09,991 INFO src.static_weekly_report Running weekly Static Creatives report
+2026-05-04 21:30:09,991 INFO src.redash_db RedashClient ready → https://redash.scale.com (data_source_id=30)
+2026-05-04 21:30:12,841 WARNING src.static_weekly_report Weekly Static Creatives report: no data returned for the last 7 days.
+2026-05-04 21:30:12,841 INFO scripts.post_weekly_reports Static report generated (69 chars)
+2026-05-04 21:30:13,695 ERROR scripts.post_weekly_reports Slack Bot Token post failed: invalid_auth
+2026-05-04 21:30:13,696 INFO scripts.post_weekly_reports === Campaign Monitor Summary ===
+2026-05-04 21:30:18,791 INFO src.campaign_monitor Monitor tab not found — skipping monitor summary
+2026-05-04 21:30:18,792 INFO scripts.post_weekly_reports Monitor summary: no data (monitor has not run yet or Monitor tab is empty)
+2026-05-04 21:30:18,792 INFO scripts.post_weekly_reports === Weekly Feedback Alert ===
+2026-05-04 21:30:18,793 INFO src.redash_db RedashClient ready → https://redash.scale.com (data_source_id=30)
+2026-05-04 21:30:18,793 INFO src.redash_db Querying cohort metrics (weeks_back=8)
+2026-05-04 21:30:25,511 ERROR scripts.post_weekly_reports Feedback alert failed: Redash query failed [cohort-metrics-8]: 000904 (42000): 01c42560-0a0b-cbd2-048a-83033d0c6fe3: SQL compilation error: error line 6 at position 18
+invalid identifier 'AC.LINKEDIN_CLICK'
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/post_weekly_reports.py", line 86, in post_weekly_feedback_alert
+    underperformers = agent.identify_underperforming_cohorts(days_back=7)
+  File "/Users/pranavpatre/outlier-campaign-agent/src/feedback_agent.py", line 154, in identify_underperforming_cohorts
+    df = self.redash_client.query_cohort_metrics(days_back=days_back)
+  File "/Users/pranavpatre/outlier-campaign-agent/src/redash_db.py", line 846, in query_cohort_metrics
+    df = self._run_query(sql, label=label)
+  File "/Users/pranavpatre/outlier-campaign-agent/src/redash_db.py", line 905, in _run_query
+    qrid = self._trigger_and_poll(qid, label)
+  File "/Users/pranavpatre/outlier-campaign-agent/src/redash_db.py", line 958, in _trigger_and_poll
+    raise RuntimeError(f"Redash query failed [{label}]: {job.get('error')}")
+RuntimeError: Redash query failed [cohort-metrics-8]: 000904 (42000): 01c42560-0a0b-cbd2-048a-83033d0c6fe3: SQL compilation error: error line 6 at position 18
+invalid identifier 'AC.LINKEDIN_CLICK'
+2026-05-04 21:30:25,527 INFO weekly_feedback_loop Step B: funnel analysis
+2026-05-04 21:30:25,527 INFO src.redash_db RedashClient ready → https://redash.scale.com (data_source_id=30)
+2026-05-04 21:30:25,527 INFO src.redash_db Querying funnel metrics (account_id=510956407, days_back=7)
+2026-05-04 21:30:28,027 INFO src.redash_db Fetched 323 funnel rows for window=7 days
+2026-05-04 21:30:28,029 INFO src.feedback_agent Analyzed funnel for 323 creatives across 107 cohorts
+2026-05-04 21:30:28,069 INFO src.feedback_agent Funnel drop diagnosis: 107 cohorts analyzed, 7 with drops
+2026-05-04 21:30:28,069 INFO weekly_feedback_loop Step C: sentiment miner
+2026-05-04 21:30:30,169 WARNING src.sentiment_miner GET https://www.reddit.com/r/Outlier_AI/new.json?limit=100 failed: 403 Client Error: Blocked for url: https://www.reddit.com/r/Outlier_AI/new.json?limit=100
+2026-05-04 21:30:30,171 INFO src.sentiment_miner reddit r/Outlier_AI: skipped (HTTP error)
+2026-05-04 21:30:31,487 WARNING src.sentiment_miner GET https://www.reddit.com/r/BeerMoney/new.json?limit=100 failed: 403 Client Error: Blocked for url: https://www.reddit.com/r/BeerMoney/new.json?limit=100
+2026-05-04 21:30:31,489 INFO src.sentiment_miner reddit r/BeerMoney: skipped (HTTP error)
+2026-05-04 21:30:32,807 WARNING src.sentiment_miner GET https://www.reddit.com/r/WorkOnline/new.json?limit=100 failed: 403 Client Error: Blocked for url: https://www.reddit.com/r/WorkOnline/new.json?limit=100
+2026-05-04 21:30:32,809 INFO src.sentiment_miner reddit r/WorkOnline: skipped (HTTP error)
+2026-05-04 21:30:32,809 INFO src.sentiment_miner source reddit: 0 records
+2026-05-04 21:30:33,790 WARNING src.sentiment_miner GET https://www.trustpilot.com/review/outlier.ai failed: 403 Client Error: Forbidden for url: https://www.trustpilot.com/review/outlier.ai
+2026-05-04 21:30:33,793 INFO src.sentiment_miner source trustpilot: 0 records
+2026-05-04 21:30:35,167 WARNING src.sentiment_miner GET https://www.glassdoor.com/Reviews/Outlier-Reviews-E8756349.htm failed: 403 Client Error: Forbidden for url: https://www.glassdoor.com/Reviews/Outlier-Reviews-E8756349.htm
+2026-05-04 21:30:35,170 INFO src.sentiment_miner glassdoor: blocked (HTTP error or 403/login wall)
+2026-05-04 21:30:35,170 INFO src.sentiment_miner source glassdoor: 0 records
+2026-05-04 21:30:36,191 WARNING src.sentiment_miner GET https://community.outlier.ai/latest.json failed: 403 Client Error: Forbidden for url: https://community.outlier.ai/latest.json
+2026-05-04 21:30:36,194 INFO src.sentiment_miner discourse: host unreachable - skip
+2026-05-04 21:30:36,194 INFO src.sentiment_miner source discourse: 0 records
+2026-05-04 21:30:36,195 WARNING src.sentiment_miner zendesk: credentials missing - skip
+2026-05-04 21:30:36,195 INFO src.sentiment_miner source zendesk: 0 records
+2026-05-04 21:30:36,195 WARNING src.sentiment_miner intercom: access token missing - skip
+2026-05-04 21:30:36,195 INFO src.sentiment_miner source intercom: 0 records
+2026-05-04 21:30:36,198 INFO src.sentiment_miner wrote data/sentiment_callouts.json with 0 surfaced themes
+2026-05-04 21:30:36,198 INFO src.sentiment_miner wrote data/sentiment_raw/2026-05-04.json with 0 snippets, 0 sub-threshold themes
+2026-05-04 21:30:36,199 INFO weekly_feedback_loop Step D: ICP drift (0 projects)
+2026-05-04 21:30:37,273 ERROR scripts.post_weekly_reports Slack Bot Token post failed: invalid_auth
+2026-05-04 21:30:37,276 INFO weekly_feedback_loop Weekly Feedback Loop completed successfully

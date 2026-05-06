@@ -894,6 +894,12 @@ def generate_imagen_creative_with_qc(
     prompt_suffix = initial_prompt_suffix  # seed from caller; QC failures append to it
     attach_ref   = attach_ref_initial
     last_report: dict = {"verdict": "FAIL", "violations": ["not attempted"]}
+    # Capture the base Gemini prompt (first attempt, without QC suffix) for registry storage
+    _base_prompt, _ = _build_imagen_prompt(
+        photo_subject or variant.get("photo_subject", ""),
+        variant.get("angle", "A"),
+    )
+    last_report["gemini_prompt"] = _base_prompt
     path = Path("/dev/null")
     # Track best-so-far across the loop. If we exhaust the cap without a PASS,
     # we ship the lowest-violation attempt rather than whatever the last one was
@@ -939,6 +945,7 @@ def generate_imagen_creative_with_qc(
                  attempt + 1, report.verdict, report.retry_target, len(report.violations))
 
         if report.verdict == "PASS":
+            last_report["gemini_prompt"] = _base_prompt
             return path, last_report
 
         # Track best-so-far for cap-exhaust fallback. We deliberately exclude
@@ -1017,4 +1024,5 @@ def generate_imagen_creative_with_qc(
         "Creative still failing QC after %d attempts — returning best-so-far attempt with %d violations (last had %d)",
         max_retries + 1, best_violations, len(last_report.get("violations", [])),
     )
+    best_report["gemini_prompt"] = _base_prompt
     return best_path, best_report

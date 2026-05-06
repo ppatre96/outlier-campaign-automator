@@ -2219,6 +2219,7 @@ def _process_static_campaigns(
                             log.warning("Static Gemini path failed for '%s' / '%s': %s",
                                         cohort.name, geo_label, exc)
                             png_path = None
+                            qc_report = {}
 
                 # Accumulate one spec per (cohort × geo_group × angle)
                 campaign_specs.append({
@@ -2229,6 +2230,7 @@ def _process_static_campaigns(
                     "angle_label": angle_label,
                     "variants":    variants,
                     "png_path":    png_path,
+                    "qc_report":   qc_report if "qc_report" in dir() else {},
                 })
 
     if dry_run:
