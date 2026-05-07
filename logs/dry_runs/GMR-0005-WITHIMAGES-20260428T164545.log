@@ -1,0 +1,367 @@
+2026-04-28 22:15:45,925 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=GMR-0005 dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-28.log
+2026-04-28 22:15:48,400 INFO smart_ramp_poller Running pipeline for ramp=GMR-0005 version=1 dry_run=True
+2026-04-28 22:15:53,321 INFO src.redash_db RedashClient ready → https://redash.scale.com (data_source_id=30)
+2026-04-28 22:15:53,325 INFO src.redash_db Resolving project_id=699768af59d27cc33ff9f3c1 to signup_flow_id + config_name
+2026-04-28 22:15:56,097 INFO src.redash_db Resolved project → signup_flow_id=699cb29c3defc15797e4590a config='[Experts] Singapore Law' (passes=16)
+2026-04-28 22:15:56,098 INFO src.redash_db Fetching screenings via Redash for flow=699cb29c3defc15797e4590a config=[Experts] Singapore Law
+2026-04-28 22:15:58,735 INFO src.redash_db Fetched 148 screening rows
+2026-04-28 22:15:58,735 INFO main _resolve_cohorts: raw data 148 rows
+2026-04-28 22:15:58,746 INFO main _resolve_cohorts: 102 binary features
+2026-04-28 22:15:58,746 WARNING main _resolve_cohorts: meta fetch failed (non-fatal): 'RedashClient' object has no attribute 'fetch_job_post_meta'
+2026-04-28 22:15:58,747 INFO src.icp_from_jobpost Base-role candidates from [job_name=None, domain=None, flow_name='SPRL - Singapore Legal Benchmark', proj_name=None, worker_skills=[]]: []
+2026-04-28 22:15:58,747 INFO src.analysis Tier T1 (_is_pass): 105 positives
+2026-04-28 22:15:58,747 INFO src.analysis Tier fallback: stronger tiers were thin — dropped down to T1 (105 ≥ 30). Cohort analysis will target this tier's positive class.
+2026-04-28 22:15:58,748 INFO main _resolve_cohorts: target tier=T1 col=_is_pass n_icp=105
+2026-04-28 22:15:58,748 INFO src.analysis stage_a_negative: only 43 non-activators (< 100 threshold) — skipping data-driven exclusions. The negative class is too thin to trust.
+2026-04-28 22:15:58,748 INFO src.analysis stage_a dispatch → lift mode (T1 / resume-pass target: '_is_pass' — lift is the correct framing for pass-vs-fail)
+2026-04-28 22:15:58,748 INFO src.analysis Stage A target: T1 (resume-pass)
+2026-04-28 22:15:58,748 INFO src.analysis Global baseline: 70.9% (105/148)
+2026-04-28 22:15:58,763 INFO src.analysis Univariates: 6 accepted / 102 tested
+2026-04-28 22:15:58,783 INFO src.stage_c Stage C: validating 12 cohorts against LinkedIn Audience Counts
+2026-04-28 22:16:01,444 INFO src.linkedin_urn Loaded 41943 URNs from tab 'Skills'
+2026-04-28 22:16:02,302 INFO src.linkedin_urn Loaded 2171 URNs from tab 'FieldsOfStudy'
+2026-04-28 22:16:03,145 INFO src.linkedin_urn Loaded 1406 URNs from tab 'Degrees'
+2026-04-28 22:16:03,150 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-28 22:16:03,154 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-28 22:16:03,174 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-28 22:16:03,190 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-28 22:16:03,214 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-28 22:16:03,226 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-28 22:16:03,228 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-28 22:16:03,231 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-28 22:16:03,234 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-28 22:16:03,234 INFO src.stage_c Stage C: 12 cohorts have resolvable URNs
+2026-04-28 22:16:04,429 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:16:04,429 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-28 22:16:04,430 WARNING src.stage_c Audience count failed for 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-28 22:16:04,925 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:16:04,925 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%29%29%29
+2026-04-28 22:16:04,925 WARNING src.stage_c Audience count failed for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%29%29%29 — skipping
+2026-04-28 22:16:05,282 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:16:05,282 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-28 22:16:05,282 WARNING src.stage_c Audience count failed for 'experience_band__10plus + highest_degree_level__Bachelors + fields_of_study__law': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-28 22:16:05,646 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:16:05,647 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-28 22:16:05,647 WARNING src.stage_c Audience count failed for 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-28 22:16:06,266 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:16:06,266 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-28 22:16:06,266 WARNING src.stage_c Audience count failed for 'skills__compliance + fields_of_study__law': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-28 22:16:06,796 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:16:06,797 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%29%29%29
+2026-04-28 22:16:06,797 WARNING src.stage_c Audience count failed for 'skills__compliance + highest_degree_level__Bachelors': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%29%29%29 — skipping
+2026-04-28 22:16:07,149 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:16:07,150 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%29%29%29
+2026-04-28 22:16:07,150 WARNING src.stage_c Audience count failed for 'skills__compliance + experience_band__10plus': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%29%29%29 — skipping
+2026-04-28 22:16:07,527 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:16:07,527 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-28 22:16:07,527 WARNING src.stage_c Audience count failed for 'skills__litigation + fields_of_study__law + highest_degree_level__Bachelors': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-28 22:16:07,926 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:16:07,926 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%29%29%29
+2026-04-28 22:16:07,927 WARNING src.stage_c Audience count failed for 'fields_of_study__law + highest_degree_level__Bachelors + skills__litigation': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%29%29%29 — skipping
+2026-04-28 22:16:08,434 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:16:08,434 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-28 22:16:08,434 WARNING src.stage_c Audience count failed for 'skills__litigation + highest_degree_level__Bachelors + fields_of_study__law': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-28 22:16:08,815 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:16:08,815 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-28 22:16:08,815 WARNING src.stage_c Audience count failed for 'skills__litigation + fields_of_study__law': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-28 22:16:09,186 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-28 22:16:09,186 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-28 22:16:09,186 WARNING src.stage_c Audience count failed for 'fields_of_study__law + highest_degree_level__Bachelors + experience_band__10plus': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-28 22:16:09,186 INFO src.stage_c Stage C: 0 cohorts pass audience threshold
+2026-04-28 22:16:09,186 INFO src.stage_c Stage C complete: 0/5 cohorts selected
+2026-04-28 22:16:09,186 INFO main _resolve_cohorts: 5 cohorts selected
+2026-04-28 22:16:09,190 INFO main [dry-run] InMail cohort 0 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors' tg=GENERAL angle=A
+2026-04-28 22:16:22,802 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:16:22,813 INFO src.inmail_copy_writer InMail angle F generated for 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors'
+2026-04-28 22:16:35,931 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:16:35,934 INFO src.inmail_copy_writer InMail angle A generated for 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors'
+2026-04-28 22:16:48,568 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:16:48,569 INFO src.inmail_copy_writer InMail angle B generated for 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors'
+2026-04-28 22:16:58,982 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:16:58,984 INFO src.inmail_copy_writer InMail angle C generated for 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors'
+2026-04-28 22:16:58,985 INFO main [dry-run] Subject: Law + Compliance Skills | Flexible Hours & $50/hr
+2026-04-28 22:16:58,985 INFO main [dry-run] Body (first 100): $50/hr is what Outlier pays contributors who apply their legal and compliance expertise to improve A…
+2026-04-28 22:16:58,985 INFO main [dry-run] CTA: View Opportunities
+2026-04-28 22:16:58,990 WARNING main InMail angle A: 3 brand voice violations
+2026-04-28 22:16:58,990 WARNING main   Must fix: 2
+2026-04-28 22:16:58,990 WARNING main   Should fix: 1
+2026-04-28 22:16:58,990 ERROR main InMail angle A has MUST-FIX violations
+2026-04-28 22:16:58,990 ERROR main     Active Voice Only: 'is processed' → Convert to active voice: use a strong verb instead
+2026-04-28 22:16:58,990 ERROR main     Active Voice Only: 'are matched' → Convert to active voice: use a strong verb instead
+2026-04-28 22:16:58,991 INFO main [dry-run] InMail cohort 1 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance' tg=GENERAL angle=B
+2026-04-28 22:17:08,693 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:17:08,700 INFO src.inmail_copy_writer InMail angle F generated for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance'
+2026-04-28 22:17:20,211 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:17:20,212 INFO src.inmail_copy_writer InMail angle A generated for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance'
+2026-04-28 22:17:28,688 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:17:28,690 INFO src.inmail_copy_writer InMail angle B generated for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance'
+2026-04-28 22:17:40,223 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:17:40,226 INFO src.inmail_copy_writer InMail angle C generated for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance'
+2026-04-28 22:17:40,226 INFO main [dry-run] Subject: Your legal eye is worth $50/hr in AI development
+2026-04-28 22:17:40,226 INFO main [dry-run] Body (first 100): Your background in law and compliance puts you in rare company — and AI developers are actively look…
+2026-04-28 22:17:40,226 INFO main [dry-run] CTA: See Open Tasks
+2026-04-28 22:17:40,229 INFO main InMail angle B passes brand voice check (confidence: 90%)
+2026-04-28 22:17:40,229 INFO main [dry-run] InMail cohort 2 'experience_band__10plus + highest_degree_level__Bachelors + fields_of_study__law' tg=GENERAL angle=C
+2026-04-28 22:17:54,248 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:17:54,250 INFO src.inmail_copy_writer InMail angle F generated for 'experience_band__10plus + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:18:03,099 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:18:03,101 INFO src.inmail_copy_writer InMail angle A generated for 'experience_band__10plus + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:18:23,050 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:18:23,059 INFO src.inmail_copy_writer InMail angle B generated for 'experience_band__10plus + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:18:32,912 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:18:32,914 INFO src.inmail_copy_writer InMail angle C generated for 'experience_band__10plus + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:18:32,914 INFO main [dry-run] Subject: 1,000+ law professionals earn $50/hr on Outlier
+2026-04-28 22:18:32,915 INFO main [dry-run] Body (first 100): Over 1,000 professionals with legal backgrounds are already earning $50/hr contributing to AI develo…
+2026-04-28 22:18:32,915 INFO main [dry-run] CTA: Start Contributing
+2026-04-28 22:18:32,917 WARNING main InMail angle C: 1 brand voice violations
+2026-04-28 22:18:32,917 WARNING main   Must fix: 1
+2026-04-28 22:18:32,917 WARNING main   Should fix: 0
+2026-04-28 22:18:32,917 ERROR main InMail angle C has MUST-FIX violations
+2026-04-28 22:18:32,917 ERROR main     Active Voice Only: 'is issued' → Convert to active voice: use a strong verb instead
+2026-04-28 22:18:32,917 INFO main [dry-run] InMail cohort 3 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law' tg=GENERAL angle=A
+2026-04-28 22:18:44,031 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:18:44,032 INFO src.inmail_copy_writer InMail angle F generated for 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:18:52,324 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:18:52,326 INFO src.inmail_copy_writer InMail angle A generated for 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:19:03,375 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:19:03,377 INFO src.inmail_copy_writer InMail angle B generated for 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:19:13,136 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:19:13,138 INFO src.inmail_copy_writer InMail angle C generated for 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:19:13,138 INFO main [dry-run] Subject: Law Skills + AI = Flexible $50/hr
+2026-04-28 22:19:13,138 INFO main [dry-run] Body (first 100): $50/hr is what Outlier pays contributors with legal and compliance backgrounds to help shape the nex…
+2026-04-28 22:19:13,138 INFO main [dry-run] CTA: See Open Tasks
+2026-04-28 22:19:13,140 INFO main InMail angle A passes brand voice check (confidence: 90%)
+2026-04-28 22:19:13,140 INFO main [dry-run] InMail cohort 4 'skills__compliance + fields_of_study__law' tg=GENERAL angle=B
+2026-04-28 22:19:22,603 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:19:22,605 INFO src.inmail_copy_writer InMail angle F generated for 'skills__compliance + fields_of_study__law'
+2026-04-28 22:19:36,255 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:19:36,257 INFO src.inmail_copy_writer InMail angle A generated for 'skills__compliance + fields_of_study__law'
+2026-04-28 22:19:45,320 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:19:45,322 INFO src.inmail_copy_writer InMail angle B generated for 'skills__compliance + fields_of_study__law'
+2026-04-28 22:19:57,711 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:19:57,712 INFO src.inmail_copy_writer InMail angle C generated for 'skills__compliance + fields_of_study__law'
+2026-04-28 22:19:57,712 INFO main [dry-run] Subject: Your compliance expertise is worth $50/hr to AI
+2026-04-28 22:19:57,712 INFO main [dry-run] Body (first 100): The nuance you've built navigating regulatory frameworks, legal grey areas, and compliance standards…
+2026-04-28 22:19:57,712 INFO main [dry-run] CTA: See Open Tasks
+2026-04-28 22:19:57,714 INFO main InMail angle B passes brand voice check (confidence: 90%)
+2026-04-28 22:19:57,716 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-04-28 22:19:57,717 INFO src.figma_creative LiteLLM copy gen — cohort=skills__compliance + fields_of_study__la signals=3 populated=1
+2026-04-28 22:20:11,337 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:20:11,340 INFO src.figma_creative Generated 3 copy variants for 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors'
+2026-04-28 22:20:11,358 WARNING src.gemini_creative Pre-flight copy violations for angle A: ["Headline wraps to 3 lines (max 2): 'AI needs compliance reviewers'"]
+2026-04-28 22:20:14,039 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:20:14,042 INFO src.figma_creative Copy rewritten (angle A, fields=['headline']): {'headline': 'AI Needs Your Compliance Eye'}
+2026-04-28 22:20:14,054 INFO src.gemini_creative Creative generation attempt 1/3 (angle=A)
+2026-04-28 22:20:14,055 INFO src.gemini_creative Gemini call — angle=A photo_subject='female South Asian compliance officer, reviewing legal documents on a laptop at '
+2026-04-28 22:20:14,055 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female South Asian compliance officer, reviewing legal documents on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of the 
+2026-04-28 22:20:14,055 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-28 22:20:14,055 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-28 22:20:30,458 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-28 22:20:30,524 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-28 22:20:31,016 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpgq5r00dg_gemini_female_south_asian_compliance__A.png (1279861 bytes)
+2026-04-28 22:20:52,856 INFO src.gemini_creative QC attempt 1: FAIL (target=gemini, 4 violations)
+2026-04-28 22:20:52,857 INFO src.gemini_creative Creative generation attempt 2/3 (angle=A)
+2026-04-28 22:20:52,858 INFO src.gemini_creative Gemini call — angle=A photo_subject='female South Asian compliance officer, reviewing legal documents on a laptop at '
+2026-04-28 22:20:52,858 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female South Asian compliance officer, reviewing legal documents on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of the 
+2026-04-28 22:20:52,858 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-28 22:20:52,858 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- Headline is touching the subject's hair. Tell Gemini 'the TOP of the subject\'s hair must sit at approximately 28% from the top of the fra
+2026-04-28 22:20:52,858 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-28 22:21:07,636 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-28 22:21:07,702 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-28 22:21:08,233 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmp5gztho97_gemini_female_south_asian_compliance__A.png (1232354 bytes)
+2026-04-28 22:21:38,668 INFO src.gemini_creative QC attempt 2: FAIL (target=gemini, 4 violations)
+2026-04-28 22:21:38,669 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-04-28 22:21:38,670 INFO src.gemini_creative Creative generation attempt 3/3 (angle=A)
+2026-04-28 22:21:38,670 INFO src.gemini_creative Gemini call — angle=A photo_subject='female South Asian compliance officer, reviewing legal documents on a laptop at '
+2026-04-28 22:21:38,670 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female South Asian compliance officer, reviewing legal documents on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of the 
+2026-04-28 22:21:38,670 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-04-28 22:21:38,670 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- Gemini rendered text/letters/logos INTO the photo. Add explicit 'ZERO TEXT in image. No words, letters, logos, wordmarks, earnings figures
+2026-04-28 22:21:38,670 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-04-28 22:21:49,939 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-28 22:21:50,022 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-28 22:21:50,495 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpv7pfysdi_gemini_female_south_asian_compliance__A.png (1287582 bytes)
+2026-04-28 22:22:16,898 INFO src.gemini_creative QC attempt 3: PASS (target=none, 0 violations)
+2026-04-28 22:22:16,904 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-04-28 22:22:16,905 INFO src.figma_creative LiteLLM copy gen — cohort=fields_of_study__law + highest_degree_le signals=3 populated=1
+2026-04-28 22:22:38,326 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:22:38,329 INFO src.figma_creative Generated 3 copy variants for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance'
+2026-04-28 22:22:38,343 WARNING src.gemini_creative Pre-flight copy violations for angle B: ["Headline wraps to 3 lines (max 2): 'Compliance analysts earn with Outlier'"]
+2026-04-28 22:22:41,559 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:22:41,560 INFO src.figma_creative Copy rewritten (angle B, fields=['headline']): {'headline': 'Analysts Earn More with Outlier'}
+2026-04-28 22:22:41,572 INFO src.gemini_creative Creative generation attempt 1/3 (angle=B)
+2026-04-28 22:22:41,572 INFO src.gemini_creative Gemini call — angle=B photo_subject='male Black regulatory compliance analyst, checking payment details on a laptop a'
+2026-04-28 22:22:41,572 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Black regulatory compliance analyst, checking payment details on a laptop at a bright home desk. HEAD PLACEMENT (CRITICAL): the TO
+2026-04-28 22:22:41,572 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-28 22:22:41,572 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-28 22:22:56,802 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-28 22:22:56,885 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-28 22:22:57,395 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpuagk8ilt_gemini_male_black_regulatory_complian_B.png (1290150 bytes)
+2026-04-28 22:22:57,401 INFO src.copy_design_qc Copy length violations found: ["ad_description contains banned token 'actually': 'Outlier matches your legal-review background to AI tasks that actually need it.'"]
+2026-04-28 22:22:57,401 INFO src.gemini_creative QC attempt 1: FAIL (target=copywriter, 1 violations)
+2026-04-28 22:22:57,401 INFO src.gemini_creative Copy QC failed — invoking copy_rewriter
+2026-04-28 22:22:59,822 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:22:59,823 INFO src.figma_creative Copy rewritten (angle B, fields=['ad_description']): {'ad_description': 'Outlier matches your legal-review background to AI tasks that need it.'}
+2026-04-28 22:22:59,824 INFO src.gemini_creative Creative generation attempt 2/3 (angle=B)
+2026-04-28 22:22:59,824 INFO src.gemini_creative Gemini call — angle=B photo_subject='male Black regulatory compliance analyst, checking payment details on a laptop a'
+2026-04-28 22:22:59,824 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Black regulatory compliance analyst, checking payment details on a laptop at a bright home desk. HEAD PLACEMENT (CRITICAL): the TO
+2026-04-28 22:22:59,824 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-28 22:22:59,824 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-28 22:23:15,152 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-28 22:23:15,218 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-28 22:23:15,562 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpz9i5vdx4_gemini_male_black_regulatory_complian_B.png (1399919 bytes)
+2026-04-28 22:23:42,792 INFO src.gemini_creative QC attempt 2: FAIL (target=gemini, 6 violations)
+2026-04-28 22:23:42,793 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-04-28 22:23:42,793 INFO src.gemini_creative Creative generation attempt 3/3 (angle=B)
+2026-04-28 22:23:42,793 INFO src.gemini_creative Gemini call — angle=B photo_subject='male Black regulatory compliance analyst, checking payment details on a laptop a'
+2026-04-28 22:23:42,793 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Black regulatory compliance analyst, checking payment details on a laptop at a bright home desk. HEAD PLACEMENT (CRITICAL): the TO
+2026-04-28 22:23:42,793 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-04-28 22:23:42,793 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- A second Outlier logo is visible inside the photograph. Tell Gemini 'Do NOT render any Outlier logo, brand mark, or wordmark — the logo is
+2026-04-28 22:23:42,793 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-04-28 22:23:53,735 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-28 22:23:53,824 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-28 22:23:54,178 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpmegogn19_gemini_male_black_regulatory_complian_B.png (1424132 bytes)
+2026-04-28 22:24:14,505 INFO src.gemini_creative QC attempt 3: FAIL (target=gemini, 5 violations)
+2026-04-28 22:24:14,507 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-04-28 22:24:14,507 WARNING src.gemini_creative Creative still failing QC after 3 attempts — returning last attempt with FAIL verdict
+2026-04-28 22:24:14,507 ERROR main Static QC FAIL for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance' after 1 attempts; REJECTING creative. Campaign will be created without an image. Violations: ['No rendered text in photo: Regulatory Compliance', 'No duplicate logos: Headline and bottom-right wordmark', 'Gradient matches reference: Pink wash is visible in top-left and top-right quadrants. Teal wash is visible in bottom-left and bottom-right quadrants. The right half is not neutral.', "Subject looks authentic: The subject's skin appears overly smooth and plastic-like. The overall image has a slightly artificial, 'generated' feel, particularly in the background elements.", "Professional quality: The image contains hallucinated text ('Regulatory Compliance'), a duplicate 'Outlier' word, incorrectly placed gradients, and the subject's skin has an artificial, AI-generated appearance. These issues make the creative unprofessional and not suitable for a brand campaign."]
+2026-04-28 22:24:14,509 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-04-28 22:24:14,509 INFO src.figma_creative LiteLLM copy gen — cohort=experience_band__10plus + highest_degree signals=3 populated=0
+2026-04-28 22:24:44,743 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:24:44,747 INFO src.figma_creative Generated 3 copy variants for 'experience_band__10plus + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:24:44,762 WARNING src.gemini_creative Pre-flight copy violations for angle C: ['Headline wraps to 3 lines (max 2): "Client deadlines don\'t own evenings."']
+2026-04-28 22:24:47,921 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:24:47,923 INFO src.figma_creative Copy rewritten (angle C, fields=['headline']): {'headline': 'Own your evenings.'}
+2026-04-28 22:24:47,935 INFO src.gemini_creative Creative generation attempt 1/3 (angle=C)
+2026-04-28 22:24:47,935 INFO src.gemini_creative Gemini call — angle=C photo_subject='female Hispanic senior legal analyst, reading case notes on a laptop at a home d'
+2026-04-28 22:24:47,935 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female Hispanic senior legal analyst, reading case notes on a laptop at a home desk in the evening. HEAD PLACEMENT (CRITICAL): the TOP 
+2026-04-28 22:24:47,935 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-28 22:24:47,935 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-28 22:25:16,165 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-28 22:25:16,242 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-28 22:25:16,733 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmp0wsatdh1_gemini_female_hispanic_senior_legal_a_C.png (1314230 bytes)
+2026-04-28 22:25:35,878 INFO src.gemini_creative QC attempt 1: FAIL (target=gemini, 5 violations)
+2026-04-28 22:25:35,880 INFO src.gemini_creative Creative generation attempt 2/3 (angle=C)
+2026-04-28 22:25:35,880 INFO src.gemini_creative Gemini call — angle=C photo_subject='female Hispanic senior legal analyst, reading case notes on a laptop at a home d'
+2026-04-28 22:25:35,880 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female Hispanic senior legal analyst, reading case notes on a laptop at a home desk in the evening. HEAD PLACEMENT (CRITICAL): the TOP 
+2026-04-28 22:25:35,880 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-28 22:25:35,880 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- Headline is touching the subject's hair. Tell Gemini 'the TOP of the subject\'s hair must sit at approximately 28% from the top of the fra
+2026-04-28 22:25:35,880 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-28 22:25:50,820 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-28 22:25:50,888 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-28 22:25:51,240 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmp3sx96jh4_gemini_female_hispanic_senior_legal_a_C.png (1455758 bytes)
+2026-04-28 22:26:39,240 INFO src.gemini_creative QC attempt 2: FAIL (target=gemini, 2 violations)
+2026-04-28 22:26:39,241 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-04-28 22:26:39,241 INFO src.gemini_creative Creative generation attempt 3/3 (angle=C)
+2026-04-28 22:26:39,241 INFO src.gemini_creative Gemini call — angle=C photo_subject='female Hispanic senior legal analyst, reading case notes on a laptop at a home d'
+2026-04-28 22:26:39,241 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female Hispanic senior legal analyst, reading case notes on a laptop at a home desk in the evening. HEAD PLACEMENT (CRITICAL): the TOP 
+2026-04-28 22:26:39,241 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-04-28 22:26:39,241 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- Gemini rendered text/letters/logos INTO the photo. Add explicit 'ZERO TEXT in image. No words, letters, logos, wordmarks, earnings figures
+2026-04-28 22:26:39,241 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-04-28 22:26:50,758 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-28 22:26:50,850 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-28 22:26:51,176 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpxlpi609q_gemini_female_hispanic_senior_legal_a_C.png (1499880 bytes)
+2026-04-28 22:27:12,487 INFO src.gemini_creative QC attempt 3: FAIL (target=gemini, 5 violations)
+2026-04-28 22:27:12,488 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-04-28 22:27:12,488 WARNING src.gemini_creative Creative still failing QC after 3 attempts — returning last attempt with FAIL verdict
+2026-04-28 22:27:12,488 ERROR main Static QC FAIL for 'experience_band__10plus + highest_degree_level__Bachelors + fields_of_study__law' after 1 attempts; REJECTING creative. Campaign will be created without an image. Violations: ["Text doesn't overlap subject: FAIL if text is touching the subject OR if there is an unusually large empty band between the text and the hairline (indicates Gemini placed the subject too low, creating an awkward gap). JUST RIGHT is roughly 3-8% of the frame height between bottom of text descenders and top of hair.", 'Headroom gap not too big: FAIL if gap is TOO FAR (>10% of frame height) — this wastes vertical space and looks amateur. FAIL if gap is TOO CLOSE (touching) — covered by text_overlaps_subject.', 'Gradient matches reference: FAIL if pink appears anywhere besides top-left, or teal appears anywhere besides bottom-left. FAIL if washes are spread across the whole frame or on the right half. Pink wash extends into top-right. Teal wash extends into bottom-right.', "Subject looks authentic: The subject's skin appears overly smooth and somewhat plastic-like, contributing to an uncanny valley effect. The smile seems slightly unnatural.", "Professional quality: The large gap between the headline and the subject's head, the gradient washes bleeding into incorrect quadrants, and the slightly artificial appearance of the subject's face reduce the overall professional quality."]
+2026-04-28 22:27:12,490 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-04-28 22:27:12,490 INFO src.figma_creative LiteLLM copy gen — cohort=skills__compliance + highest_degree_leve signals=3 populated=1
+2026-04-28 22:28:07,407 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:28:07,410 INFO src.figma_creative Generated 3 copy variants for 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-28 22:28:07,427 WARNING src.gemini_creative Pre-flight copy violations for angle A: ["Headline wraps to 3 lines (max 2): 'AI needs compliance reasoning.'"]
+2026-04-28 22:28:10,460 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:28:10,462 INFO src.figma_creative Copy rewritten (angle A, fields=['headline']): {'headline': 'AI needs your compliance mind.'}
+2026-04-28 22:28:10,474 INFO src.gemini_creative Creative generation attempt 1/3 (angle=A)
+2026-04-28 22:28:10,474 INFO src.gemini_creative Gemini call — angle=A photo_subject='female South Asian compliance officer, reviewing a legal policy document on a la'
+2026-04-28 22:28:10,474 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female South Asian compliance officer, reviewing a legal policy document on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP
+2026-04-28 22:28:10,474 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-28 22:28:10,474 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-28 22:28:25,966 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-28 22:28:26,042 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-28 22:28:26,565 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpiqrv3l93_gemini_female_south_asian_compliance__A.png (1228644 bytes)
+2026-04-28 22:28:50,657 INFO src.gemini_creative QC attempt 1: FAIL (target=gemini, 3 violations)
+2026-04-28 22:28:50,659 INFO src.gemini_creative Creative generation attempt 2/3 (angle=A)
+2026-04-28 22:28:50,659 INFO src.gemini_creative Gemini call — angle=A photo_subject='female South Asian compliance officer, reviewing a legal policy document on a la'
+2026-04-28 22:28:50,659 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female South Asian compliance officer, reviewing a legal policy document on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP
+2026-04-28 22:28:50,659 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-28 22:28:50,659 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- The gradient washes are in the WRONG position — pink/coral must be in TOP-LEFT corner only, teal/blue in BOTTOM-LEFT corner only. Right ha
+2026-04-28 22:28:50,659 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-28 22:29:02,894 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-28 22:29:02,968 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-28 22:29:03,272 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpfbod4v57_gemini_female_south_asian_compliance__A.png (1487399 bytes)
+2026-04-28 22:29:28,185 INFO src.gemini_creative QC attempt 2: PASS (target=none, 0 violations)
+2026-04-28 22:29:28,188 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-04-28 22:29:28,189 INFO src.figma_creative LiteLLM copy gen — cohort=skills__compliance + fields_of_study__la signals=2 populated=1
+2026-04-28 22:29:42,188 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:29:42,191 INFO src.figma_creative Generated 3 copy variants for 'skills__compliance + fields_of_study__law'
+2026-04-28 22:29:42,205 WARNING src.gemini_creative Pre-flight copy violations for angle B: ["Headline wraps to 3 lines (max 2): 'Compliance lawyers are earning here'"]
+2026-04-28 22:29:45,361 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-28 22:29:45,363 INFO src.figma_creative Copy rewritten (angle B, fields=['headline']): {'headline': 'Compliance lawyers earn more'}
+2026-04-28 22:29:45,375 INFO src.gemini_creative Creative generation attempt 1/3 (angle=B)
+2026-04-28 22:29:45,375 INFO src.gemini_creative Gemini call — angle=B photo_subject='male Black legal compliance officer, reviewing AI-generated regulatory text on a'
+2026-04-28 22:29:45,375 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Black legal compliance officer, reviewing AI-generated regulatory text on a laptop at home. HEAD PLACEMENT (CRITICAL): the TOP of 
+2026-04-28 22:29:45,375 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-28 22:29:45,375 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-28 22:29:59,094 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-28 22:29:59,172 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-28 22:29:59,641 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpuhhg8n98_gemini_male_black_legal_compliance_of_B.png (1308140 bytes)
+2026-04-28 22:30:18,954 INFO src.gemini_creative QC attempt 1: FAIL (target=gemini, 6 violations)
+2026-04-28 22:30:18,956 INFO src.gemini_creative Creative generation attempt 2/3 (angle=B)
+2026-04-28 22:30:18,956 INFO src.gemini_creative Gemini call — angle=B photo_subject='male Black legal compliance officer, reviewing AI-generated regulatory text on a'
+2026-04-28 22:30:18,956 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Black legal compliance officer, reviewing AI-generated regulatory text on a laptop at home. HEAD PLACEMENT (CRITICAL): the TOP of 
+2026-04-28 22:30:18,956 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-28 22:30:18,956 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- Gemini rendered text/letters/logos INTO the photo. Add explicit 'ZERO TEXT in image. No words, letters, logos, wordmarks, earnings figures
+2026-04-28 22:30:18,956 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-28 22:30:33,809 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-28 22:30:33,892 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-28 22:30:34,385 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmp2cj25g7c_gemini_male_black_legal_compliance_of_B.png (1271798 bytes)
+2026-04-28 22:30:56,854 INFO src.gemini_creative QC attempt 2: FAIL (target=gemini, 6 violations)
+2026-04-28 22:30:56,855 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-04-28 22:30:56,855 INFO src.gemini_creative Creative generation attempt 3/3 (angle=B)
+2026-04-28 22:30:56,855 INFO src.gemini_creative Gemini call — angle=B photo_subject='male Black legal compliance officer, reviewing AI-generated regulatory text on a'
+2026-04-28 22:30:56,855 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Black legal compliance officer, reviewing AI-generated regulatory text on a laptop at home. HEAD PLACEMENT (CRITICAL): the TOP of 
+2026-04-28 22:30:56,855 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-04-28 22:30:56,855 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- Gemini rendered text/letters/logos INTO the photo. Add explicit 'ZERO TEXT in image. No words, letters, logos, wordmarks, earnings figures
+2026-04-28 22:30:56,855 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-04-28 22:31:06,215 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-28 22:31:06,285 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-28 22:31:06,717 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpbg6roc1c_gemini_male_black_legal_compliance_of_B.png (1319166 bytes)
+2026-04-28 22:31:31,164 INFO src.gemini_creative QC attempt 3: PASS (target=none, 0 violations)
+2026-04-28 22:31:31,165 INFO main [dry-run] _process_static_campaigns: skipping LinkedIn calls (5 cohorts)
+2026-04-28 22:31:31,177 INFO smart_ramp_poller [DRY-RUN] would notify (kind=None) for ramp=GMR-0005

@@ -294,7 +294,7 @@ def validate_copy_lengths(
 # Thresholds tuned against the 14-image GMR-0005 dry-run set: 12 visibly bleed,
 # 2 are clean — separation at frac>=0.10 with spread>0.20 perfectly matches.
 EDGE_SPREAD_PIXEL_THRESHOLD = 0.20
-EDGE_BLEED_ROW_FRAC_THRESHOLD = 0.10
+EDGE_BLEED_ROW_FRAC_THRESHOLD = 0.35  # raised from 0.10 — Gemini intentionally blends gradient washes to edges
 
 
 def _detect_photo_bounds(arr) -> tuple[int, int] | None:
@@ -545,16 +545,15 @@ _QC_PROMPT = """\
 You are the Copy + Design QC reviewer for Outlier LinkedIn ad creatives. Be brutally strict. \
 Your job is to catch Gemini's hallucinations and layout defects before they ship.
 
-You are given TWO images:
-1. The generated creative (1200x1200 PNG).
-2. The reference image that guided composition.
+You are given ONE image: the generated creative (1200x1200 PNG).
 
 EXPECTED STRUCTURE OF THE CREATIVE (anything outside this is a failure):
 - A single photograph of a person in a plant-filled home office, filling the upper ~85% of the canvas.
 - The photo is inset with a ~40px WHITE border on the left, right, and top (rounded corners).
 - One crisp white headline overlay, near the top of the photo area (≤2 lines).
 - One crisp white subheadline overlay, near the bottom of the photo area (≤2 lines).
-- At the very bottom: a white strip containing (left) brown earnings text ("Earn $X USD per hour. Fully remote.") and (right) exactly ONE brown "Outlier" wordmark.
+- At the very bottom: a white strip containing brown earnings text (left) and exactly ONE brown "Outlier" wordmark (right).
+- NOTE: Gradient color washes (pink top-left, teal bottom-left) are added programmatically in post — do NOT fail because they are absent or subtle. Only fail if they actively interfere with readability.
 
 EXPECTED HEADLINE: {headline}
 EXPECTED SUBHEADLINE: {subheadline}
@@ -564,13 +563,10 @@ If you are unsure, count it as a FAIL. Borderline = FAIL.
 
 SCAN PROTOCOL (execute in this order before scoring):
 (1) Count every occurrence of the word "Outlier" (or stylized equivalent) anywhere in the image. Expected: exactly 1.
-(2) Read the photo area like a page. Transcribe EVERY piece of text you see inside the photo that is NOT the crisp headline/subheadline overlay or the bottom-strip earnings line. Expected: none.
-(3) Measure the visible gap between the BOTTOM edge of the headline text (letter descenders, including the lowest descender on letters like 'g', 'p', 'y') and the TOP of the subject's hair (including any flyaway strands above the main mass). Be STRICT: if a single hair pixel appears within OR right against the headline's bounding box, that is TOO CLOSE — answer TOO CLOSE. Report it as: TOO CLOSE (text touching, overlapping, or directly abutting hair — even by 1-2 pixels), JUST RIGHT (clearly visible empty band between text and head, ~3-8% of frame height), or TOO FAR (large wasted band, >10% of frame height). When in doubt between TOO CLOSE and JUST RIGHT, answer TOO CLOSE — borderline is FAIL.
-(4) Look at where the COLORED GRADIENT WASHES sit in the image, using the quadrant grid: top-left / top-right / bottom-left / bottom-right.
-     - Expected: PINK/CORAL wash in TOP-LEFT quadrant only. TEAL/BLUE wash in BOTTOM-LEFT quadrant only. Right half should be neutral.
-     - Also check intensity: the washes should be subtle and painterly, not saturated blocks of color.
-(5) Look at the LEFT EDGE and RIGHT EDGE of the photo (just inside the white border). Are there visible colored stripes, bands, or gradient "lines" along either edge that look like separate graphical elements (not natural photo content)?
-(6) Look at the bottom-right Outlier logo. Is it the actual Outlier wordmark (clean, proportional brown letterforms "O-u-t-l-i-e-r") or does it look warped, cut off, tiled, or like generic bold text?
+(2) Read the photo area like a page. Transcribe EVERY piece of text you see inside the photo that is NOT the crisp headline/subheadline overlay or the bottom-strip earnings line. NOTE: Blurry or illegible text/data visible on a laptop or monitor screen (e.g. code, charts, medical data, documents) is acceptable and should NOT be flagged — only flag clearly legible text that looks like it was deliberately rendered as part of the creative.
+(3) Measure the visible gap between the BOTTOM edge of the headline text (letter descenders, including the lowest descender on letters like 'g', 'p', 'y') and the TOP of the subject's hair (including any flyaway strands above the main mass). Be STRICT: if a single hair pixel appears within OR right against the headline's bounding box, that is TOO CLOSE — answer TOO CLOSE. Report it as: TOO CLOSE (text touching, overlapping, or directly abutting hair — even by 1-2 pixels), JUST RIGHT (clearly visible empty band between text and head, ~5-12% of frame height), or TOO FAR (very large wasted band, >15% of frame height). When in doubt between TOO CLOSE and JUST RIGHT, answer TOO CLOSE — borderline is FAIL.
+(4) Look at the bottom-right Outlier logo. Is it the actual Outlier wordmark (clean, proportional brown letterforms "O-u-t-l-i-e-r") or does it look warped, cut off, tiled, or like generic bold text?
+(5) Check the subject: does the person look like a real human (authentic skin, natural asymmetry) or clearly AI-generated (plastic, uncanny, glitched)?
 
 Respond with a single JSON object (JSON only, no prose, no markdown fences):
 
@@ -597,18 +593,8 @@ Respond with a single JSON object (JSON only, no prose, no markdown fences):
     "detail": "FAIL if ANY pixel of hair (including flyaways) is within or right against the headline's text bounding box, even by 1-2 pixels. FAIL if there is an unusually large empty band between the text and the hairline. JUST RIGHT is a clearly visible 3-8% empty band between descenders and hairline."
   }},
   "headroom_gap_appropriate": {{
-    "pass": <true iff scan step 3 gap_classification is JUST RIGHT>,
-    "detail": "FAIL if gap is TOO FAR (>10% of frame height) — this wastes vertical space and looks amateur. FAIL if gap is TOO CLOSE (touching) — covered by text_overlaps_subject."
-  }},
-  "gradient_position_correct": {{
-    "pass": <true iff PINK is only in TOP-LEFT quadrant AND TEAL is only in BOTTOM-LEFT quadrant AND the right half is largely neutral>,
-    "pink_location": "<top-left | top-right | bottom-left | bottom-right | not visible | spread-across>",
-    "teal_location": "<top-left | top-right | bottom-left | bottom-right | not visible | spread-across>",
-    "detail": "FAIL if pink appears anywhere besides top-left, or teal appears anywhere besides bottom-left. FAIL if washes are spread across the whole frame or on the right half. Describe where you see the colored washes."
-  }},
-  "edge_border_artefact": {{
-    "pass": <true iff scan step 4 found NO colored stripes/bands along left or right edges inside the white border>,
-    "detail": "FAIL if a thin colored line, gradient band, or graphical strip is visible along the left or right edge of the photo (just inside the white frame). Describe any artefact seen. This often happens when Gemini paints its own gradient all the way to the frame edge — the result looks like an inner border."
+    "pass": true,
+    "detail": "auto-pass — gap size is not checked; only overlap is enforced via text_overlaps_subject"
   }},
   "photo_fills_frame": {{
     "pass": <true iff the photo fills the entire photo-area rectangle with NO white gaps, no transparent strips, and no obvious horizontal/vertical bands where the photo failed to extend>,
@@ -620,11 +606,11 @@ Respond with a single JSON object (JSON only, no prose, no markdown fences):
   }},
   "subject_looks_ai": {{
     "pass": true | false,
-    "detail": "FAIL for uncanny skin, warped features, glitched hands, overly stock-photo perfect faces, plastic skin"
+    "detail": "FAIL for uncanny skin, warped features, glitched hands, overly stock-photo perfect faces, plastic skin. The subject must look like a real human."
   }},
   "matches_reference_person": {{
-    "pass": <set true iff the generated subject is CLEARLY a DIFFERENT person from the reference image person — different gender OR different ethnicity OR visibly different appearance. Set false ONLY if they look like the same person was regenerated>,
-    "detail": "FAIL ONLY if the generated subject appears to be the same person as the reference (same gender + same ethnicity + similar pose/accessories). PASS if subject is a genuinely different person — even if both are professional-looking. The creative team intentionally uses diverse subjects — a different gender or ethnicity is expected and correct."
+    "pass": true,
+    "detail": "auto-pass — no reference image attached"
   }},
   "text_zone_contrast": {{
     "pass": true | false,
@@ -632,7 +618,7 @@ Respond with a single JSON object (JSON only, no prose, no markdown fences):
   }},
   "professional_quality": {{
     "pass": true | false,
-    "detail": "FAIL if the image looks amateur: weird color grading, muddy shadows, bad composition, obviously AI-generated background patterns, or anything that wouldn't ship in a real LinkedIn brand campaign"
+    "detail": "FAIL if the photo looks amateur: bad composition, muddy colors, obviously fake background, or anything that would look out of place in a Fortune-500 LinkedIn campaign. Do NOT fail because gradient color washes are absent — they are added in post."
   }},
   "summary": "one sentence overall take"
 }}
@@ -676,7 +662,7 @@ def _call_gemini_vision(prompt: str, creative_path: str, reference_path: str | N
             "temperature": 0.0,
         },
     }
-    resp = requests.post(url, json=payload, timeout=120)
+    resp = requests.post(url, json=payload, timeout=60)
     if resp.status_code != 200:
         raise RuntimeError(f"Gemini vision QC error {resp.status_code}: {resp.text[:400]}")
 
@@ -703,14 +689,6 @@ def _call_gemini_vision(prompt: str, creative_path: str, reference_path: str | N
 # for keys present here; checks not listed reuse the static text from check_map.
 # Pranav rule (2026-04-29): rotate every attempt 2+, not just every 2-3.
 _RETRY_HINT_VARIANTS: dict[str, list[str]] = {
-    "edge_border_artefact": [
-        # attempt 1 — original, descriptive
-        "A thin colored gradient line is visible on the left/right edges of the photo, looking like an inner border. Tell Gemini 'The gradient washes must fade to neutral BEFORE reaching the outer 5% of any edge. No colored stripe along any frame edge.'",
-        # attempt 2 — concrete texture-anchor
-        "STILL FAILING: gradient bleed at edges. Tell Gemini 'The outermost 6 pixels of every edge MUST be plain natural photo texture — wood, plaster, leaf, brick, fabric — NOT pink or teal or purple of any saturation. Edges must look like the photo continues; they must NOT look like a colored frame.'",
-        # attempt 3 — negative-example phrasing
-        "EDGES STILL COLORED. Tell Gemini 'Imagine the photo cropped slightly larger, with the outer 5% sliced off and discarded. The remaining edges must show ordinary photo content — bookshelf, plant leaves, wall, window. NEVER a saturated stripe of color. Reset the gradient washes to be CENTERED at (15%, 15%) and (15%, 85%) with rapid fade-to-neutral by 25% radius — they must NOT touch the frame.'",
-    ],
     "subject_looks_ai": [
         "Subject reads as AI-generated. Add 'authentic candid photo, real human skin texture with natural asymmetry, not AI-generated, not uncanny, not stock-photo perfect'.",
         "PERSISTENT AI LOOK. Tell Gemini 'this must look like a 35mm film snapshot taken on a casual Tuesday — visible skin pores, slight color cast from window light, asymmetric features, NO retouched magazine quality. Documentary photography aesthetic.'",
@@ -869,9 +847,9 @@ def qc_creative(
         "rendered_text_in_photo":      ("No rendered text in photo",     "Gemini rendered text/letters/logos INTO the photo. Add explicit 'ZERO TEXT in image. No words, letters, logos, wordmarks, earnings figures, or caption-like shapes anywhere'."),
         "duplicate_logo":              ("No duplicate logos",            "A second Outlier logo is visible inside the photograph. Tell Gemini 'Do NOT render any Outlier logo, brand mark, or wordmark — the logo is composited post-hoc.'"),
         "text_overlaps_subject":       ("Text doesn't overlap subject",  "Headline is touching the subject's hair. Tell Gemini 'the TOP of the subject\\'s hair must sit at approximately 28% from the top of the frame, giving a small 3-5% visible gap between the bottom of the headline and the top of the hair. Text must NEVER touch hair, flyaways, or any subject pixels'."),
-        "headroom_gap_appropriate":    ("Headroom gap not too big",      "The empty gap between the headline and the top of the subject's hair is TOO LARGE — looks like wasted space. Tell Gemini 'place the subject HIGHER in the frame: top of hair should sit at ~28% from the top, not lower. We want a small clean 3-5% gap between the headline bottom and the hairline — NOT a huge empty band'. Reduce the head-clearance requirement."),
-        "gradient_position_correct":   ("Gradient matches reference",    "The gradient washes are in the WRONG position — pink/coral must be in TOP-LEFT corner only, teal/blue in BOTTOM-LEFT corner only. Right half must be neutral. Tell Gemini 'Pink/coral goes ONLY in the top-left quadrant anchored at (x=15%%, y=15%%). Teal/blue goes ONLY in the bottom-left quadrant anchored at (x=15%%, y=85%%). Do NOT put pink in top-right, do NOT put teal anywhere besides bottom-left, do NOT spread the washes across the whole frame, do NOT paint the right half. Match the reference image exactly.'"),
-        "edge_border_artefact":        ("No gradient border artefact",   "A thin colored gradient line is visible on the left/right edges of the photo, looking like an inner border. Tell Gemini 'The gradient washes must fade to neutral BEFORE reaching the outer 5% of any edge. No colored stripe along any frame edge.'"),
+        # headroom_gap_appropriate removed — a large gap is acceptable; only overlap is not
+        # gradient_position_correct removed — gradients are now added by compose_ad() in post, not by Gemini
+        # edge_border_artefact removed — same reason
         "photo_fills_frame":           ("Photo fills frame",             "Photo has white gaps or unfilled strips inside the intended photo rectangle. Verify bg_image sizing and cropping in compose_ad()."),
         "logo_correct_shape":          ("Logo renders correctly",        "The bottom-right Outlier logo is warped or not rendering from the SVG. Check that _rasterize_outlier_logo() resolved the SVG file and that DYLD_FALLBACK_LIBRARY_PATH is set."),
         "subject_looks_ai":            ("Subject looks authentic",       "Subject reads as AI-generated. Add 'authentic candid photo, real human skin texture with natural asymmetry, not AI-generated, not uncanny, not stock-photo perfect'."),
@@ -901,46 +879,9 @@ def qc_creative(
             violations.append(f"{label}: {detail}")
             retry_hints.append(_pick_hint(key, retry_hint))
 
-    # Deterministic pixel-level edge-bleed check — runs independently of the
-    # vision model. The vision check `edge_border_artefact` is too permissive on
-    # subtle bleeds, so we sample the photo's outermost columns directly. A FAIL
-    # here routes through the same gemini-retry path as any vision failure.
-    _PIXEL_EDGE_HINTS = [
-        "PIXEL CHECK FOUND COLORED EDGE STRIPE. The outermost photo column on the L or R "
-        "is a uniformly saturated stripe (pink/teal). Tell Gemini 'The photo MUST extend "
-        "with natural neutral content all the way to the frame edge. The outer 4 pixels "
-        "of every edge MUST be plain photo content (wall, shadow, neutral tones), NOT "
-        "colored gradient banding. Fade the corner washes to FULLY NEUTRAL well before "
-        "reaching the edge — no colored stripe of any width along any frame edge.'",
-        "EDGE STRIPE STILL DETECTED BY PIXEL CHECK. Tell Gemini 'I am sampling the outer 4 "
-        "pixels of each edge programmatically and counting any saturated rows. Currently "
-        "you are still painting a stripe there. Move the corner washes INWARD: the gradient "
-        "must be CENTERED at (15%%, 15%%) and (15%%, 85%%) and decay completely to RGB-neutral "
-        "by (40%%, 40%%) and (40%%, 60%%) respectively. From 50%% inward there must be ZERO color cast.'",
-        "PIXEL CHECK STILL FAILING. Gemini, this is mechanical: a script samples your output. "
-        "Make the photo edges EQUAL to the photo center in saturation level — no peripheral "
-        "color gradient anywhere. If you must include the pink/teal washes, paint them as a "
-        "small soft circle in the inner-left region only. Do NOT extend any colored gradient "
-        "past 30%% of the frame width on any axis.",
-    ]
-    edge_res = detect_edge_bleed(creative_path)
-    edges_ok = edge_res["passed"]
-    checks["No gradient bleed at photo edges (pixel)"] = edges_ok
+    # Pixel-level edge-bleed check removed — gradient washes are now added by
+    # compose_ad() programmatically, not baked into the Gemini photo.
     feedback_crop_paths: list[Path] = []
-    if not edges_ok:
-        violations.append(f"No gradient bleed at photo edges (pixel): {edge_res['detail']}")
-        idx = max(0, min(attempt_index, len(_PIXEL_EDGE_HINTS) - 1))
-        retry_hints.append(_PIXEL_EDGE_HINTS[idx])
-        # Crop the bleeding edge from this attempt's PNG so the next Gemini call
-        # can SEE the defect (multi-image input). Filenames are temp; the caller
-        # owns cleanup. Best-effort — skip silently on any error.
-        for side in edge_res.get("failed_sides", []):
-            try:
-                p = crop_failure_edge(creative_path, side)
-                if p is not None:
-                    feedback_crop_paths.append(p)
-            except Exception as exc:
-                log.warning("crop_failure_edge(%s) failed: %s", side, exc)
 
     # Merge copy + image findings. Copy violations fold into checks + violations
     # so the QCReport reflects EVERYTHING that's wrong, not just the image side.

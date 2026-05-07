@@ -16,7 +16,7 @@ from PIL import Image
 import tempfile
 
 from src.figma_upload import png_to_base64, build_figma_layered_frame_js
-from src.midjourney_creative import compose_ad
+from src.gemini_creative import compose_ad
 
 
 class TestPhotoBase64Conversion:

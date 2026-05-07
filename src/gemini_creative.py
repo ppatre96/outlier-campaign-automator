@@ -20,6 +20,7 @@ Visual style — ground-truth from Outlier Static Ads v2 reference analysis:
   - Reference image + Outlier logo SVG embedded inline in Gemini prompt (not Drive URL)
 """
 import base64
+import json
 import logging
 import os
 import re
@@ -144,91 +145,75 @@ _ANGLE_EXPRESSIONS = {
 GEMINI_PROMPT_TEMPLATE = """\
 PHOTO GENERATION PROMPT:
 
-A close-up environmental portrait of a {photo_subject}. HEAD PLACEMENT (CRITICAL): the \
-TOP of the subject's hair must sit at approximately 28% from the top of the frame — \
-NOT higher (text would clip hair), NOT lower (creates excessive empty gap). The top \
-~25% of the frame is a text-safe strip (no subject pixels, no hair, no flyaways); the \
-top of the hair then appears at ~28%, with a small clean 3-5% visible gap between the \
-bottom of the future headline overlay and the hairline. Subject's face centered \
-vertically in the MIDDLE THIRD of the frame. Body/torso clearly visible below shoulders. \
-EMPTY SPACE on the left and right sides of the subject — text will overlay beside/below \
-subject, NOT on them. Lush plant-filled home interior: bookshelves, potted plants, wall \
-art, warm natural window light. 85mm prime lens, shallow depth of field. {expression}. \
-Shot on film, analog color grade, authentic lifestyle photo. NOT stock photo. NOT \
-corporate headshot.
+TARGET AUDIENCE: {tg_label}
 
-GRADIENT WASH — EXACTLY MATCH THE REFERENCE IMAGE (attached). Two specific corner washes only:
+A close-up environmental portrait of a {photo_subject}. This image will be used as a \
+LinkedIn ad targeting {tg_label} — the subject must immediately read as a credible, \
+senior {tg_label} professional in their authentic work environment.
 
-1. TOP-LEFT corner: soft pastel PINK/CORAL wash. Must originate in the TOP-LEFT quadrant \
-   of the frame. Must NOT appear in the top-right, bottom-left, or bottom-right. Must be \
-   CENTRED around roughly (x=15%, y=15%) and fade outward from there.
+COMPOSITION (frame the subject so there is clear background space for a text overlay):
+- Place the subject in the LEFT or RIGHT half of the frame — NOT dead-centre. Leave the \
+  opposite half mostly clear (background only, no subject pixels) so a 1-2 line headline \
+  and a short subheadline can be composited next to the subject without overlap.
+- The empty half should show natural background (bookshelves, plants, walls, soft \
+  ambient light) with mid-tone to dark colour values so white text reads against it.
+- Subject's face is naturally framed mid-height — body/torso visible below shoulders. \
+  The exact head Y position is not critical because text placement is computed \
+  dynamically based on detected subject location.
 
-2. BOTTOM-LEFT corner: soft pastel TEAL/BLUE wash. Must originate in the BOTTOM-LEFT \
-   quadrant of the frame. Must NOT appear in the top-left, top-right, or bottom-right. \
-   Must be CENTRED around roughly (x=15%, y=85%) and fade outward from there.
-
-EXPLICIT NEGATIVES (these are the most common failure modes):
-- DO NOT place pink/coral in the top-right, bottom-left, or anywhere else besides the top-left quadrant.
-- DO NOT place teal/blue in the top-left, top-right, or anywhere else besides the bottom-left quadrant.
-- DO NOT spread the washes across the entire top or entire bottom — they stay in the LEFT half.
-- DO NOT produce a symmetric or radial pattern — the washes are ONLY on the left side.
-- The ENTIRE RIGHT HALF of the frame must remain neutral (natural photo tones, no colored washes).
-
-EDGE RULE: The gradient washes must FADE COMPLETELY TO NEUTRAL before reaching the outer \
-5% of any edge. The outermost 5% of every edge (top, bottom, left, right) must show \
-natural photo content with NO colored line, NO gradient band, NO graphic stripe. \
-Colored washes NEVER touch the frame edge.
-
-These washes are PART OF THE PHOTO — baked into the lighting. Do NOT draw separate overlay \
-graphics or border stripes.
-
-TEXT-SAFE ZONE CONTRAST (CRITICAL for white text overlay readability):
-- Top 30% of the frame MUST be a mid-tone to dark background (warm wood shelves, deeper plant \
-  foliage, shadowed walls). Combined with the pink/coral wash, this gives white headline text \
-  enough contrast to read. NO white walls, NO bright windows in the top band.
-- Bottom third around subject's waist/desk area must also be mid-tone / darker — the teal wash \
-  sits here. White subheadline text will overlay this zone.
+BACKGROUND:
+- Top 30% of the frame MUST be mid-tone to dark (warm wood shelves, plant foliage, \
+  shadowed walls). No bright white walls or blown-out windows in this zone — white \
+  headline text will overlay it and needs contrast to read.
+- Bottom third must also be mid-tone/darker for white subheadline text readability.
+- Setting: lush home interior — bookshelves, potted plants, wall art, warm natural \
+  window light. 85mm prime lens, shallow depth of field. {expression}. Shot on film, \
+  analog color grade, authentic lifestyle photo. NOT a stock photo. NOT a corporate headshot.
+- COLOR MOOD: Warm pinkish-amber light in the top-left of the frame (as if a warm lamp \
+  sits just outside the frame top-left). Cool teal/blue ambient light in the bottom-left \
+  corner (evening window light or ambient fill). This natural lighting palette will be \
+  enhanced by branded color overlays added in post-processing.
+- If a laptop or screen is visible, show natural document/text content appropriate for \
+  the profession (clinical notes, emails, documents, code) — NOT data charts, graphs, \
+  dashboards, or medical imaging displays.
 
 CRITICAL OUTPUT CONSTRAINTS:
-- DO NOT render any text, words, letters, logos, or wordmarks in the image
-- DO NOT add the Outlier logo, earnings strip, or any branding — these are composited separately in post-processing
-- OUTPUT ONLY THE PHOTOGRAPH — no overlays, no text, no graphics, no solid-color borders
-- The headline + subheadline text will be limited to MAX 2 LINES each (≤6 words headline, \
-  ≤7 words subheadline) — compose the photo assuming this text will fit in the top/bottom \
-  safe zones without overlapping the subject's face.
-
-The attached reference image shows the target COMPOSITION LAYOUT ONLY (subject framing, \
-top-clear space, side margins, background color tones). Match that composition exactly. \
-Ignore any text, logos, or branding visible in the reference — generate ONLY the clean \
-background photograph.\
+- DO NOT render any text, words, letters, numbers, logos, or wordmarks in the image.
+- DO NOT add any Outlier branding — logo, earnings strip, and gradient overlays are \
+  composited separately in post-processing.
+- OUTPUT ONLY THE CLEAN PHOTOGRAPH — no text overlays, no graphic elements, no \
+  solid-color borders.\
 """
 
 # Reference image URL (Google Drive folder with reference PNG + logo SVG)
 _REFERENCE_IMAGE_URL = "https://drive.google.com/drive/folders/1EYVpR40lXOiZFPBV-HkZ3Jx0CImjsHvV?usp=drive_link"
 
 
-def _build_imagen_prompt(photo_subject: str, angle: str) -> tuple[str, str]:
+def _build_imagen_prompt(photo_subject: str, angle: str, tg_label: str = "") -> tuple[str, str]:
     """
-    Build Gemini image prompt matching Outlier Static Ads v2 aesthetic.
+    Build Gemini image prompt for a clean lifestyle portrait.
 
-    Returns a (prompt_text, reference_image_b64) tuple:
-      - prompt_text: full formatted prompt
-      - reference_image_b64: base64-encoded Finance-Branded-BankerMale-Futureproof-1x1.png
-        (attached as image part in direct Gemini API calls; empty string if not found)
+    Gradients, logo, and text overlays are added by compose_ad() in post — Gemini
+    is only responsible for the background photograph with correct head placement.
+
+    Returns (prompt_text, ""). Reference image is no longer attached — it showed
+    gradient/branding context that conflicted with the simplified clean-photo brief.
 
     Args:
-        photo_subject: Specific description of the subject (gender, ethnicity, profession, activity)
-        angle: Copy variant angle ("A", "B", or "C") — determines expression in the prompt
+        photo_subject: Specific subject description (gender, ethnicity, profession, activity)
+        angle: Copy variant angle ("A", "B", or "C") — determines expression
+        tg_label: Target-group label injected into the prompt (e.g. "Cardiologists")
     """
     expression = _ANGLE_EXPRESSIONS.get(angle, _ANGLE_EXPRESSIONS["A"])
+    label = tg_label or photo_subject.split(",")[0].strip()
 
-    # Format the full template with actual values
     prompt_text = GEMINI_PROMPT_TEMPLATE.format(
         photo_subject=photo_subject,
         expression=expression,
+        tg_label=label,
     )
 
-    return prompt_text, _REFERENCE_IMAGE_B64
+    return prompt_text, ""
 
 
 # ── Reference image handling ────────────────────────────────────────────────
@@ -313,9 +298,10 @@ def _generate_imagen(
             raise RuntimeError(f"LiteLLM image response missing b64_json: {resp.text[:300]}")
         raise RuntimeError(f"LiteLLM image generation failed ({resp.status_code}): {resp.text[:300]}")
 
+    _model = config.GEMINI_IMAGE_MODEL.removeprefix("gemini/")
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models"
-        f"/gemini-2.5-flash-image:generateContent?key={api_key}"
+        f"/{_model}:generateContent?key={api_key}"
     )
 
     # Build request parts: text prompt first, then reference image inline,
@@ -376,36 +362,51 @@ def _generate_imagen(
 
 def _make_gradient_overlay(width: int, height: int, angle: str) -> Image.Image:
     """
-    Left-side soft wash gradient matching Outlier Static Ads v2 reference.
+    Outlier Static Ads v2 branded gradient overlay — added in post by compose_ad()
+    so the result is always consistent regardless of what Gemini generates.
 
-    Ground truth from 7 reference ads:
-    - Pink/coral cloud radiating from TOP-LEFT, spreading ~50% across image width
-    - Teal/blue cloud radiating from BOTTOM-LEFT, spreading ~50% across image width
-    - Right half of image mostly unaffected (gradient fades to zero)
-    - Both clouds are soft/diffuse — NOT tight corner dots
-    - Opacity: ~40-45% at strongest point, fading outward
-
-    This spread is what makes text readable when overlaid on the face area
-    (left portion of frame where text sits).
+    Layout (matches reference creatives):
+    - Pink/coral cloud radiating from TOP-LEFT (~50% spread, fades right and down)
+    - Teal/blue cloud radiating from BOTTOM-LEFT (~50% spread, fades right and up)
+    - Right half mostly unaffected
+    - Dark bands in text zones (top 28% + bottom 28%) for white text contrast
     """
-    # NOTE: Gemini now bakes the pink/coral + teal corner washes directly into the photo
-    # (see GEMINI_PROMPT_TEMPLATE → "GRADIENT WASH" section). PIL should NOT add its own
-    # colored clouds on top — that caused the "gradient border" artefact the user flagged.
-    # We only add subtle DARK wash bands in the text zones so white text stays readable
-    # regardless of what Gemini produces.
     overlay = np.zeros((height, width, 4), dtype=np.float32)
-    y_grid, _ = np.meshgrid(
+    y_grid, x_grid = np.meshgrid(
         np.linspace(0, 1, height),
         np.linspace(0, 1, width),
         indexing="ij",
     )
 
-    # Dark wash bands behind text zones — gentle, no colored tint.
-    top_band    = np.clip(1.0 - y_grid / 0.28, 0, 1) ** 1.5 * 0.32
-    bottom_band = np.clip((y_grid - 0.72) / 0.20, 0, 1) ** 1.5 * 0.28
-    dark_alpha  = np.maximum(top_band, bottom_band)
-    overlay[:, :, 3] = np.clip(dark_alpha, 0, 1)
-    return Image.fromarray((np.clip(overlay, 0, 1) * 255).astype(np.uint8), "RGBA")
+    # ── Pink/coral wash — top-left origin ─────────────────────────────────────
+    # Gaussian centred at (x=0, y=0), spreading ~55% across width/height
+    sigma_x, sigma_y = 0.55, 0.50
+    pink_dist = np.exp(-0.5 * ((x_grid / sigma_x) ** 2 + (y_grid / sigma_y) ** 2))
+    pink_alpha = np.clip(pink_dist * 0.42, 0, 1)
+    overlay[:, :, 0] = np.maximum(overlay[:, :, 0], 1.0 * pink_alpha)   # R
+    overlay[:, :, 1] = np.maximum(overlay[:, :, 1], 0.55 * pink_alpha)  # G
+    overlay[:, :, 2] = np.maximum(overlay[:, :, 2], 0.50 * pink_alpha)  # B
+    overlay[:, :, 3] = np.maximum(overlay[:, :, 3], pink_alpha)
+
+    # ── Teal/blue wash — bottom-left origin ───────────────────────────────────
+    teal_dist = np.exp(-0.5 * ((x_grid / sigma_x) ** 2 + ((1 - y_grid) / sigma_y) ** 2))
+    teal_alpha = np.clip(teal_dist * 0.38, 0, 1)
+    overlay[:, :, 0] = np.maximum(overlay[:, :, 0], 0.20 * teal_alpha)  # R
+    overlay[:, :, 1] = np.maximum(overlay[:, :, 1], 0.75 * teal_alpha)  # G
+    overlay[:, :, 2] = np.maximum(overlay[:, :, 2], 0.80 * teal_alpha)  # B
+    overlay[:, :, 3] = np.maximum(overlay[:, :, 3], teal_alpha)
+
+    # ── Dark bands for text readability ───────────────────────────────────────
+    top_dark    = np.clip(1.0 - y_grid / 0.28, 0, 1) ** 1.5 * 0.28
+    bottom_dark = np.clip((y_grid - 0.72) / 0.20, 0, 1) ** 1.5 * 0.24
+    dark        = np.maximum(top_dark, bottom_dark)
+    # Dark band is black (RGB=0) overlaid using its own alpha
+    dark_layer  = np.zeros((height, width, 4), dtype=np.float32)
+    dark_layer[:, :, 3] = dark
+
+    # Composite: dark layer on top of the colour washes
+    combined = np.clip(overlay + dark_layer * (1 - overlay[:, :, 3:4]), 0, 1)
+    return Image.fromarray((combined * 255).astype(np.uint8), "RGBA")
 
 
 def _load_font(size: int, bold: bool = False):
@@ -551,6 +552,102 @@ def _add_bottom_strip(canvas: Image.Image, bottom_text: str, strip_height_frac: 
     return canvas
 
 
+# ── Subject bbox detection (post-Gemini, pre-composition) ─────────────────────
+
+_BBOX_PROMPT_TMPL = (
+    "Locate the human subject in this {w}x{h} image. Return JSON only with "
+    "pixel coordinates (0-indexed, top-left origin):\n"
+    "{{\n"
+    '  "hair_top_y": <int>,\n'
+    '  "face_left_x": <int>,\n'
+    '  "face_right_x": <int>,\n'
+    '  "shoulder_top_y": <int>,\n'
+    '  "subject_side": "left" | "right" | "center"\n'
+    "}}\n"
+    "hair_top_y = Y of topmost hair pixel including flyaways. "
+    "face_left_x / face_right_x = leftmost / rightmost head boundaries (hair + ears). "
+    "shoulder_top_y = Y of top of shoulders. "
+    "subject_side = 'left' if face center is in the left third, 'right' if in the right "
+    "third, otherwise 'center'. Return JSON only — no prose, no markdown."
+)
+
+
+def detect_subject_bbox(bg_image: Image.Image) -> dict | None:
+    """
+    Use Gemini Vision to detect the subject's head bounding box in the photo.
+    Returns pixel coordinates relative to bg_image, or None on any failure
+    (caller falls back to fixed positions).
+    """
+    api_key = config.GEMINI_API_KEY
+    if not api_key:
+        return None
+    try:
+        buf = BytesIO()
+        bg_image.convert("RGB").save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+        prompt = _BBOX_PROMPT_TMPL.format(w=bg_image.width, h=bg_image.height)
+        url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"gemini-2.5-flash:generateContent?key={api_key}"
+        )
+        payload = {
+            "contents": [{
+                "parts": [
+                    {"text": prompt},
+                    {"inline_data": {"mime_type": "image/png", "data": b64}},
+                ],
+            }],
+            "generationConfig": {"responseMimeType": "application/json", "temperature": 0.0},
+        }
+        resp = requests.post(url, json=payload, timeout=30)
+        if resp.status_code != 200:
+            log.warning("Subject bbox detection: %d %s", resp.status_code, resp.text[:200])
+            return None
+        text_parts = (
+            resp.json().get("candidates", [{}])[0]
+            .get("content", {}).get("parts", [])
+        )
+        raw = "".join(p.get("text", "") for p in text_parts).strip()
+        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw).strip()
+        bbox = json.loads(raw)
+
+        # Sanity check the values
+        h, w = bg_image.height, bg_image.width
+        if not (0 <= bbox.get("hair_top_y", -1) < h):
+            return None
+        if not (0 <= bbox.get("face_left_x", -1) < bbox.get("face_right_x", -1) <= w):
+            return None
+        if bbox.get("subject_side") not in ("left", "right", "center"):
+            bbox["subject_side"] = "center"
+        log.info(
+            "Subject bbox: hair_top=%d face_x=[%d,%d] shoulders=%d side=%s",
+            bbox["hair_top_y"], bbox["face_left_x"], bbox["face_right_x"],
+            bbox.get("shoulder_top_y", -1), bbox["subject_side"],
+        )
+        return bbox
+    except Exception as exc:
+        log.warning("Subject bbox detection failed: %s", exc)
+        return None
+
+
+def _draw_text_in_zone(
+    draw, lines, font, y_top, x_left, x_right, color, line_spacing=10,
+):
+    """
+    Draw text lines left-aligned within a horizontal zone [x_left, x_right].
+    Lines are anchored to x_left (no centering) so they align cleanly along
+    the zone's left edge — matches reference creatives where text sits to
+    one side of the subject.
+    """
+    y = y_top
+    for line in lines:
+        draw.text((x_left, y), line, font=font, fill=color)
+        bbox = draw.textbbox((x_left, y), line, font=font)
+        y += (bbox[3] - bbox[1]) + line_spacing
+    return y
+
+
 def compose_ad(
     bg_image: Image.Image,
     headline: str,
@@ -571,12 +668,12 @@ def compose_ad(
       - White bottom strip: earnings + Outlier wordmark
     """
     size    = AD_SIZE
-    border  = int(size * 0.033)          # ~40px white border on L / R / T
+    border  = int(size * 0.018)          # ~22px white border — reduced to minimise top strip
 
     strip_h = int(size * 0.14) if with_bottom_strip else border
     photo_x = border
     photo_y = border
-    photo_w = size - 2 * border          # 1120px
+    photo_w = size - 2 * border          # ~1156px
     photo_h = size - strip_h - border   # 992px  (top border + bottom strip consumed)
 
     # ── 1. Crop generated image to exact photo aspect ratio, then resize ───────
@@ -618,25 +715,43 @@ def compose_ad(
     canvas = Image.new("RGBA", (size, size), (255, 255, 255, 255))
     canvas.paste(photo_comp, (photo_x, photo_y), photo_comp)
 
-    # ── 6. Text (centered on full canvas width, y relative to photo area) ──────
+    # ── 6. Text — always placed at the TOP, full-width centered. Vertical Y
+    # is dynamically anchored above the detected hairline so the text never
+    # overlaps the subject regardless of where Gemini places them.
     draw       = ImageDraw.Draw(canvas)
     max_text_w = int(photo_w * 0.88)
 
-    hl_size = int(size * 0.085)   # ~102px — matches large bold headline in reference
-    hl_min  = int(size * 0.060)   # floor: still legible at 72px
+    # Detect subject location for vertical positioning only (no horizontal zoning).
+    # Coordinates are relative to bg_resized (photo_w × photo_h). Fallback to a
+    # fixed 30% bottom if vision call fails.
+    bbox = detect_subject_bbox(bg_resized)
+    if bbox:
+        hair_top_canvas_y = photo_y + int(bbox["hair_top_y"])
+        hl_bottom = hair_top_canvas_y - int(size * 0.04)  # 4% gap above hair
+        hl_bottom = max(photo_y + int(size * 0.08), hl_bottom)  # floor
+    else:
+        hl_bottom = int(size * 0.30)
+
+    # Headline font: 72px starting, shrink to fit ≤2 lines in full canvas width.
+    hl_size = int(size * 0.060)
+    hl_min  = int(size * 0.045)
     hl_font  = _load_font(hl_size, bold=True)
     hl_lines = _wrap_text(headline, hl_font, max_text_w)
     while len(hl_lines) > 2 and hl_size > hl_min:
-        hl_size -= int(size * 0.004)
+        hl_size -= int(size * 0.003)
         hl_font  = _load_font(hl_size, bold=True)
         hl_lines = _wrap_text(headline, hl_font, max_text_w)
+
+    LINE_SPACING = 12
+    hl_height    = hl_size * len(hl_lines) + LINE_SPACING * (len(hl_lines) - 1)
+    hl_top       = max(photo_y + int(photo_h * 0.01), hl_bottom - hl_height)
     _draw_text_left(
-        draw, hl_lines, hl_font,
-        photo_y + int(photo_h * 0.06),
+        draw, hl_lines, hl_font, hl_top,
         0, (255, 255, 255, 255),
-        line_spacing=14, canvas_width=size,
+        line_spacing=LINE_SPACING, canvas_width=size,
     )
 
+    # Subheadline — full-width centered, anchored to bottom of photo area
     sh_font  = _load_font(int(size * 0.044))
     sh_lines = _wrap_text(subheadline, sh_font, int(photo_w * 0.82))
     _draw_text_left(
@@ -753,7 +868,8 @@ def generate_imagen_creative(
 
     validate_photo_subject(subject)  # raises ValueError if generic
 
-    prompt, ref_img_b64 = _build_imagen_prompt(subject, angle)
+    tg_label = variant.get("tgLabel", "") if variant else ""
+    prompt, ref_img_b64 = _build_imagen_prompt(subject, angle, tg_label=tg_label)
     if prompt_suffix:
         prompt = prompt + "\n\nADDITIONAL QC FEEDBACK (apply strictly):\n" + prompt_suffix
     if not attach_reference_image:
@@ -807,7 +923,7 @@ def generate_imagen_creative(
     return out_path
 
 
-_QC_MAX_RETRIES_DEFAULT = int(os.getenv("QC_MAX_RETRIES", "9"))
+_QC_MAX_RETRIES_DEFAULT = int(os.getenv("QC_MAX_RETRIES", "4"))
 
 
 def generate_imagen_creative_with_qc(
@@ -894,6 +1010,13 @@ def generate_imagen_creative_with_qc(
     prompt_suffix = initial_prompt_suffix  # seed from caller; QC failures append to it
     attach_ref   = attach_ref_initial
     last_report: dict = {"verdict": "FAIL", "violations": ["not attempted"]}
+    # Capture the base Gemini prompt (first attempt, without QC suffix) for registry storage
+    _base_prompt, _ = _build_imagen_prompt(
+        photo_subject or variant.get("photo_subject", ""),
+        variant.get("angle", "A"),
+        tg_label=variant.get("tgLabel", ""),
+    )
+    last_report["gemini_prompt"] = _base_prompt
     path = Path("/dev/null")
     # Track best-so-far across the loop. If we exhaust the cap without a PASS,
     # we ship the lowest-violation attempt rather than whatever the last one was
@@ -939,6 +1062,7 @@ def generate_imagen_creative_with_qc(
                  attempt + 1, report.verdict, report.retry_target, len(report.violations))
 
         if report.verdict == "PASS":
+            last_report["gemini_prompt"] = _base_prompt
             return path, last_report
 
         # Track best-so-far for cap-exhaust fallback. We deliberately exclude
@@ -1017,4 +1141,5 @@ def generate_imagen_creative_with_qc(
         "Creative still failing QC after %d attempts — returning best-so-far attempt with %d violations (last had %d)",
         max_retries + 1, best_violations, len(last_report.get("violations", [])),
     )
+    best_report["gemini_prompt"] = _base_prompt
     return best_path, best_report

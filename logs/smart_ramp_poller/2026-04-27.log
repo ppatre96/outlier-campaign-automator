@@ -1,0 +1,188 @@
+2026-04-27 12:55:39,258 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-27.log
+2026-04-27 12:55:44,289 WARNING smart_ramp_poller previous poll still running — exiting cleanly
+2026-04-27 12:55:44,294 ERROR smart_ramp_poller Ramp GMR-FAIL pipeline raised
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/smart_ramp_poller.py", line 289, in process_ramp
+    result = run_ramp_pipeline(record, dry_run=dry_run, version=version)
+  File "/Users/pranavpatre/outlier-campaign-agent/tests/test_smart_ramp_poller.py", line 251, in failing_pipeline
+    raise RuntimeError("Redash 5xx")
+RuntimeError: Redash 5xx
+2026-04-27 12:55:44,296 WARNING smart_ramp_poller Ramp GMR-FAIL reached escalation threshold (5 consecutive failures) — escalation_dm_sent flipped to True; Plan 03 notifier will fire.
+2026-04-27 12:55:49,192 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-27.log
+2026-04-27 12:55:54,228 WARNING smart_ramp_poller previous poll still running — exiting cleanly
+2026-04-27 12:55:54,233 ERROR smart_ramp_poller Ramp GMR-FAIL pipeline raised
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/smart_ramp_poller.py", line 289, in process_ramp
+    result = run_ramp_pipeline(record, dry_run=dry_run, version=version)
+  File "/Users/pranavpatre/outlier-campaign-agent/tests/test_smart_ramp_poller.py", line 251, in failing_pipeline
+    raise RuntimeError("Redash 5xx")
+RuntimeError: Redash 5xx
+2026-04-27 12:55:54,235 WARNING smart_ramp_poller Ramp GMR-FAIL reached escalation threshold (5 consecutive failures) — escalation_dm_sent flipped to True; Plan 03 notifier will fire.
+2026-04-27 12:55:54,247 INFO weekly_feedback_loop [DRY-RUN] would post to Slack:
+Weekly Feedback Loop — 2026-04-27
+
+Creative Progress Alerts (v1)
+  • [DRY-RUN] v1 alerts skipped — no Slack post issued
+
+Funnel Drop Diagnosis
+  • No funnel drops flagged this week.
+
+Sentiment Themes (top 0)
+  • No new themes surfaced.
+
+ICP Drift
+  • No active projects configured for drift tracking.
+2026-04-27 12:56:30,403 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-27.log
+2026-04-27 12:56:35,436 WARNING smart_ramp_poller previous poll still running — exiting cleanly
+2026-04-27 12:56:35,443 ERROR smart_ramp_poller Ramp GMR-FAIL pipeline raised
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/smart_ramp_poller.py", line 289, in process_ramp
+    result = run_ramp_pipeline(record, dry_run=dry_run, version=version)
+  File "/Users/pranavpatre/outlier-campaign-agent/tests/test_smart_ramp_poller.py", line 251, in failing_pipeline
+    raise RuntimeError("Redash 5xx")
+RuntimeError: Redash 5xx
+2026-04-27 12:56:35,444 WARNING smart_ramp_poller Ramp GMR-FAIL reached escalation threshold (5 consecutive failures) — escalation_dm_sent flipped to True; Plan 03 notifier will fire.
+2026-04-27 12:58:09,988 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-27.log
+2026-04-27 12:58:15,028 WARNING smart_ramp_poller previous poll still running — exiting cleanly
+2026-04-27 12:58:15,033 ERROR smart_ramp_poller Ramp GMR-FAIL pipeline raised
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/smart_ramp_poller.py", line 289, in process_ramp
+    result = run_ramp_pipeline(record, dry_run=dry_run, version=version)
+  File "/Users/pranavpatre/outlier-campaign-agent/tests/test_smart_ramp_poller.py", line 251, in failing_pipeline
+    raise RuntimeError("Redash 5xx")
+RuntimeError: Redash 5xx
+2026-04-27 12:58:15,036 WARNING smart_ramp_poller Ramp GMR-FAIL reached escalation threshold (5 consecutive failures) — escalation_dm_sent flipped to True; Plan 03 notifier will fire.
+2026-04-27 12:58:15,047 INFO weekly_feedback_loop [DRY-RUN] would post to Slack:
+Weekly Feedback Loop — 2026-04-27
+
+Creative Progress Alerts (v1)
+  • [DRY-RUN] v1 alerts skipped — no Slack post issued
+
+Funnel Drop Diagnosis
+  • No funnel drops flagged this week.
+
+Sentiment Themes (top 0)
+  • No new themes surfaced.
+
+ICP Drift
+  • No active projects configured for drift tracking.
+2026-04-27 13:05:44,706 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-27.log
+2026-04-27 13:05:49,730 WARNING smart_ramp_poller previous poll still running — exiting cleanly
+2026-04-27 13:05:49,735 ERROR smart_ramp_poller Ramp GMR-FAIL pipeline raised
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/smart_ramp_poller.py", line 289, in process_ramp
+    result = run_ramp_pipeline(record, dry_run=dry_run, version=version)
+  File "/Users/pranavpatre/outlier-campaign-agent/tests/test_smart_ramp_poller.py", line 251, in failing_pipeline
+    raise RuntimeError("Redash 5xx")
+RuntimeError: Redash 5xx
+2026-04-27 13:05:49,736 WARNING smart_ramp_poller Ramp GMR-FAIL reached escalation threshold (5 consecutive failures) — escalation_dm_sent flipped to True; Plan 03 notifier will fire.
+2026-04-27 13:05:49,747 INFO weekly_feedback_loop [DRY-RUN] would post to Slack:
+Weekly Feedback Loop — 2026-04-27
+
+Creative Progress Alerts (v1)
+  • [DRY-RUN] v1 alerts skipped — no Slack post issued
+
+Funnel Drop Diagnosis
+  • No funnel drops flagged this week.
+
+Sentiment Themes (top 0)
+  • No new themes surfaced.
+
+ICP Drift
+  • No active projects configured for drift tracking.
+2026-04-27 13:07:25,224 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-27.log
+2026-04-27 13:07:30,257 WARNING smart_ramp_poller previous poll still running — exiting cleanly
+2026-04-27 13:07:30,263 ERROR smart_ramp_poller Ramp GMR-FAIL pipeline raised
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/smart_ramp_poller.py", line 289, in process_ramp
+    result = run_ramp_pipeline(record, dry_run=dry_run, version=version)
+  File "/Users/pranavpatre/outlier-campaign-agent/tests/test_smart_ramp_poller.py", line 251, in failing_pipeline
+    raise RuntimeError("Redash 5xx")
+RuntimeError: Redash 5xx
+2026-04-27 13:07:30,265 WARNING smart_ramp_poller Ramp GMR-FAIL reached escalation threshold (5 consecutive failures) — escalation_dm_sent flipped to True; Plan 03 notifier will fire.
+2026-04-27 13:07:30,278 INFO weekly_feedback_loop [DRY-RUN] would post to Slack:
+Weekly Feedback Loop — 2026-04-27
+
+Creative Progress Alerts (v1)
+  • [DRY-RUN] v1 alerts skipped — no Slack post issued
+
+Funnel Drop Diagnosis
+  • No funnel drops flagged this week.
+
+Sentiment Themes (top 0)
+  • No new themes surfaced.
+
+ICP Drift
+  • No active projects configured for drift tracking.
+2026-04-27 13:11:12,026 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-27.log
+2026-04-27 13:11:17,043 WARNING smart_ramp_poller previous poll still running — exiting cleanly
+2026-04-27 13:11:17,048 ERROR smart_ramp_poller Ramp GMR-FAIL pipeline raised
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/smart_ramp_poller.py", line 289, in process_ramp
+    result = run_ramp_pipeline(record, dry_run=dry_run, version=version)
+  File "/Users/pranavpatre/outlier-campaign-agent/tests/test_smart_ramp_poller.py", line 251, in failing_pipeline
+    raise RuntimeError("Redash 5xx")
+RuntimeError: Redash 5xx
+2026-04-27 13:11:17,050 WARNING smart_ramp_poller Ramp GMR-FAIL reached escalation threshold (5 consecutive failures) — escalation_dm_sent flipped to True; Plan 03 notifier will fire.
+2026-04-27 13:11:17,060 INFO weekly_feedback_loop [DRY-RUN] would post to Slack:
+Weekly Feedback Loop — 2026-04-27
+
+Creative Progress Alerts (v1)
+  • [DRY-RUN] v1 alerts skipped — no Slack post issued
+
+Funnel Drop Diagnosis
+  • No funnel drops flagged this week.
+
+Sentiment Themes (top 0)
+  • No new themes surfaced.
+
+ICP Drift
+  • No active projects configured for drift tracking.
+2026-04-27 13:12:47,391 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-27.log
+2026-04-27 13:12:52,419 WARNING smart_ramp_poller previous poll still running — exiting cleanly
+2026-04-27 13:12:52,423 ERROR smart_ramp_poller Ramp GMR-FAIL pipeline raised
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/smart_ramp_poller.py", line 289, in process_ramp
+    result = run_ramp_pipeline(record, dry_run=dry_run, version=version)
+  File "/Users/pranavpatre/outlier-campaign-agent/tests/test_smart_ramp_poller.py", line 251, in failing_pipeline
+    raise RuntimeError("Redash 5xx")
+RuntimeError: Redash 5xx
+2026-04-27 13:12:52,425 WARNING smart_ramp_poller Ramp GMR-FAIL reached escalation threshold (5 consecutive failures) — escalation_dm_sent flipped to True; Plan 03 notifier will fire.
+2026-04-27 13:12:52,434 INFO weekly_feedback_loop [DRY-RUN] would post to Slack:
+Weekly Feedback Loop — 2026-04-27
+
+Creative Progress Alerts (v1)
+  • [DRY-RUN] v1 alerts skipped — no Slack post issued
+
+Funnel Drop Diagnosis
+  • No funnel drops flagged this week.
+
+Sentiment Themes (top 0)
+  • No new themes surfaced.
+
+ICP Drift
+  • No active projects configured for drift tracking.
+2026-04-27 13:13:21,609 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-27.log
+2026-04-27 13:13:26,643 WARNING smart_ramp_poller previous poll still running — exiting cleanly
+2026-04-27 13:13:26,648 ERROR smart_ramp_poller Ramp GMR-FAIL pipeline raised
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/smart_ramp_poller.py", line 289, in process_ramp
+    result = run_ramp_pipeline(record, dry_run=dry_run, version=version)
+  File "/Users/pranavpatre/outlier-campaign-agent/tests/test_smart_ramp_poller.py", line 251, in failing_pipeline
+    raise RuntimeError("Redash 5xx")
+RuntimeError: Redash 5xx
+2026-04-27 13:13:26,650 WARNING smart_ramp_poller Ramp GMR-FAIL reached escalation threshold (5 consecutive failures) — escalation_dm_sent flipped to True; Plan 03 notifier will fire.
+2026-04-27 13:13:26,662 INFO weekly_feedback_loop [DRY-RUN] would post to Slack:
+Weekly Feedback Loop — 2026-04-27
+
+Creative Progress Alerts (v1)
+  • [DRY-RUN] v1 alerts skipped — no Slack post issued
+
+Funnel Drop Diagnosis
+  • No funnel drops flagged this week.
+
+Sentiment Themes (top 0)
+  • No new themes surfaced.
+
+ICP Drift
+  • No active projects configured for drift tracking.

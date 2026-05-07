@@ -124,6 +124,15 @@ class LinkedInClient:
         self._session.headers.update({"Authorization": f"Bearer {new_token}"})
         return self._session.request(method, url, **kwargs)
 
+    def _default_headers(self) -> dict:
+        """Return a copy of the default request headers for one-off calls that bypass _session."""
+        return {
+            "Authorization":             f"Bearer {self._token}",
+            "LinkedIn-Version":          config.LINKEDIN_VERSION,
+            "X-Restli-Protocol-Version": "2.0.0",
+            "Content-Type":              "application/json",
+        }
+
     def _req(self, method: str, url: str, **kwargs) -> requests.Response:
         """Make a request; auto-refresh and retry once on 401."""
         resp = self._session.request(method, url, **kwargs)
@@ -192,8 +201,16 @@ class LinkedInClient:
             "status":   "DRAFT",
             "runSchedule": {"start": _now_ms()},
         }
-        resp = self._req("POST", self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/adCampaignGroups"), json=payload)
-        self._raise_for_status(resp, "createCampaignGroup")
+        for attempt in range(3):
+            try:
+                resp = self._req("POST", self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/adCampaignGroups"), json=payload)
+                self._raise_for_status(resp, "createCampaignGroup")
+                break
+            except Exception as exc:
+                if attempt == 2:
+                    raise
+                log.warning("createCampaignGroup attempt %d failed (%s) — retrying", attempt + 1, exc)
+                import time; time.sleep(3)
         group_id = resp.headers.get("x-linkedin-id") or _id_from_location(resp)
         urn = f"urn:li:sponsoredCampaignGroup:{group_id}"
         log.info("Created campaign group %s (name=%s)", urn, name)
@@ -230,6 +247,58 @@ class LinkedInClient:
         )
         self._raise_for_status(resp, "renameCampaign")
         log.info("Renamed campaign %s → %s", campaign_id, new_name)
+
+    def get_campaign(self, campaign_urn_or_id: str) -> dict:
+        """Fetch full campaign JSON from LinkedIn API (includes targetingCriteria)."""
+        campaign_id = str(campaign_urn_or_id).rsplit(":", 1)[-1]
+        resp = self._req(
+            "GET",
+            self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/adCampaigns/{campaign_id}"),
+        )
+        self._raise_for_status(resp, "getCampaign")
+        return resp.json()
+
+    def clone_campaign(self, source_urn: str, new_name: str) -> str:
+        """
+        Create a new DRAFT campaign by cloning the targeting criteria from an
+        existing campaign. The new campaign is placed in the same campaign group.
+        Returns new campaign URN.
+        """
+        source = self.get_campaign(source_urn)
+        targeting    = source.get("targetingCriteria") or {}
+        group_urn    = source.get("campaignGroup") or ""
+        daily_budget = source.get("dailyBudget") or {"currencyCode": "USD", "amount": "50.00"}
+        unit_cost    = source.get("unitCost")    or {"currencyCode": "USD", "amount": "10.00"}
+        locale       = source.get("locale")      or {"country": "US", "language": "en"}
+        obj_type     = source.get("objectiveType") or "WEBSITE_VISIT"
+
+        name = self._prefixed(new_name)
+        payload = {
+            "account":                f"urn:li:sponsoredAccount:{config.LINKEDIN_AD_ACCOUNT_ID}",
+            "campaignGroup":          group_urn,
+            "name":                   name,
+            "type":                   "SPONSORED_UPDATES",
+            "costType":               "CPM",
+            "dailyBudget":            daily_budget,
+            "unitCost":               unit_cost,
+            "targetingCriteria":      targeting,
+            "status":                 "DRAFT",
+            "locale":                 locale,
+            "objectiveType":          obj_type,
+            "offsiteDeliveryEnabled": False,
+            "politicalIntent":        "NOT_POLITICAL",
+            "runSchedule":            {"start": _now_ms()},
+        }
+        resp = self._req(
+            "POST",
+            self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/adCampaigns"),
+            json=payload,
+        )
+        self._raise_for_status(resp, "cloneCampaign")
+        campaign_id = resp.headers.get("x-linkedin-id") or _id_from_location(resp)
+        urn = f"urn:li:sponsoredCampaign:{campaign_id}"
+        log.info("Cloned campaign %s → %s '%s'", source_urn, urn, name)
+        return urn
 
     # ── Campaign ───────────────────────────────────────────────────────────────
 
@@ -351,7 +420,7 @@ class LinkedInClient:
         }
         resp = self._req("POST", self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/adCampaigns"), json=payload)
         self._raise_for_status(resp, "createInMailCampaign")
-        campaign_id = resp.headers.get("x-linkedin-id") or _id_from_location(resp)
+        campaign_id = resp.headers.get("x-restli-id") or resp.headers.get("x-linkedin-id") or _id_from_location(resp)
         urn = f"urn:li:sponsoredCampaign:{campaign_id}"
         log.info("Created InMail campaign %s '%s'", urn, name)
         return urn
@@ -369,45 +438,48 @@ class LinkedInClient:
     ) -> str:
         """
         Create a LinkedIn Message Ad creative and attach it to a campaign.
-        Two-step: (1) create adInMailContent, (2) create creative referencing it.
+        Two-step: (1) create inMailContent via REST API, (2) create creative referencing it.
+        Uses /rest/inMailContents (no MDP needed) with LinkedIn-Version: 202506 header.
         sender_urn: urn:li:person:... (must be connected to the ad account).
         Returns the sponsoredCreative URN.
         """
         dest = destination_url or config.LINKEDIN_DESTINATION
 
-        # Step 1 — create the InMail content object
-        # adInMailContents requires an older API version (202502)
+        # Step 1 — create the InMail content object via REST API (no MDP required)
         content_payload = {
-            "account":   f"urn:li:sponsoredAccount:{config.LINKEDIN_AD_ACCOUNT_ID}",
-            "adSenders": [{"sender": sender_urn}],
-            "subject":   subject[:60],
-            "body":      body[:1000],
-            "callToAction": {
-                "text":          cta_label[:20],
-                "landingPageUrl": dest,
-            },
+            "account": f"urn:li:sponsoredAccount:{config.LINKEDIN_AD_ACCOUNT_ID}",
+            "name": f"inmail_{int(__import__('time').time())}",
+            "sender": sender_urn,
+            "htmlBody": body[:1000],
+            "subject": subject[:60],
+            "subContent": {
+                "regular": {
+                    "callToActionText": cta_label[:20],
+                    "callToActionLandingPageUrl": dest,
+                }
+            }
         }
-        content_headers = {
-            "Authorization": f"Bearer {self._token}",
-            "X-Restli-Protocol-Version": "2.0.0",
-            "Content-Type": "application/json",
-        }
+        content_headers = self._default_headers()
+        content_headers["LinkedIn-Version"] = "202506"
+
         import requests as _req_lib
-        resp = _req_lib.post("https://api.linkedin.com/v2/adInMailContents", json=content_payload, headers=content_headers)
+        resp = _req_lib.post("https://api.linkedin.com/rest/inMailContents", json=content_payload, headers=content_headers)
         self._raise_for_status(resp, "createInMailContent")
-        content_id  = resp.headers.get("x-linkedin-id") or _id_from_location(resp)
+        content_id  = resp.headers.get("x-restli-id") or _id_from_location(resp)
         content_urn = f"urn:li:adInMailContent:{content_id}"
-        log.info("Created InMail content %s", content_urn)
+        log.info("Created InMail content %s (no MDP required)", content_urn)
 
         # Step 2 — create the creative referencing the content
         creative_payload = {
             "campaign": campaign_urn,
-            "content":  {"reference": content_urn},
-            "status":   "ACTIVE",
+            "content": {"reference": content_urn},
+            "intendedStatus": "DRAFT",
         }
-        resp = self._req("POST", self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/creatives"), json=creative_payload)
+        creative_headers = self._default_headers()
+        creative_headers["LinkedIn-Version"] = "202506"
+        resp = self._req("POST", f"https://api.linkedin.com/rest/adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/creatives", json=creative_payload, headers=creative_headers)
         self._raise_for_status(resp, "createInMailCreative")
-        creative_id = resp.headers.get("x-linkedin-id") or _id_from_location(resp)
+        creative_id = resp.headers.get("x-restli-id") or _id_from_location(resp)
         urn = f"urn:li:sponsoredCreative:{creative_id}"
         log.info("Created InMail creative %s", urn)
         return urn
@@ -649,14 +721,17 @@ def _build_targeting_criteria(
     out: dict = {"include": {"and": include}}
 
     if exclude_facet_urns:
-        exclude_or = []
+        # LinkedIn exclude.or must be a dict (DataMap) not a list:
+        #   {"exclude": {"or": {"urn:li:adTargetingFacet:titles": ["urn:li:title:1"]}}}
+        # All excluded facets are merged into one DataMap object (OR semantics across all keys).
+        exclude_map: dict[str, list[str]] = {}
         for facet, urns in exclude_facet_urns.items():
             if not urns:
                 continue
             full_key = _FACET_SHORT_TO_URN.get(facet, facet)
-            exclude_or.append({"or": {full_key: urns}})
-        if exclude_or:
-            out["exclude"] = {"or": exclude_or}
+            exclude_map[full_key] = urns
+        if exclude_map:
+            out["exclude"] = {"or": exclude_map}
 
     return out
 

@@ -1,0 +1,171 @@
+{
+  "project_id": "698a172324c01532c2f92a0d",
+  "flow_id": "69a7a186d91acccdf955b912",
+  "config_name": "Experts Health EKG",
+  "cohort_name": "job_titles_norm__medical_doctor + fields_of_study__medicine",
+  "tg_label": null,
+  "pass_rate": 100.0,
+  "lift_pp": 17.156862745098035,
+  "rows_screened": null,
+  "rows_passed": null,
+  "stage_used": "A",
+  "target_tier": "T1",
+  "target_col": "_is_pass",
+  "icp_count": 338,
+  "analysis_mode": "stats",
+  "icp_exemplars": [
+    {
+      "cb_id": "69aa433c1aa33361d8cad7b0",
+      "tier": "T1",
+      "top_qualifying_signals": [
+        "Passed the resume screening for this project",
+        "29+ years professional experience",
+        "Bachelors"
+      ],
+      "top_skills": [],
+      "resume_job_title": null,
+      "resume_job_company": null,
+      "resume_degree": null,
+      "resume_field": null,
+      "linkedin_url": null,
+      "linkedin_education": null,
+      "linkedin_certifications": null
+    },
+    {
+      "cb_id": "69b9742054fb60690344316e",
+      "tier": "T1",
+      "top_qualifying_signals": [
+        "Passed the resume screening for this project",
+        "Other",
+        "Accreditations: american board of internal medicine (abim) certification; diplomate of the ameri"
+      ],
+      "top_skills": [],
+      "resume_job_title": null,
+      "resume_job_company": null,
+      "resume_degree": null,
+      "resume_field": null,
+      "linkedin_url": null,
+      "linkedin_education": null,
+      "linkedin_certifications": null
+    },
+    {
+      "cb_id": "69b99e27603031c5707c7bb5",
+      "tier": "T1",
+      "top_qualifying_signals": [
+        "Passed the resume screening for this project",
+        "15+ years professional experience",
+        "Other"
+      ],
+      "top_skills": [],
+      "resume_job_title": null,
+      "resume_job_company": null,
+      "resume_degree": null,
+      "resume_field": null,
+      "linkedin_url": null,
+      "linkedin_education": null,
+      "linkedin_certifications": null
+    },
+    {
+      "cb_id": "69b99d84d1c2f620394c46df",
+      "tier": "T1",
+      "top_qualifying_signals": [
+        "Passed the resume screening for this project",
+        "8 years professional experience",
+        "Other"
+      ],
+      "top_skills": [],
+      "resume_job_title": null,
+      "resume_job_company": null,
+      "resume_degree": null,
+      "resume_field": null,
+      "linkedin_url": null,
+      "linkedin_education": null,
+      "linkedin_certifications": null
+    },
+    {
+      "cb_id": "69b98b99c74da831f55240ce",
+      "tier": "T1",
+      "top_qualifying_signals": [
+        "Passed the resume screening for this project",
+        "8 years professional experience",
+        "Masters"
+      ],
+      "top_skills": [],
+      "resume_job_title": null,
+      "resume_job_company": null,
+      "resume_degree": null,
+      "resume_field": null,
+      "linkedin_url": null,
+      "linkedin_education": null,
+      "linkedin_certifications": null
+    }
+  ],
+  "strong_signals": [],
+  "variants": [
+    {
+      "angle": "A",
+      "angleLabel": "Expertise Hook",
+      "headline": "AI needs clinical judgment.",
+      "subheadline": "Your diagnostic eye has real value.",
+      "intro_text": "Between clinical cases, your medical reasoning is exactly what AI models lack. Outlier pays doctors to fix that.",
+      "ad_headline": "Medical doctors are reviewing AI outputs \u2014 from home, on their time.",
+      "ad_description": "Rate, improve, and challenge AI in medicine. No extra certifications needed.",
+      "cta_button": "APPLY",
+      "photo_subject": "female South Asian medical doctor, reviewing patient case notes on a laptop at a home desk",
+      "layerUpdates": {}
+    },
+    {
+      "angle": "B",
+      "angleLabel": "Earnings Hook",
+      "headline": "Doctors are getting paid for this.",
+      "subheadline": "AI training tasks, done between shifts.",
+      "intro_text": "Hundreds of medical doctors have been paid by Outlier to review and improve AI outputs. Your peers are already in.",
+      "ad_headline": "MDs across the world earn payment doing flexible AI tasks remotely.",
+      "ad_description": "No commute. No clinic politics. Contribute from wherever you are.",
+      "cta_button": "APPLY",
+      "photo_subject": "male Middle Eastern medical doctor, reading medical literature on a laptop at a home kitchen table",
+      "layerUpdates": {}
+    },
+    {
+      "angle": "C",
+      "angleLabel": "Flexibility Hook",
+      "headline": "Clinical shifts don't own your income.",
+      "subheadline": "Contribute to AI projects on your hours.",
+      "intro_text": "On-call rotas control your days. Your medical expertise can still earn outside them \u2014 no fixed hours, no clinic approval needed.",
+      "ad_headline": "Flexible AI tasks built around a doctor's irregular hours.",
+      "ad_description": "Pick up tasks between shifts. Payment for real medical expertise.",
+      "cta_button": "APPLY",
+      "photo_subject": "female Black medical doctor, relaxing with a laptop on a home sofa reviewing a document",
+      "layerUpdates": {}
+    }
+  ],
+  "creative_paths": {},
+  "qc_reports": {
+    "B": {
+      "verdict": "FAIL",
+      "attempts": 1,
+      "violations": [
+        "No gradient bleed at photo edges (pixel): Edge gradient bleed: left edge 17% colored (>10%)"
+      ],
+      "retry_target": "gemini"
+    }
+  },
+  "campaign_group_urn": "urn:li:sponsoredCampaignGroup:944307756",
+  "campaign_group_name": "agent_Outlier 69a7a186d91acccdf955b912",
+  "campaign_urn": "urn:li:sponsoredCampaign:655119866",
+  "campaign_name": "agent_69a7a186d91acccdf955b912 | Job Titles Norm Medical Doctor + Fields",
+  "creative_urns": {
+    "A": null,
+    "B": null,
+    "C": null
+  },
+  "run_started_at": "2026-05-06 02:11",
+  "blockers": [
+    "Creative attachment (MDP): DSC post creation returns 403 \u2014 LinkedIn app needs Marketing Developer Platform approval.",
+    "Google Drive upload: GDRIVE_ENABLED=false \u2014 creatives saved locally only."
+  ],
+  "next_steps": [
+    "Review DRAFT campaign in Campaign Manager \u2192 https://www.linkedin.com/campaignmanager/accounts/510956407/campaigns/655119866",
+    "Enable GDRIVE_ENABLED=true + add service account to Shared Drive to archive creatives."
+  ]
+}

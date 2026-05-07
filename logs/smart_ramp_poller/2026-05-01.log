@@ -1,0 +1,14 @@
+2026-05-01 08:02:13,948 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-05-01.log
+2026-05-01 08:02:15,538 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-05-01 08:17:19,683 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-05-01.log
+2026-05-01 08:17:21,226 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-05-01 08:32:24,696 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-05-01.log
+2026-05-01 08:32:26,380 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-05-01 08:47:29,437 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-05-01.log
+2026-05-01 08:47:30,919 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-05-01 09:02:39,316 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-05-01.log
+2026-05-01 09:02:40,719 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-05-01 09:17:41,220 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-05-01.log
+2026-05-01 09:17:42,353 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-05-01 18:21:48,952 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-05-01.log
+2026-05-01 18:21:56,148 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted

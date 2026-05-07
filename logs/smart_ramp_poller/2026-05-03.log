@@ -1,0 +1,4 @@
+2026-05-03 10:27:21,443 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-05-03.log
+2026-05-03 11:33:39,385 INFO smart_ramp_poller Fetched 0 ramps; 0 submitted
+2026-05-04 03:25:57,675 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-05-03.log
+2026-05-04 03:26:01,037 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted

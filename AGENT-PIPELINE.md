@@ -55,11 +55,18 @@ Two processes run independently and intersect at Stage 8b:
 │  │                     cta, photo_subject}                    │ │
 │  │                                                            │ │
 │  │  Stage 8d: outlier-creative-generator                     │ │
-│  │            Input:  variants from 8c + brief from 8b       │ │
-│  │            Output: Gemini imagen prompt per variant        │ │
+│  │            Input:  variants[] from 8c, brief from 8b       │ │
+│  │                    Builds Gemini imagen prompt using       │ │
+│  │                    GEMINI_PROMPT_TEMPLATE                  │ │
+│  │                    (src/gemini_creative.py)            │ │
+│  │            Output: refined imagen_prompt per variant       │ │
+│  │                    (varies gender, ethnicity, props,       │ │
+│  │                     expression per A/B/C)                  │ │
+│  │            Fallback: in cron/script mode (no Claude Code), │ │
+│  │                    _build_imagen_prompt() used directly    │ │
 │  │                                                            │ │
 │  │  Stage 8e: campaign-manager (Python)                      │ │
-│  │            generate_midjourney_creative() per variant      │ │
+│  │            Calls _generate_imagen(imagen_prompt)          │ │
 │  │            Output: PNG × 3 → data/dry_run_outputs/        │ │
 │  │                                                            │ │
 │  │  Stage 8f: campaign-manager (Python, gated)               │ │
@@ -165,8 +172,12 @@ Maintains the full run context object:
 - Enforces: Outlier vocabulary (payment not compensation, task not job, etc.)
 
 ### outlier-creative-generator
-- Input: `variants[]` from Stage 8c + `brief` from Stage 8b (for visual direction)
-- Output: refined Gemini `imagen_prompt` per variant (gender, ethnicity, props, expression varied per A/B/C)
+- Input: `variants[]` from Stage 8c + `brief` from Stage 8b (for visual direction, photo_subject, angle_mood)
+- Output: refined Gemini `imagen_prompt` per variant — strings ready for `_generate_imagen()` call
+  - Uses `GEMINI_PROMPT_TEMPLATE` constant (src/gemini_creative.py) as canonical structure
+  - Varies gender, ethnicity, props, expression per A/B/C angle
+  - Ensures composition constraints embedded ("25% clear space ABOVE head", "EMPTY SPACE on sides", etc.)
+- **Fallback** (cron/script mode): `_build_imagen_prompt()` generates prompt inline when agent is not spawned
 
 ---
 

@@ -1,0 +1,901 @@
+2026-04-29 05:37:49,721 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 05:37:51,029 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 05:52:51,362 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 05:52:53,102 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 06:07:53,500 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 06:07:54,763 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 06:22:55,109 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 06:22:56,277 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 06:37:56,602 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 06:37:57,902 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 06:52:58,180 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 06:52:59,337 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 07:07:59,709 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 07:08:00,857 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 07:23:01,210 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 07:23:02,341 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 09:32:34,166 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 09:32:39,175 WARNING smart_ramp_poller previous poll still running — exiting cleanly
+2026-04-29 09:32:39,185 ERROR smart_ramp_poller Ramp GMR-FAIL pipeline raised
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/smart_ramp_poller.py", line 276, in process_ramp
+    result = run_ramp_pipeline(record, dry_run=dry_run, version=version)
+  File "/Users/pranavpatre/outlier-campaign-agent/tests/test_smart_ramp_poller.py", line 251, in failing_pipeline
+    raise RuntimeError("Redash 5xx")
+RuntimeError: Redash 5xx
+2026-04-29 09:32:39,187 WARNING smart_ramp_poller Ramp GMR-FAIL reached escalation threshold (5 consecutive failures) — escalation_dm_sent flipped to True; notifier will fire.
+2026-04-29 09:32:39,199 INFO weekly_feedback_loop [DRY-RUN] would post to Slack:
+Weekly Feedback Loop — 2026-04-29
+
+Creative Progress Alerts (v1)
+  • [DRY-RUN] v1 alerts skipped — no Slack post issued
+
+Funnel Drop Diagnosis
+  • No funnel drops flagged this week.
+
+Sentiment Themes (top 0)
+  • No new themes surfaced.
+
+ICP Drift
+  • No active projects configured for drift tracking.
+2026-04-29 09:35:26,424 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 09:35:27,373 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 09:50:27,673 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 09:50:29,622 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 09:56:14,066 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 09:56:19,103 WARNING smart_ramp_poller previous poll still running — exiting cleanly
+2026-04-29 09:56:19,108 ERROR smart_ramp_poller Ramp GMR-FAIL pipeline raised
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/smart_ramp_poller.py", line 276, in process_ramp
+    result = run_ramp_pipeline(record, dry_run=dry_run, version=version)
+  File "/Users/pranavpatre/outlier-campaign-agent/tests/test_smart_ramp_poller.py", line 251, in failing_pipeline
+    raise RuntimeError("Redash 5xx")
+RuntimeError: Redash 5xx
+2026-04-29 09:56:19,109 WARNING smart_ramp_poller Ramp GMR-FAIL reached escalation threshold (5 consecutive failures) — escalation_dm_sent flipped to True; notifier will fire.
+2026-04-29 09:56:19,199 INFO weekly_feedback_loop [DRY-RUN] would post to Slack:
+Weekly Feedback Loop — 2026-04-29
+
+Creative Progress Alerts (v1)
+  • [DRY-RUN] v1 alerts skipped — no Slack post issued
+
+Funnel Drop Diagnosis
+  • No funnel drops flagged this week.
+
+Sentiment Themes (top 0)
+  • No new themes surfaced.
+
+ICP Drift
+  • No active projects configured for drift tracking.
+2026-04-29 10:05:30,174 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 10:05:32,204 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 10:20:32,619 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 10:20:33,811 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 10:35:34,203 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 10:35:35,354 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 10:50:35,727 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 10:50:36,859 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 11:05:37,230 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 11:05:38,428 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 11:09:27,124 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=GMR-0005 dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 11:09:29,871 INFO smart_ramp_poller Running pipeline for ramp=GMR-0005 version=1 dry_run=True
+2026-04-29 11:09:35,386 INFO src.redash_db RedashClient ready → https://redash.scale.com (data_source_id=30)
+2026-04-29 11:09:35,389 INFO src.redash_db Resolving project_id=699768af59d27cc33ff9f3c1 to signup_flow_id + config_name
+2026-04-29 11:09:38,037 INFO src.redash_db Resolved project → signup_flow_id=699cb29c3defc15797e4590a config='[Experts] Singapore Law' (passes=16)
+2026-04-29 11:09:38,037 INFO src.redash_db Fetching screenings via Redash for flow=699cb29c3defc15797e4590a config=[Experts] Singapore Law
+2026-04-29 11:10:04,425 INFO src.redash_db Fetched 152 screening rows
+2026-04-29 11:10:04,427 INFO main _resolve_cohorts: raw data 152 rows
+2026-04-29 11:10:04,449 INFO main _resolve_cohorts: 105 binary features
+2026-04-29 11:10:04,450 WARNING main _resolve_cohorts: meta fetch failed (non-fatal): 'RedashClient' object has no attribute 'fetch_job_post_meta'
+2026-04-29 11:10:04,451 INFO src.icp_from_jobpost Base-role candidates from [job_name=None, domain=None, flow_name='SPRL - Singapore Legal Benchmark', proj_name=None, worker_skills=[]]: []
+2026-04-29 11:10:04,452 INFO src.analysis Tier T1 (_is_pass): 105 positives
+2026-04-29 11:10:04,452 INFO src.analysis Tier fallback: stronger tiers were thin — dropped down to T1 (105 ≥ 30). Cohort analysis will target this tier's positive class.
+2026-04-29 11:10:04,452 INFO main _resolve_cohorts: target tier=T1 col=_is_pass n_icp=105
+2026-04-29 11:10:04,452 INFO src.analysis stage_a_negative: only 47 non-activators (< 100 threshold) — skipping data-driven exclusions. The negative class is too thin to trust.
+2026-04-29 11:10:04,452 INFO src.analysis stage_a dispatch → lift mode (T1 / resume-pass target: '_is_pass' — lift is the correct framing for pass-vs-fail)
+2026-04-29 11:10:04,453 INFO src.analysis Stage A target: T1 (resume-pass)
+2026-04-29 11:10:04,453 INFO src.analysis Global baseline: 69.1% (105/152)
+2026-04-29 11:10:04,468 INFO src.analysis Univariates: 5 accepted / 105 tested
+2026-04-29 11:10:04,484 INFO src.stage_c Stage C: validating 12 cohorts against LinkedIn Audience Counts
+2026-04-29 11:10:07,059 INFO src.linkedin_urn Loaded 41943 URNs from tab 'Skills'
+2026-04-29 11:10:07,878 INFO src.linkedin_urn Loaded 1406 URNs from tab 'Degrees'
+2026-04-29 11:10:07,884 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-29 11:10:08,739 INFO src.linkedin_urn Loaded 2171 URNs from tab 'FieldsOfStudy'
+2026-04-29 11:10:08,744 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-29 11:10:08,776 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-29 11:10:08,790 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-29 11:10:08,793 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-29 11:10:08,796 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-29 11:10:08,799 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-29 11:10:08,802 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-29 11:10:08,805 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-29 11:10:08,808 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-29 11:10:08,811 WARNING src.linkedin_urn Could not resolve URN for degrees='Bachelors'
+2026-04-29 11:10:08,811 INFO src.stage_c Stage C: 12 cohorts have resolvable URNs
+2026-04-29 11:10:10,098 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-29 11:10:10,098 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-29 11:10:10,099 WARNING src.stage_c Audience count failed for 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-29 11:10:10,413 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-29 11:10:10,413 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%29%29%29
+2026-04-29 11:10:10,413 WARNING src.stage_c Audience count failed for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%29%29%29 — skipping
+2026-04-29 11:10:10,733 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-29 11:10:10,733 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-29 11:10:10,733 WARNING src.stage_c Audience count failed for 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-29 11:10:11,050 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-29 11:10:11,050 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%29%29%29
+2026-04-29 11:10:11,051 WARNING src.stage_c Audience count failed for 'skills__compliance + highest_degree_level__Bachelors': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A2800%29%29%29%29%29%29 — skipping
+2026-04-29 11:10:11,560 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-29 11:10:11,560 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%29%29%29
+2026-04-29 11:10:11,560 WARNING src.stage_c Audience count failed for 'fields_of_study__law + highest_degree_level__Bachelors + skills__litigation': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%29%29%29 — skipping
+2026-04-29 11:10:11,874 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-29 11:10:11,874 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-29 11:10:11,874 WARNING src.stage_c Audience count failed for 'skills__litigation + fields_of_study__law + highest_degree_level__Bachelors': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-29 11:10:12,191 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-29 11:10:12,191 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-29 11:10:12,191 WARNING src.stage_c Audience count failed for 'skills__litigation + highest_degree_level__Bachelors + fields_of_study__law': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-29 11:10:12,522 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-29 11:10:12,523 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-29 11:10:12,523 WARNING src.stage_c Audience count failed for 'fields_of_study__law + highest_degree_level__Bachelors': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-29 11:10:12,842 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-29 11:10:12,842 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-29 11:10:12,843 WARNING src.stage_c Audience count failed for 'skills__litigation + fields_of_study__law': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A431%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-29 11:10:13,156 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-29 11:10:13,156 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A256%29%29%29%29%29%29
+2026-04-29 11:10:13,156 WARNING src.stage_c Audience count failed for 'fields_of_study__law + highest_degree_level__Bachelors + skills__negotiation': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A256%29%29%29%29%29%29 — skipping
+2026-04-29 11:10:13,488 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-29 11:10:13,489 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A256%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29
+2026-04-29 11:10:13,489 WARNING src.stage_c Audience count failed for 'skills__negotiation + highest_degree_level__Bachelors + fields_of_study__law': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A256%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%29%29%29 — skipping
+2026-04-29 11:10:13,823 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-29 11:10:13,823 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A256%29%29%29%29%29%29
+2026-04-29 11:10:13,823 WARNING src.stage_c Audience count failed for 'fields_of_study__law + skills__negotiation + highest_degree_level__Bachelors': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3AfieldsOfStudy%3AList%28urn%3Ali%3AfieldOfStudy%3A100564%29%29%29%2C%28or%3A%28urn%3Ali%3AadTargetingFacet%3Askills%3AList%28urn%3Ali%3Askill%3A256%29%29%29%29%29%29 — skipping
+2026-04-29 11:10:13,823 INFO src.stage_c Stage C: 0 cohorts pass audience threshold
+2026-04-29 11:10:13,823 INFO src.stage_c Stage C complete: 0/5 cohorts selected
+2026-04-29 11:10:13,824 INFO main _resolve_cohorts: 5 cohorts selected
+2026-04-29 11:10:13,828 INFO main [dry-run] InMail cohort 0 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law' tg=GENERAL angle=A
+2026-04-29 11:10:23,707 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:10:23,718 INFO src.inmail_copy_writer InMail angle F generated for 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-29 11:10:31,615 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:10:31,617 INFO src.inmail_copy_writer InMail angle A generated for 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-29 11:10:42,139 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:10:42,141 INFO src.inmail_copy_writer InMail angle B generated for 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-29 11:10:57,047 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:10:57,048 INFO src.inmail_copy_writer InMail angle C generated for 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-29 11:10:57,048 INFO main [dry-run] Subject: Law Skills + AI = Flexible $50/hr (54 chars)
+2026-04-29 11:10:57,048 INFO main [dry-run] Body (first 100): Outlier pays $50/hr to domain experts who help improve AI models — and your legal background is dire…
+2026-04-29 11:10:57,048 INFO main [dry-run] CTA: View Opportunities
+2026-04-29 11:10:57,055 WARNING main InMail angle A: 1 brand voice violations
+2026-04-29 11:10:57,055 WARNING main   Must fix: 1
+2026-04-29 11:10:57,055 WARNING main   Should fix: 0
+2026-04-29 11:10:57,055 ERROR main InMail angle A has MUST-FIX violations
+2026-04-29 11:10:57,055 ERROR main     Active Voice Only: 'is issued' → Convert to active voice: use a strong verb instead
+2026-04-29 11:10:57,055 INFO main [dry-run] InMail cohort 1 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance' tg=GENERAL angle=B
+2026-04-29 11:11:07,256 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:11:07,258 INFO src.inmail_copy_writer InMail angle F generated for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance'
+2026-04-29 11:11:16,626 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:11:16,629 INFO src.inmail_copy_writer InMail angle A generated for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance'
+2026-04-29 11:11:29,163 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:11:29,164 INFO src.inmail_copy_writer InMail angle B generated for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance'
+2026-04-29 11:11:38,405 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:11:38,407 INFO src.inmail_copy_writer InMail angle C generated for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance'
+2026-04-29 11:11:38,408 INFO main [dry-run] Subject: Your legal eye is worth $50/hr to AI teams
+2026-04-29 11:11:38,408 INFO main [dry-run] Body (first 100): Your background in law and compliance puts you in a rare category — one where nuanced judgment genui…
+2026-04-29 11:11:38,408 INFO main [dry-run] CTA: View Open Tasks
+2026-04-29 11:11:38,411 INFO main InMail angle B passes brand voice check (confidence: 90%)
+2026-04-29 11:11:38,412 INFO main [dry-run] InMail cohort 2 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors' tg=GENERAL angle=C
+2026-04-29 11:11:47,903 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:11:47,905 INFO src.inmail_copy_writer InMail angle F generated for 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors'
+2026-04-29 11:11:59,981 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:11:59,999 INFO src.inmail_copy_writer InMail angle A generated for 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors'
+2026-04-29 11:12:16,081 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:12:16,088 INFO src.inmail_copy_writer InMail angle B generated for 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors'
+2026-04-29 11:12:24,238 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:12:24,238 INFO src.inmail_copy_writer InMail angle C generated for 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors'
+2026-04-29 11:12:24,238 INFO main [dry-run] Subject: 1,000+ compliance pros earn $50/hr on Outlier
+2026-04-29 11:12:24,238 INFO main [dry-run] Body (first 100): Over a thousand professionals with compliance and legal backgrounds are already earning $50/hr contr…
+2026-04-29 11:12:24,238 INFO main [dry-run] CTA: Start Contributing
+2026-04-29 11:12:24,239 WARNING main InMail angle C: 1 brand voice violations
+2026-04-29 11:12:24,239 WARNING main   Must fix: 1
+2026-04-29 11:12:24,239 WARNING main   Should fix: 0
+2026-04-29 11:12:24,239 ERROR main InMail angle C has MUST-FIX violations
+2026-04-29 11:12:24,239 ERROR main     Active Voice Only: 'is issued' → Convert to active voice: use a strong verb instead
+2026-04-29 11:12:24,240 INFO main [dry-run] InMail cohort 3 'skills__compliance + highest_degree_level__Bachelors' tg=GENERAL angle=A
+2026-04-29 11:12:33,897 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:12:33,898 INFO src.inmail_copy_writer InMail angle F generated for 'skills__compliance + highest_degree_level__Bachelors'
+2026-04-29 11:12:43,149 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:12:43,150 INFO src.inmail_copy_writer InMail angle A generated for 'skills__compliance + highest_degree_level__Bachelors'
+2026-04-29 11:12:51,635 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:12:51,638 INFO src.inmail_copy_writer InMail angle B generated for 'skills__compliance + highest_degree_level__Bachelors'
+2026-04-29 11:13:06,085 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:13:06,087 INFO src.inmail_copy_writer InMail angle C generated for 'skills__compliance + highest_degree_level__Bachelors'
+2026-04-29 11:13:06,088 INFO main [dry-run] Subject: Compliance Skills + AI = Flexible $50/hr
+2026-04-29 11:13:06,088 INFO main [dry-run] Body (first 100): $50/hr is what Outlier pays contributors who use their compliance expertise to help improve AI model…
+2026-04-29 11:13:06,088 INFO main [dry-run] CTA: See Open Tasks
+2026-04-29 11:13:06,091 WARNING main InMail angle A: 2 brand voice violations
+2026-04-29 11:13:06,091 WARNING main   Must fix: 1
+2026-04-29 11:13:06,091 WARNING main   Should fix: 1
+2026-04-29 11:13:06,091 ERROR main InMail angle A has MUST-FIX violations
+2026-04-29 11:13:06,091 ERROR main     Active Voice Only: 'is issued' → Convert to active voice: use a strong verb instead
+2026-04-29 11:13:06,091 INFO main [dry-run] InMail cohort 4 'fields_of_study__law + highest_degree_level__Bachelors + skills__litigation' tg=GENERAL angle=B
+2026-04-29 11:13:19,772 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:13:19,774 INFO src.inmail_copy_writer InMail angle F generated for 'fields_of_study__law + highest_degree_level__Bachelors + skills__litigation'
+2026-04-29 11:13:27,519 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:13:27,520 INFO src.inmail_copy_writer InMail angle A generated for 'fields_of_study__law + highest_degree_level__Bachelors + skills__litigation'
+2026-04-29 11:13:35,972 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:13:35,974 INFO src.inmail_copy_writer InMail angle B generated for 'fields_of_study__law + highest_degree_level__Bachelors + skills__litigation'
+2026-04-29 11:13:50,877 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:13:50,880 INFO src.inmail_copy_writer InMail angle C generated for 'fields_of_study__law + highest_degree_level__Bachelors + skills__litigation'
+2026-04-29 11:13:50,880 INFO main [dry-run] Subject: Your litigation expertise is worth $50/hr to AI
+2026-04-29 11:13:50,880 INFO main [dry-run] Body (first 100): Litigation sharpens a particular kind of thinking — the ability to analyze an argument, identify its…
+2026-04-29 11:13:50,880 INFO main [dry-run] CTA: View Open Tasks
+2026-04-29 11:13:50,882 INFO main InMail angle B passes brand voice check (confidence: 100%)
+2026-04-29 11:13:50,884 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-04-29 11:13:50,885 INFO src.figma_creative LiteLLM copy gen — cohort=skills__compliance + highest_degree_leve signals=3 populated=1
+2026-04-29 11:14:13,166 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:14:13,169 INFO src.figma_creative Generated 3 copy variants for 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law'
+2026-04-29 11:14:13,199 INFO src.gemini_creative Creative generation attempt 1/3 (angle=A)
+2026-04-29 11:14:13,200 INFO src.gemini_creative Gemini call — angle=A photo_subject='female Chinese Singaporean compliance officer, reviewing legal documents on a la'
+2026-04-29 11:14:13,200 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female Chinese Singaporean compliance officer, reviewing legal documents on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP
+2026-04-29 11:14:13,200 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-29 11:14:13,200 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-29 11:14:26,954 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-29 11:14:27,073 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-29 11:14:27,519 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpppbm7zof_gemini_female_chinese_singaporean_com_A.png (1375698 bytes)
+2026-04-29 11:14:27,526 INFO src.copy_design_qc Copy length violations found: ["intro_text contains banned token 'training': 'Between regulatory cycles? Your compliance and legal training is exactly what AI models need reviewed by a human expert.'"]
+2026-04-29 11:14:27,526 INFO src.gemini_creative QC attempt 1: FAIL (target=copywriter, 1 violations)
+2026-04-29 11:14:27,526 INFO src.gemini_creative Copy QC failed — invoking copy_rewriter
+2026-04-29 11:14:30,204 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:14:30,207 INFO src.figma_creative Copy rewritten (angle A, fields=['intro_text']): {'intro_text': 'Between regulatory cycles? Your compliance and legal expertise is exactly what AI models need reviewed by a human expert.'}
+2026-04-29 11:14:30,207 INFO src.gemini_creative Creative generation attempt 2/3 (angle=A)
+2026-04-29 11:14:30,207 INFO src.gemini_creative Gemini call — angle=A photo_subject='female Chinese Singaporean compliance officer, reviewing legal documents on a la'
+2026-04-29 11:14:30,207 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female Chinese Singaporean compliance officer, reviewing legal documents on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP
+2026-04-29 11:14:30,207 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-29 11:14:30,207 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-29 11:14:42,657 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-29 11:14:42,726 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-29 11:14:43,073 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpo8twi1tl_gemini_female_chinese_singaporean_com_A.png (1412249 bytes)
+2026-04-29 11:15:01,886 INFO src.gemini_creative QC attempt 2: FAIL (target=gemini, 4 violations)
+2026-04-29 11:15:01,886 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-04-29 11:15:01,886 INFO src.gemini_creative Creative generation attempt 3/3 (angle=A)
+2026-04-29 11:15:01,886 INFO src.gemini_creative Gemini call — angle=A photo_subject='female Chinese Singaporean compliance officer, reviewing legal documents on a la'
+2026-04-29 11:15:01,886 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female Chinese Singaporean compliance officer, reviewing legal documents on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP
+2026-04-29 11:15:01,886 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-04-29 11:15:01,886 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- Headline is touching the subject's hair. Tell Gemini 'the TOP of the subject\'s hair must sit at approximately 28% from the top of the fra
+2026-04-29 11:15:01,886 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-04-29 11:15:12,302 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-29 11:15:12,371 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-29 11:15:12,790 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpwrtd8thh_gemini_female_chinese_singaporean_com_A.png (1334912 bytes)
+2026-04-29 11:15:29,481 INFO src.gemini_creative QC attempt 3: FAIL (target=gemini, 1 violations)
+2026-04-29 11:15:29,481 WARNING src.gemini_creative Creative still failing QC after 3 attempts — returning last attempt with FAIL verdict
+2026-04-29 11:15:29,481 ERROR main Static QC FAIL for 'skills__compliance + highest_degree_level__Bachelors + fields_of_study__law' after 1 attempts; REJECTING creative. Campaign will be created without an image. Violations: ["Subject looks authentic: The subject's skin, features, and hands appear natural and realistic, without any uncanny valley effects or plastic appearance."]
+2026-04-29 11:15:29,482 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-04-29 11:15:29,482 INFO src.figma_creative LiteLLM copy gen — cohort=fields_of_study__law + highest_degree_le signals=3 populated=1
+2026-04-29 11:15:47,498 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:15:47,504 INFO src.figma_creative Generated 3 copy variants for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance'
+2026-04-29 11:15:47,536 WARNING src.gemini_creative Pre-flight copy violations for angle B: ["Headline wraps to 3 lines (max 2): 'Compliance experts earn with Outlier'"]
+2026-04-29 11:15:49,827 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:15:49,829 INFO src.figma_creative Copy rewritten (angle B, fields=['headline']): {'headline': 'Compliance pros, earn more'}
+2026-04-29 11:15:49,842 INFO src.gemini_creative Creative generation attempt 1/3 (angle=B)
+2026-04-29 11:15:49,843 INFO src.gemini_creative Gemini call — angle=B photo_subject='male Chinese Singaporean compliance officer, reading regulatory documents on a l'
+2026-04-29 11:15:49,843 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Chinese Singaporean compliance officer, reading regulatory documents on a laptop in a home office. HEAD PLACEMENT (CRITICAL): the 
+2026-04-29 11:15:49,843 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-29 11:15:49,843 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-29 11:16:06,102 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-29 11:16:06,186 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-29 11:16:06,666 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmp_n67_qe0_gemini_male_chinese_singaporean_compl_B.png (1295245 bytes)
+2026-04-29 11:16:38,161 INFO src.gemini_creative QC attempt 1: FAIL (target=gemini, 9 violations)
+2026-04-29 11:16:38,161 INFO src.gemini_creative Creative generation attempt 2/3 (angle=B)
+2026-04-29 11:16:38,161 INFO src.gemini_creative Gemini call — angle=B photo_subject='male Chinese Singaporean compliance officer, reading regulatory documents on a l'
+2026-04-29 11:16:38,161 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Chinese Singaporean compliance officer, reading regulatory documents on a laptop in a home office. HEAD PLACEMENT (CRITICAL): the 
+2026-04-29 11:16:38,161 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-29 11:16:38,161 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- Gemini rendered text/letters/logos INTO the photo. Add explicit 'ZERO TEXT in image. No words, letters, logos, wordmarks, earnings figures
+2026-04-29 11:16:38,161 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-29 11:16:52,443 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-29 11:16:52,515 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-29 11:16:52,869 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmprom84woc_gemini_male_chinese_singaporean_compl_B.png (1414277 bytes)
+2026-04-29 11:17:20,581 INFO src.gemini_creative QC attempt 2: FAIL (target=gemini, 2 violations)
+2026-04-29 11:17:20,582 INFO src.gemini_creative Creative generation attempt 3/3 (angle=B)
+2026-04-29 11:17:20,582 INFO src.gemini_creative Gemini call — angle=B photo_subject='male Chinese Singaporean compliance officer, reading regulatory documents on a l'
+2026-04-29 11:17:20,582 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Chinese Singaporean compliance officer, reading regulatory documents on a laptop in a home office. HEAD PLACEMENT (CRITICAL): the 
+2026-04-29 11:17:20,582 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-29 11:17:20,582 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- A thin colored gradient line is visible on the left/right edges of the photo, looking like an inner border. Tell Gemini 'The gradient wash
+2026-04-29 11:17:20,582 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-29 11:17:33,684 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-29 11:17:33,766 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-29 11:17:34,133 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpx3o96tio_gemini_male_chinese_singaporean_compl_B.png (1401892 bytes)
+2026-04-29 11:17:53,452 INFO src.gemini_creative QC attempt 3: FAIL (target=gemini, 1 violations)
+2026-04-29 11:17:53,453 WARNING src.gemini_creative Creative still failing QC after 3 attempts — returning last attempt with FAIL verdict
+2026-04-29 11:17:53,453 ERROR main Static QC FAIL for 'fields_of_study__law + highest_degree_level__Bachelors + skills__compliance' after 1 attempts; REJECTING creative. Campaign will be created without an image. Violations: ['No gradient bleed at photo edges (pixel): Edge gradient bleed: left edge 12% rows colored (>10%)']
+2026-04-29 11:17:53,454 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-04-29 11:17:53,454 INFO src.figma_creative LiteLLM copy gen — cohort=skills__compliance + fields_of_study__la signals=3 populated=1
+2026-04-29 11:18:15,284 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:18:15,286 INFO src.figma_creative Generated 3 copy variants for 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors'
+2026-04-29 11:18:15,303 INFO src.gemini_creative Creative generation attempt 1/3 (angle=C)
+2026-04-29 11:18:15,303 INFO src.gemini_creative Gemini call — angle=C photo_subject='female Malay Singaporean compliance officer, reading regulatory guidelines on a '
+2026-04-29 11:18:15,303 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female Malay Singaporean compliance officer, reading regulatory guidelines on a laptop at a bright home desk. HEAD PLACEMENT (CRITICAL)
+2026-04-29 11:18:15,303 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-29 11:18:15,303 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-29 11:18:30,992 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-29 11:18:31,069 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-29 11:18:31,534 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpbldao31i_gemini_female_malay_singaporean_compl_C.png (1285964 bytes)
+2026-04-29 11:18:31,541 INFO src.copy_design_qc Copy length violations found: ['intro_text has 147 chars (max 140): "Regulatory deadlines control your calendar. But the gaps between them don\'t have to be idle. Contribute to AI projects on your own time, from home."']
+2026-04-29 11:18:31,541 INFO src.gemini_creative QC attempt 1: FAIL (target=copywriter, 1 violations)
+2026-04-29 11:18:31,541 INFO src.gemini_creative Copy QC failed — invoking copy_rewriter
+2026-04-29 11:18:38,423 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:18:38,427 INFO src.figma_creative Copy rewritten (angle C, fields=['intro_text']): {'intro_text': 'Regulatory deadlines fill your calendar. The gaps between them can earn. Contribute to AI projects on your own time, from home.'}
+2026-04-29 11:18:38,427 INFO src.gemini_creative Creative generation attempt 2/3 (angle=C)
+2026-04-29 11:18:38,427 INFO src.gemini_creative Gemini call — angle=C photo_subject='female Malay Singaporean compliance officer, reading regulatory guidelines on a '
+2026-04-29 11:18:38,427 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female Malay Singaporean compliance officer, reading regulatory guidelines on a laptop at a bright home desk. HEAD PLACEMENT (CRITICAL)
+2026-04-29 11:18:38,427 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-29 11:18:38,427 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-29 11:18:53,179 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-29 11:18:53,259 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-29 11:18:53,740 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpk3elnik2_gemini_female_malay_singaporean_compl_C.png (1271480 bytes)
+2026-04-29 11:19:25,630 INFO src.gemini_creative QC attempt 2: FAIL (target=gemini, 7 violations)
+2026-04-29 11:19:25,631 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-04-29 11:19:25,631 INFO src.gemini_creative Creative generation attempt 3/3 (angle=C)
+2026-04-29 11:19:25,631 INFO src.gemini_creative Gemini call — angle=C photo_subject='female Malay Singaporean compliance officer, reading regulatory guidelines on a '
+2026-04-29 11:19:25,631 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female Malay Singaporean compliance officer, reading regulatory guidelines on a laptop at a bright home desk. HEAD PLACEMENT (CRITICAL)
+2026-04-29 11:19:25,631 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-04-29 11:19:25,631 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- Gemini rendered text/letters/logos INTO the photo. Add explicit 'ZERO TEXT in image. No words, letters, logos, wordmarks, earnings figures
+2026-04-29 11:19:25,631 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-04-29 11:19:34,949 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-29 11:19:35,021 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-29 11:19:35,497 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmp66euifj9_gemini_female_malay_singaporean_compl_C.png (1219493 bytes)
+2026-04-29 11:19:54,942 INFO src.gemini_creative QC attempt 3: FAIL (target=gemini, 5 violations)
+2026-04-29 11:19:54,942 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-04-29 11:19:54,942 WARNING src.gemini_creative Creative still failing QC after 3 attempts — returning last attempt with FAIL verdict
+2026-04-29 11:19:54,942 ERROR main Static QC FAIL for 'skills__compliance + fields_of_study__law + highest_degree_level__Bachelors' after 1 attempts; REJECTING creative. Campaign will be created without an image. Violations: ["Text doesn't overlap subject: FAIL if text is touching the subject OR if there is an unusually large empty band between the text and the hairline (indicates Gemini placed the subject too low, creating an awkward gap). JUST RIGHT is roughly 3-8% of the frame height between bottom of text descenders and top of hair.", 'Headroom gap not too big: FAIL if gap is TOO FAR (>10% of frame height) — this wastes vertical space and looks amateur. FAIL if gap is TOO CLOSE (touching) — covered by text_overlaps_subject.', 'Gradient matches reference: FAIL if pink appears anywhere besides top-left, or teal appears anywhere besides bottom-left. FAIL if washes are spread across the whole frame or on the right half. Describe where you see the colored washes.', "Professional quality: The excessively large gap between the headline and the subject's head, combined with the gradient washes bleeding into unintended quadrants, reduces the overall professional quality and would likely not be approved for a brand campaign.", 'No gradient bleed at photo edges (pixel): Edge gradient bleed: left edge 35% rows colored (>10%)']
+2026-04-29 11:19:54,943 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-04-29 11:19:54,943 INFO src.figma_creative LiteLLM copy gen — cohort=skills__compliance + highest_degree_leve signals=2 populated=1
+2026-04-29 11:20:18,082 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:20:18,086 INFO src.figma_creative Generated 3 copy variants for 'skills__compliance + highest_degree_level__Bachelors'
+2026-04-29 11:20:18,104 INFO src.gemini_creative Creative generation attempt 1/3 (angle=A)
+2026-04-29 11:20:18,104 INFO src.gemini_creative Gemini call — angle=A photo_subject='female Chinese Singaporean compliance analyst, reviewing policy documents on a l'
+2026-04-29 11:20:18,104 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female Chinese Singaporean compliance analyst, reviewing policy documents on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TO
+2026-04-29 11:20:18,104 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-29 11:20:18,104 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-29 11:20:30,042 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-29 11:20:30,116 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-29 11:20:30,522 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpakq9twb7_gemini_female_chinese_singaporean_com_A.png (1320375 bytes)
+2026-04-29 11:20:30,528 INFO src.copy_design_qc Copy length violations found: ["ad_description contains banned token 'required': 'Flexible tasks. Paid per contribution. No office required.'"]
+2026-04-29 11:20:30,528 INFO src.gemini_creative QC attempt 1: FAIL (target=copywriter, 1 violations)
+2026-04-29 11:20:30,528 INFO src.gemini_creative Copy QC failed — invoking copy_rewriter
+2026-04-29 11:20:32,492 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:20:32,494 INFO src.figma_creative Copy rewritten (angle A, fields=['ad_description']): {'ad_description': 'Flexible tasks. Paid per contribution. Fully remote opportunity.'}
+2026-04-29 11:20:32,494 INFO src.gemini_creative Creative generation attempt 2/3 (angle=A)
+2026-04-29 11:20:32,494 INFO src.gemini_creative Gemini call — angle=A photo_subject='female Chinese Singaporean compliance analyst, reviewing policy documents on a l'
+2026-04-29 11:20:32,494 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female Chinese Singaporean compliance analyst, reviewing policy documents on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TO
+2026-04-29 11:20:32,494 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-29 11:20:32,494 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-29 11:20:38,825 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 11:20:43,844 WARNING smart_ramp_poller previous poll still running — exiting cleanly
+2026-04-29 11:20:46,497 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-29 11:20:46,562 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-29 11:20:46,965 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpm4dqxtw7_gemini_female_chinese_singaporean_com_A.png (1334819 bytes)
+2026-04-29 11:21:16,908 INFO src.gemini_creative QC attempt 2: FAIL (target=gemini, 1 violations)
+2026-04-29 11:21:16,909 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-04-29 11:21:16,909 INFO src.gemini_creative Creative generation attempt 3/3 (angle=A)
+2026-04-29 11:21:16,909 INFO src.gemini_creative Gemini call — angle=A photo_subject='female Chinese Singaporean compliance analyst, reviewing policy documents on a l'
+2026-04-29 11:21:16,909 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female Chinese Singaporean compliance analyst, reviewing policy documents on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TO
+2026-04-29 11:21:16,909 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-04-29 11:21:16,909 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- The gradient washes are in the WRONG position — pink/coral must be in TOP-LEFT corner only, teal/blue in BOTTOM-LEFT corner only. Right ha
+2026-04-29 11:21:16,909 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-04-29 11:21:26,444 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-29 11:21:26,525 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-29 11:21:26,862 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmp_swjp9nb_gemini_female_chinese_singaporean_com_A.png (1397501 bytes)
+2026-04-29 11:21:54,062 INFO src.gemini_creative QC attempt 3: FAIL (target=gemini, 1 violations)
+2026-04-29 11:21:54,063 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-04-29 11:21:54,063 WARNING src.gemini_creative Creative still failing QC after 3 attempts — returning last attempt with FAIL verdict
+2026-04-29 11:21:54,063 ERROR main Static QC FAIL for 'skills__compliance + highest_degree_level__Bachelors' after 1 attempts; REJECTING creative. Campaign will be created without an image. Violations: ['Gradient matches reference: FAIL. The expected pink/coral and teal/blue washes are not present. There is a very subtle, dark, reddish-brown/pinkish tint in the top-left, but no teal/blue in the bottom-left. The right half is neutral.']
+2026-04-29 11:21:54,064 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-04-29 11:21:54,065 INFO src.figma_creative LiteLLM copy gen — cohort=fields_of_study__law + highest_degree_le signals=3 populated=1
+2026-04-29 11:22:19,313 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:22:19,317 WARNING src.figma_creative Copy limits violated (attempt 1): ["Angle B subheadline has 8 words (max 7): 'Paid tasks, done from home, on your clock.'"]
+2026-04-29 11:22:29,189 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-29 11:22:29,191 INFO src.figma_creative Generated 3 copy variants for 'fields_of_study__law + highest_degree_level__Bachelors + skills__litigation'
+2026-04-29 11:22:29,211 INFO src.gemini_creative Creative generation attempt 1/3 (angle=B)
+2026-04-29 11:22:29,211 INFO src.gemini_creative Gemini call — angle=B photo_subject='male Chinese Singaporean litigation lawyer, reviewing case notes on a laptop at '
+2026-04-29 11:22:29,212 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Chinese Singaporean litigation lawyer, reviewing case notes on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of the 
+2026-04-29 11:22:29,212 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-29 11:22:29,212 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-29 11:22:42,283 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-29 11:22:42,356 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-29 11:22:42,679 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpir6d7snx_gemini_male_chinese_singaporean_litig_B.png (1468943 bytes)
+2026-04-29 11:23:04,621 INFO src.gemini_creative QC attempt 1: FAIL (target=gemini, 6 violations)
+2026-04-29 11:23:04,622 INFO src.gemini_creative Creative generation attempt 2/3 (angle=B)
+2026-04-29 11:23:04,622 INFO src.gemini_creative Gemini call — angle=B photo_subject='male Chinese Singaporean litigation lawyer, reviewing case notes on a laptop at '
+2026-04-29 11:23:04,622 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Chinese Singaporean litigation lawyer, reviewing case notes on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of the 
+2026-04-29 11:23:04,622 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-29 11:23:04,622 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- A second Outlier logo is visible inside the photograph. Tell Gemini 'Do NOT render any Outlier logo, brand mark, or wordmark — the logo is
+2026-04-29 11:23:04,622 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-29 11:23:19,064 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-29 11:23:19,135 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-29 11:23:19,516 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmp2cp4nhzk_gemini_male_chinese_singaporean_litig_B.png (1365776 bytes)
+2026-04-29 11:23:44,903 INFO src.gemini_creative QC attempt 2: FAIL (target=gemini, 7 violations)
+2026-04-29 11:23:44,904 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-04-29 11:23:44,904 INFO src.gemini_creative Creative generation attempt 3/3 (angle=B)
+2026-04-29 11:23:44,905 INFO src.gemini_creative Gemini call — angle=B photo_subject='male Chinese Singaporean litigation lawyer, reviewing case notes on a laptop at '
+2026-04-29 11:23:44,905 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a male Chinese Singaporean litigation lawyer, reviewing case notes on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of the 
+2026-04-29 11:23:44,905 INFO src.gemini_creative Reference image inline: NO (disabled or file not found) (0 chars b64)
+2026-04-29 11:23:44,905 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- A second Outlier logo is visible inside the photograph. Tell Gemini 'Do NOT render any Outlier logo, brand mark, or wordmark — the logo is
+2026-04-29 11:23:44,905 WARNING src.gemini_creative Reference image not available — Gemini will generate without composition reference
+2026-04-29 11:23:53,793 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-29 11:23:53,877 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-29 11:23:54,300 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpp07h3_w9_gemini_male_chinese_singaporean_litig_B.png (1391457 bytes)
+2026-04-29 11:24:15,068 INFO src.gemini_creative QC attempt 3: FAIL (target=gemini, 7 violations)
+2026-04-29 11:24:15,068 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-04-29 11:24:15,068 WARNING src.gemini_creative Creative still failing QC after 3 attempts — returning last attempt with FAIL verdict
+2026-04-29 11:24:15,068 ERROR main Static QC FAIL for 'fields_of_study__law + highest_degree_level__Bachelors + skills__litigation' after 1 attempts; REJECTING creative. Campaign will be created without an image. Violations: ["No duplicate logos: One 'Outlier' in the subheadline text overlay, and one 'Outlier' in the bottom-right wordmark.", 'Headroom gap not too big: FAIL if gap is TOO FAR (>10% of frame height) — this wastes vertical space and looks amateur. FAIL if gap is TOO CLOSE (touching) — covered by text_overlaps_subject.', 'Gradient matches reference: Pink wash is visible in the top-left quadrant but extends noticeably into the top-right. Teal wash is visible in the bottom-left quadrant but extends noticeably into the bottom-right. The right half is not neutral.', 'No gradient border artefact: A distinct pinkish/purplish gradient line/band is visible along the left edge of the photo, just inside the white border. A distinct bluish/greenish gradient line/band is visible along the right edge of the photo, just inside the white border.', "Subject looks authentic: The subject's skin appears overly smooth and somewhat plastic-like, and the lighting on the face feels artificial, contributing to an AI-generated look.", "Professional quality: The image looks amateur due to the duplicate 'Outlier' logo, the excessive headroom gap, the incorrect and overly strong gradient washes that extend beyond their intended quadrants, and the visible gradient artefacts along the photo edges. The subject's artificial appearance also detracts from professional quality.", 'No gradient bleed at photo edges (pixel): Edge gradient bleed: left edge 40% rows colored (>10%)']
+2026-04-29 11:24:15,068 INFO main [dry-run] _process_static_campaigns: skipping LinkedIn calls (5 cohorts)
+2026-04-29 11:24:15,080 INFO smart_ramp_poller [DRY-RUN] would notify (kind=None) for ramp=GMR-0005
+2026-04-29 11:35:44,233 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 11:35:45,706 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 11:37:56,769 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 11:38:01,785 WARNING smart_ramp_poller previous poll still running — exiting cleanly
+2026-04-29 11:38:01,790 ERROR smart_ramp_poller Ramp GMR-FAIL pipeline raised
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/smart_ramp_poller.py", line 276, in process_ramp
+    result = run_ramp_pipeline(record, dry_run=dry_run, version=version)
+  File "/Users/pranavpatre/outlier-campaign-agent/tests/test_smart_ramp_poller.py", line 251, in failing_pipeline
+    raise RuntimeError("Redash 5xx")
+RuntimeError: Redash 5xx
+2026-04-29 11:38:01,791 WARNING smart_ramp_poller Ramp GMR-FAIL reached escalation threshold (5 consecutive failures) — escalation_dm_sent flipped to True; notifier will fire.
+2026-04-29 11:38:01,875 INFO weekly_feedback_loop [DRY-RUN] would post to Slack:
+Weekly Feedback Loop — 2026-04-29
+
+Creative Progress Alerts (v1)
+  • [DRY-RUN] v1 alerts skipped — no Slack post issued
+
+Funnel Drop Diagnosis
+  • No funnel drops flagged this week.
+
+Sentiment Themes (top 0)
+  • No new themes surfaced.
+
+ICP Drift
+  • No active projects configured for drift tracking.
+2026-04-29 11:47:38,877 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 11:47:43,926 WARNING smart_ramp_poller previous poll still running — exiting cleanly
+2026-04-29 11:47:43,931 ERROR smart_ramp_poller Ramp GMR-FAIL pipeline raised
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/smart_ramp_poller.py", line 276, in process_ramp
+    result = run_ramp_pipeline(record, dry_run=dry_run, version=version)
+  File "/Users/pranavpatre/outlier-campaign-agent/tests/test_smart_ramp_poller.py", line 251, in failing_pipeline
+    raise RuntimeError("Redash 5xx")
+RuntimeError: Redash 5xx
+2026-04-29 11:47:43,933 WARNING smart_ramp_poller Ramp GMR-FAIL reached escalation threshold (5 consecutive failures) — escalation_dm_sent flipped to True; notifier will fire.
+2026-04-29 11:47:44,022 INFO weekly_feedback_loop [DRY-RUN] would post to Slack:
+Weekly Feedback Loop — 2026-04-29
+
+Creative Progress Alerts (v1)
+  • [DRY-RUN] v1 alerts skipped — no Slack post issued
+
+Funnel Drop Diagnosis
+  • No funnel drops flagged this week.
+
+Sentiment Themes (top 0)
+  • No new themes surfaced.
+
+ICP Drift
+  • No active projects configured for drift tracking.
+2026-04-29 11:50:46,054 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 11:50:46,446 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 12:05:46,932 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 12:05:47,467 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 12:16:09,622 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 12:16:14,675 WARNING smart_ramp_poller previous poll still running — exiting cleanly
+2026-04-29 12:16:14,679 ERROR smart_ramp_poller Ramp GMR-FAIL pipeline raised
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/smart_ramp_poller.py", line 276, in process_ramp
+    result = run_ramp_pipeline(record, dry_run=dry_run, version=version)
+  File "/Users/pranavpatre/outlier-campaign-agent/tests/test_smart_ramp_poller.py", line 251, in failing_pipeline
+    raise RuntimeError("Redash 5xx")
+RuntimeError: Redash 5xx
+2026-04-29 12:16:14,680 WARNING smart_ramp_poller Ramp GMR-FAIL reached escalation threshold (5 consecutive failures) — escalation_dm_sent flipped to True; notifier will fire.
+2026-04-29 12:16:14,764 INFO weekly_feedback_loop [DRY-RUN] would post to Slack:
+Weekly Feedback Loop — 2026-04-29
+
+Creative Progress Alerts (v1)
+  • [DRY-RUN] v1 alerts skipped — no Slack post issued
+
+Funnel Drop Diagnosis
+  • No funnel drops flagged this week.
+
+Sentiment Themes (top 0)
+  • No new themes surfaced.
+
+ICP Drift
+  • No active projects configured for drift tracking.
+2026-04-29 12:18:23,792 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 12:18:28,826 WARNING smart_ramp_poller previous poll still running — exiting cleanly
+2026-04-29 12:18:28,833 ERROR smart_ramp_poller Ramp GMR-FAIL pipeline raised
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/smart_ramp_poller.py", line 276, in process_ramp
+    result = run_ramp_pipeline(record, dry_run=dry_run, version=version)
+  File "/Users/pranavpatre/outlier-campaign-agent/tests/test_smart_ramp_poller.py", line 251, in failing_pipeline
+    raise RuntimeError("Redash 5xx")
+RuntimeError: Redash 5xx
+2026-04-29 12:18:28,835 WARNING smart_ramp_poller Ramp GMR-FAIL reached escalation threshold (5 consecutive failures) — escalation_dm_sent flipped to True; notifier will fire.
+2026-04-29 12:18:28,926 INFO weekly_feedback_loop [DRY-RUN] would post to Slack:
+Weekly Feedback Loop — 2026-04-29
+
+Creative Progress Alerts (v1)
+  • [DRY-RUN] v1 alerts skipped — no Slack post issued
+
+Funnel Drop Diagnosis
+  • No funnel drops flagged this week.
+
+Sentiment Themes (top 0)
+  • No new themes surfaced.
+
+ICP Drift
+  • No active projects configured for drift tracking.
+2026-04-29 12:20:47,931 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 12:20:48,387 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 12:22:05,692 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 12:22:10,743 WARNING smart_ramp_poller previous poll still running — exiting cleanly
+2026-04-29 12:22:10,751 ERROR smart_ramp_poller Ramp GMR-FAIL pipeline raised
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/smart_ramp_poller.py", line 276, in process_ramp
+    result = run_ramp_pipeline(record, dry_run=dry_run, version=version)
+  File "/Users/pranavpatre/outlier-campaign-agent/tests/test_smart_ramp_poller.py", line 251, in failing_pipeline
+    raise RuntimeError("Redash 5xx")
+RuntimeError: Redash 5xx
+2026-04-29 12:22:10,753 WARNING smart_ramp_poller Ramp GMR-FAIL reached escalation threshold (5 consecutive failures) — escalation_dm_sent flipped to True; notifier will fire.
+2026-04-29 12:22:10,844 INFO weekly_feedback_loop [DRY-RUN] would post to Slack:
+Weekly Feedback Loop — 2026-04-29
+
+Creative Progress Alerts (v1)
+  • [DRY-RUN] v1 alerts skipped — no Slack post issued
+
+Funnel Drop Diagnosis
+  • No funnel drops flagged this week.
+
+Sentiment Themes (top 0)
+  • No new themes surfaced.
+
+ICP Drift
+  • No active projects configured for drift tracking.
+2026-04-29 12:22:38,186 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 12:22:43,195 WARNING smart_ramp_poller previous poll still running — exiting cleanly
+2026-04-29 12:22:43,204 ERROR smart_ramp_poller Ramp GMR-FAIL pipeline raised
+Traceback (most recent call last):
+  File "/Users/pranavpatre/outlier-campaign-agent/scripts/smart_ramp_poller.py", line 276, in process_ramp
+    result = run_ramp_pipeline(record, dry_run=dry_run, version=version)
+  File "/Users/pranavpatre/outlier-campaign-agent/tests/test_smart_ramp_poller.py", line 251, in failing_pipeline
+    raise RuntimeError("Redash 5xx")
+RuntimeError: Redash 5xx
+2026-04-29 12:22:43,207 WARNING smart_ramp_poller Ramp GMR-FAIL reached escalation threshold (5 consecutive failures) — escalation_dm_sent flipped to True; notifier will fire.
+2026-04-29 12:22:43,338 INFO weekly_feedback_loop [DRY-RUN] would post to Slack:
+Weekly Feedback Loop — 2026-04-29
+
+Creative Progress Alerts (v1)
+  • [DRY-RUN] v1 alerts skipped — no Slack post issued
+
+Funnel Drop Diagnosis
+  • No funnel drops flagged this week.
+
+Sentiment Themes (top 0)
+  • No new themes surfaced.
+
+ICP Drift
+  • No active projects configured for drift tracking.
+2026-04-29 12:35:48,863 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 12:35:49,316 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 12:50:50,543 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 12:50:50,980 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 13:05:51,447 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 13:05:51,892 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 13:20:52,294 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 13:20:52,770 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 13:35:53,066 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 13:35:53,480 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 13:50:53,861 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 13:50:54,313 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 14:05:54,643 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 14:05:55,064 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 14:20:55,485 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 14:20:56,011 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 14:35:56,357 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 14:35:56,763 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 14:50:57,111 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 14:50:57,578 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 15:05:57,883 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 15:05:58,320 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 15:20:58,774 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 15:20:59,183 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 15:35:59,580 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 15:36:00,016 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 16:06:01,282 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 16:06:01,738 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 19:13:07,347 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 19:13:08,057 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 19:28:08,426 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 19:28:09,030 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 19:43:09,493 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 19:43:10,116 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 19:58:10,458 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 19:58:10,944 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 20:13:11,368 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 20:13:12,114 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 20:28:12,463 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 20:28:12,936 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 20:43:13,372 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 20:43:13,925 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 20:58:14,264 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 20:58:14,693 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 21:13:15,134 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 21:13:15,571 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 21:28:15,917 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 21:28:16,584 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 21:43:16,893 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 21:43:17,431 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 21:58:17,852 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 21:58:18,289 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 22:13:18,674 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 22:13:19,130 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 22:28:19,388 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 22:28:19,807 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 22:43:20,162 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 22:43:20,604 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 22:58:21,053 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 22:58:21,495 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 23:13:21,947 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 23:13:22,385 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 23:28:22,822 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 23:28:23,260 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 23:43:23,621 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 23:43:24,111 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-29 23:58:24,413 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-29 23:58:24,824 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-30 00:06:49,875 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=GMR-0016 dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-30 00:06:55,597 INFO smart_ramp_poller Running pipeline for ramp=GMR-0016 version=1 dry_run=True
+2026-04-30 00:07:01,732 INFO src.redash_db RedashClient ready → https://redash.scale.com (data_source_id=30)
+2026-04-30 00:07:01,735 INFO src.redash_db Resolving project_id=69cf1a039ed66cc82e0fa8f3 to signup_flow_id + config_name
+2026-04-30 00:07:04,821 INFO src.redash_db Resolved project → signup_flow_id=67e2f91240e7ae2eaa5c4f94 config='[Experts] HLE Screening - T1' (passes=1)
+2026-04-30 00:07:04,821 INFO src.redash_db Fetching screenings via Redash for flow=67e2f91240e7ae2eaa5c4f94 config=[Experts] HLE Screening - T1
+2026-04-30 00:07:31,887 INFO src.redash_db Fetched 380 screening rows
+2026-04-30 00:07:31,889 INFO main _resolve_cohorts: raw data 380 rows
+2026-04-30 00:07:31,905 INFO main _resolve_cohorts: 202 binary features
+2026-04-30 00:07:31,905 WARNING main _resolve_cohorts: meta fetch failed (non-fatal): 'RedashClient' object has no attribute 'fetch_job_post_meta'
+2026-04-30 00:07:31,907 INFO src.icp_from_jobpost Base-role candidates from [job_name=None, domain=None, flow_name='EKG Multiple Choice V11', proj_name=None, worker_skills=[]]: []
+2026-04-30 00:07:31,909 INFO src.analysis Tier T1 (_is_pass): 47 positives
+2026-04-30 00:07:31,909 INFO src.analysis Tier fallback: stronger tiers were thin — dropped down to T1 (47 ≥ 30). Cohort analysis will target this tier's positive class.
+2026-04-30 00:07:31,909 INFO main _resolve_cohorts: target tier=T1 col=_is_pass n_icp=47
+2026-04-30 00:07:31,924 INFO src.analysis stage_a_negative: 1 negative signal(s) pass filters (n_neg=333, n_pos=47). Top 1:
+2026-04-30 00:07:31,925 INFO src.analysis   EXCLUDE highest_degree_level__Masters  non_icp_share=55.9%  icp_share=14.9%  ratio=0.27
+2026-04-30 00:07:31,925 INFO src.linkedin_urn feature_col_to_exclude_pair: skipping 'highest_degree_level__Masters' — facet 'degrees' is unsafe for data-driven exclusions (our feature vocab ≠ LinkedIn's).
+2026-04-30 00:07:31,925 INFO src.analysis stage_a dispatch → lift mode (T1 / resume-pass target: '_is_pass' — lift is the correct framing for pass-vs-fail)
+2026-04-30 00:07:31,925 INFO src.analysis Stage A target: T1 (resume-pass)
+2026-04-30 00:07:31,925 INFO src.analysis Global baseline: 12.4% (47/380)
+2026-04-30 00:07:31,946 INFO src.analysis Univariates: 1 accepted / 202 tested
+2026-04-30 00:07:31,948 INFO src.stage_c Stage C: validating 1 cohorts against LinkedIn Audience Counts
+2026-04-30 00:07:33,118 INFO src.linkedin_urn Loaded 1406 URNs from tab 'Degrees'
+2026-04-30 00:07:33,119 INFO src.stage_c Stage C: 1 cohorts have resolvable URNs
+2026-04-30 00:07:34,485 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-30 00:07:34,485 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Adegrees%3AList%28urn%3Ali%3Adegree%3A952%29%29%29%29%29%29
+2026-04-30 00:07:34,485 WARNING src.stage_c Audience count failed for 'highest_degree_level__Phd': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Adegrees%3AList%28urn%3Ali%3Adegree%3A952%29%29%29%29%29%29 — skipping
+2026-04-30 00:07:34,485 INFO src.stage_c Stage C: 0 cohorts pass audience threshold
+2026-04-30 00:07:34,485 INFO src.stage_c Stage C complete: 0/5 cohorts selected
+2026-04-30 00:07:34,485 INFO main _resolve_cohorts: 1 cohorts selected
+2026-04-30 00:07:34,487 INFO src.redash_db Fetching prestige columns for 47 cb_ids
+2026-04-30 00:07:46,722 INFO src.redash_db Fetched 47 prestige rows
+2026-04-30 00:07:46,764 INFO main _resolve_cohorts: prestige signal — 42% of 47 positives are top-tier (school=42%, global-co=0%, country-co=0%) — below threshold, ignore
+2026-04-30 00:07:46,768 INFO main [dry-run] InMail cohort 0 'highest_degree_level__Phd' tg=GENERAL angle=A
+2026-04-30 00:08:02,163 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:08:02,177 INFO src.inmail_copy_writer InMail angle F generated for 'highest_degree_level__Phd'
+2026-04-30 00:08:12,707 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:08:12,710 INFO src.inmail_copy_writer InMail angle A generated for 'highest_degree_level__Phd'
+2026-04-30 00:08:21,736 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:08:21,739 INFO src.inmail_copy_writer InMail angle B generated for 'highest_degree_level__Phd'
+2026-04-30 00:08:31,775 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:08:31,779 INFO src.inmail_copy_writer InMail angle C generated for 'highest_degree_level__Phd'
+2026-04-30 00:08:31,780 INFO main [dry-run] Subject: PhD Expertise + AI = Flexible $50/hr
+2026-04-30 00:08:31,780 INFO main [dry-run] Body (first 100): $50/hr is what Outlier pays contributors who bring advanced expertise to AI development work — and y…
+2026-04-30 00:08:31,780 INFO main [dry-run] CTA: See Open Tasks
+2026-04-30 00:08:31,785 WARNING main InMail angle A: 2 brand voice violations
+2026-04-30 00:08:31,785 WARNING main   Must fix: 2
+2026-04-30 00:08:31,785 WARNING main   Should fix: 0
+2026-04-30 00:08:31,785 ERROR main InMail angle A has MUST-FIX violations
+2026-04-30 00:08:31,785 ERROR main     Active Voice Only: 'are matched' → Convert to active voice: use a strong verb instead
+2026-04-30 00:08:31,785 ERROR main     Active Voice Only: 'is issued' → Convert to active voice: use a strong verb instead
+2026-04-30 00:08:31,787 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-04-30 00:08:31,787 INFO src.figma_creative LiteLLM copy gen — cohort=highest_degree_level__Phd signals=1 populated=0
+2026-04-30 00:08:44,203 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:08:44,206 WARNING src.figma_creative Copy limits violated (attempt 1): ['Angle C headline has 41 chars (max 40): "Grant deadlines don\'t define your income."']
+2026-04-30 00:08:54,769 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:08:54,772 INFO src.figma_creative Generated 3 copy variants for 'highest_degree_level__Phd'
+2026-04-30 00:08:54,803 INFO src.gemini_creative Creative generation attempt 1/3 (angle=A)
+2026-04-30 00:08:54,804 INFO src.gemini_creative Gemini call — angle=A photo_subject='female South Asian biomedical PhD researcher, reviewing academic data on a lapto'
+2026-04-30 00:08:54,804 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female South Asian biomedical PhD researcher, reviewing academic data on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of
+2026-04-30 00:08:54,804 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-30 00:08:54,804 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-30 00:09:08,199 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-30 00:09:08,264 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-30 00:09:08,574 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpioppae5y_gemini_female_south_asian_biomedical__A.png (1536049 bytes)
+2026-04-30 00:09:08,581 INFO src.copy_design_qc Copy length violations found: ["ad_headline contains em dash (banned in contributor copy): 'PhD researchers are shaping how AI models reason — from home.'"]
+2026-04-30 00:09:08,581 INFO src.gemini_creative QC attempt 1: FAIL (target=copywriter, 1 violations)
+2026-04-30 00:09:08,581 INFO src.gemini_creative Copy QC failed — invoking copy_rewriter
+2026-04-30 00:09:16,293 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:09:16,298 INFO src.figma_creative Copy rewritten (angle A, fields=['ad_headline']): {'ad_headline': 'PhD researchers are shaping how AI models reason, from home.'}
+2026-04-30 00:09:16,298 INFO src.gemini_creative Creative generation attempt 2/3 (angle=A)
+2026-04-30 00:09:16,298 INFO src.gemini_creative Gemini call — angle=A photo_subject='female South Asian biomedical PhD researcher, reviewing academic data on a lapto'
+2026-04-30 00:09:16,298 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female South Asian biomedical PhD researcher, reviewing academic data on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of
+2026-04-30 00:09:16,298 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-30 00:09:16,298 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-30 00:09:33,020 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-30 00:09:33,093 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-30 00:09:33,407 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpelxuz1_q_gemini_female_south_asian_biomedical__A.png (1475405 bytes)
+2026-04-30 00:09:52,052 INFO src.gemini_creative QC attempt 2: FAIL (target=gemini, 1 violations)
+2026-04-30 00:09:52,053 INFO src.gemini_creative Attaching 1 failure-region crop(s) to next attempt
+2026-04-30 00:09:52,053 INFO src.gemini_creative Creative generation attempt 3/3 (angle=A)
+2026-04-30 00:09:52,053 INFO src.gemini_creative Gemini call — angle=A photo_subject='female South Asian biomedical PhD researcher, reviewing academic data on a lapto'
+2026-04-30 00:09:52,053 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female South Asian biomedical PhD researcher, reviewing academic data on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of
+2026-04-30 00:09:52,053 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-30 00:09:52,053 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- EDGE STRIPE STILL DETECTED BY PIXEL CHECK. Tell Gemini 'I am sampling the outer 4 pixels of each edge programmatically and counting any sa
+2026-04-30 00:09:52,053 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-30 00:09:52,053 INFO src.gemini_creative QC feedback crop #1 attached inline (123344 chars base64)
+2026-04-30 00:10:10,316 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-30 00:10:10,392 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-30 00:10:10,878 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpgxayv3lz_gemini_female_south_asian_biomedical__A.png (1287833 bytes)
+2026-04-30 00:10:30,812 INFO src.gemini_creative QC attempt 3: FAIL (target=gemini, 7 violations)
+2026-04-30 00:10:30,812 INFO src.gemini_creative Attaching 1 failure-region crop(s) to next attempt
+2026-04-30 00:10:30,812 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-04-30 00:10:30,812 WARNING src.gemini_creative Creative still failing QC after 3 attempts — returning best-so-far attempt with 1 violations (last had 7)
+2026-04-30 00:10:30,812 ERROR main Static QC FAIL for 'highest_degree_level__Phd' after 1 attempts; REJECTING creative. Campaign will be created without an image. Violations: ["ad_headline contains em dash (banned in contributor copy): 'PhD researchers are shaping how AI models reason — from home.'"]
+2026-04-30 00:10:30,812 INFO main [dry-run] _process_static_campaigns: skipping LinkedIn calls (1 cohorts)
+2026-04-30 00:10:30,812 INFO src.redash_db Resolving project_id=69cf1a039ed66cc82e0fa8f3 to signup_flow_id + config_name
+2026-04-30 00:10:33,516 INFO src.redash_db Resolved project → signup_flow_id=67e2f91240e7ae2eaa5c4f94 config='[Experts] HLE Screening - T1' (passes=1)
+2026-04-30 00:10:33,517 INFO src.redash_db Fetching screenings via Redash for flow=67e2f91240e7ae2eaa5c4f94 config=[Experts] HLE Screening - T1
+2026-04-30 00:10:36,471 INFO src.redash_db Fetched 380 screening rows
+2026-04-30 00:10:36,472 INFO main _resolve_cohorts: raw data 380 rows
+2026-04-30 00:10:36,492 INFO main _resolve_cohorts: 202 binary features
+2026-04-30 00:10:36,493 WARNING main _resolve_cohorts: meta fetch failed (non-fatal): 'RedashClient' object has no attribute 'fetch_job_post_meta'
+2026-04-30 00:10:36,494 INFO src.icp_from_jobpost Base-role candidates from [job_name=None, domain=None, flow_name='EKG Multiple Choice V11', proj_name=None, worker_skills=[]]: []
+2026-04-30 00:10:36,495 INFO src.analysis Tier T1 (_is_pass): 47 positives
+2026-04-30 00:10:36,495 INFO src.analysis Tier fallback: stronger tiers were thin — dropped down to T1 (47 ≥ 30). Cohort analysis will target this tier's positive class.
+2026-04-30 00:10:36,495 INFO main _resolve_cohorts: target tier=T1 col=_is_pass n_icp=47
+2026-04-30 00:10:36,513 INFO src.analysis stage_a_negative: 1 negative signal(s) pass filters (n_neg=333, n_pos=47). Top 1:
+2026-04-30 00:10:36,513 INFO src.analysis   EXCLUDE highest_degree_level__Masters  non_icp_share=55.9%  icp_share=14.9%  ratio=0.27
+2026-04-30 00:10:36,513 INFO src.linkedin_urn feature_col_to_exclude_pair: skipping 'highest_degree_level__Masters' — facet 'degrees' is unsafe for data-driven exclusions (our feature vocab ≠ LinkedIn's).
+2026-04-30 00:10:36,513 INFO src.analysis stage_a dispatch → lift mode (T1 / resume-pass target: '_is_pass' — lift is the correct framing for pass-vs-fail)
+2026-04-30 00:10:36,514 INFO src.analysis Stage A target: T1 (resume-pass)
+2026-04-30 00:10:36,514 INFO src.analysis Global baseline: 12.4% (47/380)
+2026-04-30 00:10:36,536 INFO src.analysis Univariates: 1 accepted / 202 tested
+2026-04-30 00:10:36,537 INFO src.stage_c Stage C: validating 1 cohorts against LinkedIn Audience Counts
+2026-04-30 00:10:36,538 INFO src.stage_c Stage C: 1 cohorts have resolvable URNs
+2026-04-30 00:10:36,885 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-30 00:10:36,885 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Adegrees%3AList%28urn%3Ali%3Adegree%3A952%29%29%29%29%29%29
+2026-04-30 00:10:36,885 WARNING src.stage_c Audience count failed for 'highest_degree_level__Phd': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Adegrees%3AList%28urn%3Ali%3Adegree%3A952%29%29%29%29%29%29 — skipping
+2026-04-30 00:10:36,885 INFO src.stage_c Stage C: 0 cohorts pass audience threshold
+2026-04-30 00:10:36,886 INFO src.stage_c Stage C complete: 0/5 cohorts selected
+2026-04-30 00:10:36,886 INFO main _resolve_cohorts: 1 cohorts selected
+2026-04-30 00:10:36,888 INFO src.redash_db Fetching prestige columns for 47 cb_ids
+2026-04-30 00:10:39,380 INFO src.redash_db Fetched 47 prestige rows
+2026-04-30 00:10:39,420 INFO main _resolve_cohorts: prestige signal — 42% of 47 positives are top-tier (school=42%, global-co=0%, country-co=0%) — below threshold, ignore
+2026-04-30 00:10:39,422 INFO main [dry-run] InMail cohort 0 'highest_degree_level__Phd' tg=GENERAL angle=A
+2026-04-30 00:10:49,965 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:10:49,968 INFO src.inmail_copy_writer InMail angle F generated for 'highest_degree_level__Phd'
+2026-04-30 00:10:59,637 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:10:59,639 INFO src.inmail_copy_writer InMail angle A generated for 'highest_degree_level__Phd'
+2026-04-30 00:11:08,201 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:11:08,203 INFO src.inmail_copy_writer InMail angle B generated for 'highest_degree_level__Phd'
+2026-04-30 00:11:21,063 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:11:21,065 INFO src.inmail_copy_writer InMail angle C generated for 'highest_degree_level__Phd'
+2026-04-30 00:11:21,065 INFO main [dry-run] Subject: PhD Expertise + AI = Flexible $50/hr
+2026-04-30 00:11:21,065 INFO main [dry-run] Body (first 100): $50/hr to put your doctoral expertise to work — that's what Outlier pays contributors who help shape…
+2026-04-30 00:11:21,065 INFO main [dry-run] CTA: Start Contributing
+2026-04-30 00:11:21,069 WARNING main InMail angle A: 2 brand voice violations
+2026-04-30 00:11:21,069 WARNING main   Must fix: 1
+2026-04-30 00:11:21,069 WARNING main   Should fix: 0
+2026-04-30 00:11:21,069 ERROR main InMail angle A has MUST-FIX violations
+2026-04-30 00:11:21,069 ERROR main     Active Voice Only: 'is processed' → Convert to active voice: use a strong verb instead
+2026-04-30 00:11:21,071 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-04-30 00:11:21,071 INFO src.figma_creative LiteLLM copy gen — cohort=highest_degree_level__Phd signals=1 populated=0
+2026-04-30 00:11:38,154 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:11:38,162 INFO src.figma_creative Generated 3 copy variants for 'highest_degree_level__Phd'
+2026-04-30 00:11:38,199 INFO src.gemini_creative Creative generation attempt 1/3 (angle=A)
+2026-04-30 00:11:38,200 INFO src.gemini_creative Gemini call — angle=A photo_subject='female South Asian postdoctoral researcher, reviewing academic papers on a lapto'
+2026-04-30 00:11:38,200 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female South Asian postdoctoral researcher, reviewing academic papers on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of
+2026-04-30 00:11:38,200 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-30 00:11:38,200 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-30 00:11:52,676 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-30 00:11:52,753 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-30 00:11:53,279 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpsxvx3ch8_gemini_female_south_asian_postdoctora_A.png (1196328 bytes)
+2026-04-30 00:11:53,285 INFO src.copy_design_qc Copy length violations found: ['intro_text contains em dash (banned in contributor copy): "Between grant cycles? Your hard-science expertise is exactly what AI labs can\'t easily find — and Outlier pays for it."']
+2026-04-30 00:11:53,285 INFO src.gemini_creative QC attempt 1: FAIL (target=copywriter, 1 violations)
+2026-04-30 00:11:53,285 INFO src.gemini_creative Copy QC failed — invoking copy_rewriter
+2026-04-30 00:11:56,374 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:11:56,378 INFO src.figma_creative Copy rewritten (angle A, fields=['intro_text']): {'intro_text': "Between grant cycles? Your hard-science expertise is exactly what AI labs can't easily find. Outlier pays for it."}
+2026-04-30 00:11:56,378 INFO src.gemini_creative Creative generation attempt 2/3 (angle=A)
+2026-04-30 00:11:56,378 INFO src.gemini_creative Gemini call — angle=A photo_subject='female South Asian postdoctoral researcher, reviewing academic papers on a lapto'
+2026-04-30 00:11:56,378 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female South Asian postdoctoral researcher, reviewing academic papers on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of
+2026-04-30 00:11:56,378 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-30 00:11:56,378 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-30 00:12:10,205 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-30 00:12:10,275 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-30 00:12:10,817 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpq38ze7yr_gemini_female_south_asian_postdoctora_A.png (1198733 bytes)
+2026-04-30 00:12:28,807 INFO src.gemini_creative QC attempt 2: FAIL (target=gemini, 1 violations)
+2026-04-30 00:12:28,807 INFO src.gemini_creative Attaching 1 failure-region crop(s) to next attempt
+2026-04-30 00:12:28,807 INFO src.gemini_creative Creative generation attempt 3/3 (angle=A)
+2026-04-30 00:12:28,807 INFO src.gemini_creative Gemini call — angle=A photo_subject='female South Asian postdoctoral researcher, reviewing academic papers on a lapto'
+2026-04-30 00:12:28,807 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female South Asian postdoctoral researcher, reviewing academic papers on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of
+2026-04-30 00:12:28,807 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-30 00:12:28,807 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- EDGE STRIPE STILL DETECTED BY PIXEL CHECK. Tell Gemini 'I am sampling the outer 4 pixels of each edge programmatically and counting any sa
+2026-04-30 00:12:28,807 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-30 00:12:28,807 INFO src.gemini_creative QC feedback crop #1 attached inline (102288 chars base64)
+2026-04-30 00:12:44,107 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-30 00:12:44,181 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-30 00:12:44,489 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpnm72ka4i_gemini_female_south_asian_postdoctora_A.png (1511643 bytes)
+2026-04-30 00:13:04,712 INFO src.gemini_creative QC attempt 3: FAIL (target=gemini, 4 violations)
+2026-04-30 00:13:04,712 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-04-30 00:13:04,712 WARNING src.gemini_creative Creative still failing QC after 3 attempts — returning best-so-far attempt with 1 violations (last had 4)
+2026-04-30 00:13:04,713 ERROR main Static QC FAIL for 'highest_degree_level__Phd' after 1 attempts; REJECTING creative. Campaign will be created without an image. Violations: ['intro_text contains em dash (banned in contributor copy): "Between grant cycles? Your hard-science expertise is exactly what AI labs can\'t easily find — and Outlier pays for it."']
+2026-04-30 00:13:04,713 INFO main [dry-run] _process_static_campaigns: skipping LinkedIn calls (1 cohorts)
+2026-04-30 00:13:04,718 INFO smart_ramp_poller [DRY-RUN] would notify (kind=None) for ramp=GMR-0016
+2026-04-30 00:13:25,237 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-30 00:13:26,547 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-30 00:28:26,942 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-30 00:28:28,128 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-30 00:53:35,992 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-30 00:53:37,730 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-30 01:08:38,108 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-30 01:08:39,389 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-30 01:23:39,782 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-30 01:23:41,092 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-30 01:38:41,461 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-30 01:38:42,651 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-30 01:53:43,014 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-30 01:53:44,340 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted
+2026-04-30 02:08:44,701 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=None dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-30 02:08:46,245 INFO smart_ramp_poller Fetched 10 ramps; 0 submitted

@@ -1,0 +1,200 @@
+2026-04-30 00:06:49,875 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=GMR-0016 dry_run=True) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-29.log
+2026-04-30 00:06:55,597 INFO smart_ramp_poller Running pipeline for ramp=GMR-0016 version=1 dry_run=True
+2026-04-30 00:07:01,732 INFO src.redash_db RedashClient ready → https://redash.scale.com (data_source_id=30)
+2026-04-30 00:07:01,735 INFO src.redash_db Resolving project_id=69cf1a039ed66cc82e0fa8f3 to signup_flow_id + config_name
+2026-04-30 00:07:04,821 INFO src.redash_db Resolved project → signup_flow_id=67e2f91240e7ae2eaa5c4f94 config='[Experts] HLE Screening - T1' (passes=1)
+2026-04-30 00:07:04,821 INFO src.redash_db Fetching screenings via Redash for flow=67e2f91240e7ae2eaa5c4f94 config=[Experts] HLE Screening - T1
+2026-04-30 00:07:31,887 INFO src.redash_db Fetched 380 screening rows
+2026-04-30 00:07:31,889 INFO main _resolve_cohorts: raw data 380 rows
+2026-04-30 00:07:31,905 INFO main _resolve_cohorts: 202 binary features
+2026-04-30 00:07:31,905 WARNING main _resolve_cohorts: meta fetch failed (non-fatal): 'RedashClient' object has no attribute 'fetch_job_post_meta'
+2026-04-30 00:07:31,907 INFO src.icp_from_jobpost Base-role candidates from [job_name=None, domain=None, flow_name='EKG Multiple Choice V11', proj_name=None, worker_skills=[]]: []
+2026-04-30 00:07:31,909 INFO src.analysis Tier T1 (_is_pass): 47 positives
+2026-04-30 00:07:31,909 INFO src.analysis Tier fallback: stronger tiers were thin — dropped down to T1 (47 ≥ 30). Cohort analysis will target this tier's positive class.
+2026-04-30 00:07:31,909 INFO main _resolve_cohorts: target tier=T1 col=_is_pass n_icp=47
+2026-04-30 00:07:31,924 INFO src.analysis stage_a_negative: 1 negative signal(s) pass filters (n_neg=333, n_pos=47). Top 1:
+2026-04-30 00:07:31,925 INFO src.analysis   EXCLUDE highest_degree_level__Masters  non_icp_share=55.9%  icp_share=14.9%  ratio=0.27
+2026-04-30 00:07:31,925 INFO src.linkedin_urn feature_col_to_exclude_pair: skipping 'highest_degree_level__Masters' — facet 'degrees' is unsafe for data-driven exclusions (our feature vocab ≠ LinkedIn's).
+2026-04-30 00:07:31,925 INFO src.analysis stage_a dispatch → lift mode (T1 / resume-pass target: '_is_pass' — lift is the correct framing for pass-vs-fail)
+2026-04-30 00:07:31,925 INFO src.analysis Stage A target: T1 (resume-pass)
+2026-04-30 00:07:31,925 INFO src.analysis Global baseline: 12.4% (47/380)
+2026-04-30 00:07:31,946 INFO src.analysis Univariates: 1 accepted / 202 tested
+2026-04-30 00:07:31,948 INFO src.stage_c Stage C: validating 1 cohorts against LinkedIn Audience Counts
+2026-04-30 00:07:33,118 INFO src.linkedin_urn Loaded 1406 URNs from tab 'Degrees'
+2026-04-30 00:07:33,119 INFO src.stage_c Stage C: 1 cohorts have resolvable URNs
+2026-04-30 00:07:34,485 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-30 00:07:34,485 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Adegrees%3AList%28urn%3Ali%3Adegree%3A952%29%29%29%29%29%29
+2026-04-30 00:07:34,485 WARNING src.stage_c Audience count failed for 'highest_degree_level__Phd': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Adegrees%3AList%28urn%3Ali%3Adegree%3A952%29%29%29%29%29%29 — skipping
+2026-04-30 00:07:34,485 INFO src.stage_c Stage C: 0 cohorts pass audience threshold
+2026-04-30 00:07:34,485 INFO src.stage_c Stage C complete: 0/5 cohorts selected
+2026-04-30 00:07:34,485 INFO main _resolve_cohorts: 1 cohorts selected
+2026-04-30 00:07:34,487 INFO src.redash_db Fetching prestige columns for 47 cb_ids
+2026-04-30 00:07:46,722 INFO src.redash_db Fetched 47 prestige rows
+2026-04-30 00:07:46,764 INFO main _resolve_cohorts: prestige signal — 42% of 47 positives are top-tier (school=42%, global-co=0%, country-co=0%) — below threshold, ignore
+2026-04-30 00:07:46,768 INFO main [dry-run] InMail cohort 0 'highest_degree_level__Phd' tg=GENERAL angle=A
+2026-04-30 00:08:02,163 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:08:02,177 INFO src.inmail_copy_writer InMail angle F generated for 'highest_degree_level__Phd'
+2026-04-30 00:08:12,707 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:08:12,710 INFO src.inmail_copy_writer InMail angle A generated for 'highest_degree_level__Phd'
+2026-04-30 00:08:21,736 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:08:21,739 INFO src.inmail_copy_writer InMail angle B generated for 'highest_degree_level__Phd'
+2026-04-30 00:08:31,775 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:08:31,779 INFO src.inmail_copy_writer InMail angle C generated for 'highest_degree_level__Phd'
+2026-04-30 00:08:31,780 INFO main [dry-run] Subject: PhD Expertise + AI = Flexible $50/hr
+2026-04-30 00:08:31,780 INFO main [dry-run] Body (first 100): $50/hr is what Outlier pays contributors who bring advanced expertise to AI development work — and y…
+2026-04-30 00:08:31,780 INFO main [dry-run] CTA: See Open Tasks
+2026-04-30 00:08:31,785 WARNING main InMail angle A: 2 brand voice violations
+2026-04-30 00:08:31,785 WARNING main   Must fix: 2
+2026-04-30 00:08:31,785 WARNING main   Should fix: 0
+2026-04-30 00:08:31,785 ERROR main InMail angle A has MUST-FIX violations
+2026-04-30 00:08:31,785 ERROR main     Active Voice Only: 'are matched' → Convert to active voice: use a strong verb instead
+2026-04-30 00:08:31,785 ERROR main     Active Voice Only: 'is issued' → Convert to active voice: use a strong verb instead
+2026-04-30 00:08:31,787 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-04-30 00:08:31,787 INFO src.figma_creative LiteLLM copy gen — cohort=highest_degree_level__Phd signals=1 populated=0
+2026-04-30 00:08:44,203 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:08:44,206 WARNING src.figma_creative Copy limits violated (attempt 1): ['Angle C headline has 41 chars (max 40): "Grant deadlines don\'t define your income."']
+2026-04-30 00:08:54,769 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:08:54,772 INFO src.figma_creative Generated 3 copy variants for 'highest_degree_level__Phd'
+2026-04-30 00:08:54,803 INFO src.gemini_creative Creative generation attempt 1/3 (angle=A)
+2026-04-30 00:08:54,804 INFO src.gemini_creative Gemini call — angle=A photo_subject='female South Asian biomedical PhD researcher, reviewing academic data on a lapto'
+2026-04-30 00:08:54,804 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female South Asian biomedical PhD researcher, reviewing academic data on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of
+2026-04-30 00:08:54,804 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-30 00:08:54,804 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-30 00:09:08,199 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-30 00:09:08,264 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-30 00:09:08,574 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpioppae5y_gemini_female_south_asian_biomedical__A.png (1536049 bytes)
+2026-04-30 00:09:08,581 INFO src.copy_design_qc Copy length violations found: ["ad_headline contains em dash (banned in contributor copy): 'PhD researchers are shaping how AI models reason — from home.'"]
+2026-04-30 00:09:08,581 INFO src.gemini_creative QC attempt 1: FAIL (target=copywriter, 1 violations)
+2026-04-30 00:09:08,581 INFO src.gemini_creative Copy QC failed — invoking copy_rewriter
+2026-04-30 00:09:16,293 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:09:16,298 INFO src.figma_creative Copy rewritten (angle A, fields=['ad_headline']): {'ad_headline': 'PhD researchers are shaping how AI models reason, from home.'}
+2026-04-30 00:09:16,298 INFO src.gemini_creative Creative generation attempt 2/3 (angle=A)
+2026-04-30 00:09:16,298 INFO src.gemini_creative Gemini call — angle=A photo_subject='female South Asian biomedical PhD researcher, reviewing academic data on a lapto'
+2026-04-30 00:09:16,298 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female South Asian biomedical PhD researcher, reviewing academic data on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of
+2026-04-30 00:09:16,298 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-30 00:09:16,298 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-30 00:09:33,020 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-30 00:09:33,093 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-30 00:09:33,407 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpelxuz1_q_gemini_female_south_asian_biomedical__A.png (1475405 bytes)
+2026-04-30 00:09:52,052 INFO src.gemini_creative QC attempt 2: FAIL (target=gemini, 1 violations)
+2026-04-30 00:09:52,053 INFO src.gemini_creative Attaching 1 failure-region crop(s) to next attempt
+2026-04-30 00:09:52,053 INFO src.gemini_creative Creative generation attempt 3/3 (angle=A)
+2026-04-30 00:09:52,053 INFO src.gemini_creative Gemini call — angle=A photo_subject='female South Asian biomedical PhD researcher, reviewing academic data on a lapto'
+2026-04-30 00:09:52,053 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female South Asian biomedical PhD researcher, reviewing academic data on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of
+2026-04-30 00:09:52,053 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-30 00:09:52,053 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- EDGE STRIPE STILL DETECTED BY PIXEL CHECK. Tell Gemini 'I am sampling the outer 4 pixels of each edge programmatically and counting any sa
+2026-04-30 00:09:52,053 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-30 00:09:52,053 INFO src.gemini_creative QC feedback crop #1 attached inline (123344 chars base64)
+2026-04-30 00:10:10,316 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-30 00:10:10,392 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-30 00:10:10,878 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpgxayv3lz_gemini_female_south_asian_biomedical__A.png (1287833 bytes)
+2026-04-30 00:10:30,812 INFO src.gemini_creative QC attempt 3: FAIL (target=gemini, 7 violations)
+2026-04-30 00:10:30,812 INFO src.gemini_creative Attaching 1 failure-region crop(s) to next attempt
+2026-04-30 00:10:30,812 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-04-30 00:10:30,812 WARNING src.gemini_creative Creative still failing QC after 3 attempts — returning best-so-far attempt with 1 violations (last had 7)
+2026-04-30 00:10:30,812 ERROR main Static QC FAIL for 'highest_degree_level__Phd' after 1 attempts; REJECTING creative. Campaign will be created without an image. Violations: ["ad_headline contains em dash (banned in contributor copy): 'PhD researchers are shaping how AI models reason — from home.'"]
+2026-04-30 00:10:30,812 INFO main [dry-run] _process_static_campaigns: skipping LinkedIn calls (1 cohorts)
+2026-04-30 00:10:30,812 INFO src.redash_db Resolving project_id=69cf1a039ed66cc82e0fa8f3 to signup_flow_id + config_name
+2026-04-30 00:10:33,516 INFO src.redash_db Resolved project → signup_flow_id=67e2f91240e7ae2eaa5c4f94 config='[Experts] HLE Screening - T1' (passes=1)
+2026-04-30 00:10:33,517 INFO src.redash_db Fetching screenings via Redash for flow=67e2f91240e7ae2eaa5c4f94 config=[Experts] HLE Screening - T1
+2026-04-30 00:10:36,471 INFO src.redash_db Fetched 380 screening rows
+2026-04-30 00:10:36,472 INFO main _resolve_cohorts: raw data 380 rows
+2026-04-30 00:10:36,492 INFO main _resolve_cohorts: 202 binary features
+2026-04-30 00:10:36,493 WARNING main _resolve_cohorts: meta fetch failed (non-fatal): 'RedashClient' object has no attribute 'fetch_job_post_meta'
+2026-04-30 00:10:36,494 INFO src.icp_from_jobpost Base-role candidates from [job_name=None, domain=None, flow_name='EKG Multiple Choice V11', proj_name=None, worker_skills=[]]: []
+2026-04-30 00:10:36,495 INFO src.analysis Tier T1 (_is_pass): 47 positives
+2026-04-30 00:10:36,495 INFO src.analysis Tier fallback: stronger tiers were thin — dropped down to T1 (47 ≥ 30). Cohort analysis will target this tier's positive class.
+2026-04-30 00:10:36,495 INFO main _resolve_cohorts: target tier=T1 col=_is_pass n_icp=47
+2026-04-30 00:10:36,513 INFO src.analysis stage_a_negative: 1 negative signal(s) pass filters (n_neg=333, n_pos=47). Top 1:
+2026-04-30 00:10:36,513 INFO src.analysis   EXCLUDE highest_degree_level__Masters  non_icp_share=55.9%  icp_share=14.9%  ratio=0.27
+2026-04-30 00:10:36,513 INFO src.linkedin_urn feature_col_to_exclude_pair: skipping 'highest_degree_level__Masters' — facet 'degrees' is unsafe for data-driven exclusions (our feature vocab ≠ LinkedIn's).
+2026-04-30 00:10:36,513 INFO src.analysis stage_a dispatch → lift mode (T1 / resume-pass target: '_is_pass' — lift is the correct framing for pass-vs-fail)
+2026-04-30 00:10:36,514 INFO src.analysis Stage A target: T1 (resume-pass)
+2026-04-30 00:10:36,514 INFO src.analysis Global baseline: 12.4% (47/380)
+2026-04-30 00:10:36,536 INFO src.analysis Univariates: 1 accepted / 202 tested
+2026-04-30 00:10:36,537 INFO src.stage_c Stage C: validating 1 cohorts against LinkedIn Audience Counts
+2026-04-30 00:10:36,538 INFO src.stage_c Stage C: 1 cohorts have resolvable URNs
+2026-04-30 00:10:36,885 ERROR src.linkedin_api audienceCounts failed 400: {"errorDetailType":"com.linkedin.common.error.BadRequest","message":"Invalid param. Please see errorDetails for more information.","errorDetails":{"inputErrors":[{"description":"Invalid value for param; wrong type or other syntax error","input":{"inputPath":{"fieldPath":"targetingCriteria"}},"code":"PARAM_INVALID"}]},"status":400}
+2026-04-30 00:10:36,885 ERROR src.linkedin_api Audience count error: 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Adegrees%3AList%28urn%3Ali%3Adegree%3A952%29%29%29%29%29%29
+2026-04-30 00:10:36,885 WARNING src.stage_c Audience count failed for 'highest_degree_level__Phd': 400 Client Error: Bad Request for url: https://api.linkedin.com/rest/audienceCounts?q=targetingCriteriaV2&targetingCriteria=%28include%3A%28and%3AList%28%28or%3A%28urn%3Ali%3AadTargetingFacet%3Adegrees%3AList%28urn%3Ali%3Adegree%3A952%29%29%29%29%29%29 — skipping
+2026-04-30 00:10:36,885 INFO src.stage_c Stage C: 0 cohorts pass audience threshold
+2026-04-30 00:10:36,886 INFO src.stage_c Stage C complete: 0/5 cohorts selected
+2026-04-30 00:10:36,886 INFO main _resolve_cohorts: 1 cohorts selected
+2026-04-30 00:10:36,888 INFO src.redash_db Fetching prestige columns for 47 cb_ids
+2026-04-30 00:10:39,380 INFO src.redash_db Fetched 47 prestige rows
+2026-04-30 00:10:39,420 INFO main _resolve_cohorts: prestige signal — 42% of 47 positives are top-tier (school=42%, global-co=0%, country-co=0%) — below threshold, ignore
+2026-04-30 00:10:39,422 INFO main [dry-run] InMail cohort 0 'highest_degree_level__Phd' tg=GENERAL angle=A
+2026-04-30 00:10:49,965 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:10:49,968 INFO src.inmail_copy_writer InMail angle F generated for 'highest_degree_level__Phd'
+2026-04-30 00:10:59,637 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:10:59,639 INFO src.inmail_copy_writer InMail angle A generated for 'highest_degree_level__Phd'
+2026-04-30 00:11:08,201 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:11:08,203 INFO src.inmail_copy_writer InMail angle B generated for 'highest_degree_level__Phd'
+2026-04-30 00:11:21,063 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:11:21,065 INFO src.inmail_copy_writer InMail angle C generated for 'highest_degree_level__Phd'
+2026-04-30 00:11:21,065 INFO main [dry-run] Subject: PhD Expertise + AI = Flexible $50/hr
+2026-04-30 00:11:21,065 INFO main [dry-run] Body (first 100): $50/hr to put your doctoral expertise to work — that's what Outlier pays contributors who help shape…
+2026-04-30 00:11:21,065 INFO main [dry-run] CTA: Start Contributing
+2026-04-30 00:11:21,069 WARNING main InMail angle A: 2 brand voice violations
+2026-04-30 00:11:21,069 WARNING main   Must fix: 1
+2026-04-30 00:11:21,069 WARNING main   Should fix: 0
+2026-04-30 00:11:21,069 ERROR main InMail angle A has MUST-FIX violations
+2026-04-30 00:11:21,069 ERROR main     Active Voice Only: 'is processed' → Convert to active voice: use a strong verb instead
+2026-04-30 00:11:21,071 INFO src.figma_creative Loaded 4 competitor experiment ideas for copy gen
+2026-04-30 00:11:21,071 INFO src.figma_creative LiteLLM copy gen — cohort=highest_degree_level__Phd signals=1 populated=0
+2026-04-30 00:11:38,154 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:11:38,162 INFO src.figma_creative Generated 3 copy variants for 'highest_degree_level__Phd'
+2026-04-30 00:11:38,199 INFO src.gemini_creative Creative generation attempt 1/3 (angle=A)
+2026-04-30 00:11:38,200 INFO src.gemini_creative Gemini call — angle=A photo_subject='female South Asian postdoctoral researcher, reviewing academic papers on a lapto'
+2026-04-30 00:11:38,200 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female South Asian postdoctoral researcher, reviewing academic papers on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of
+2026-04-30 00:11:38,200 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-30 00:11:38,200 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-30 00:11:52,676 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-30 00:11:52,753 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-30 00:11:53,279 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpsxvx3ch8_gemini_female_south_asian_postdoctora_A.png (1196328 bytes)
+2026-04-30 00:11:53,285 INFO src.copy_design_qc Copy length violations found: ['intro_text contains em dash (banned in contributor copy): "Between grant cycles? Your hard-science expertise is exactly what AI labs can\'t easily find — and Outlier pays for it."']
+2026-04-30 00:11:53,285 INFO src.gemini_creative QC attempt 1: FAIL (target=copywriter, 1 violations)
+2026-04-30 00:11:53,285 INFO src.gemini_creative Copy QC failed — invoking copy_rewriter
+2026-04-30 00:11:56,374 INFO httpx HTTP Request: POST https://litellm-proxy.ml-serving-internal.scale.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-30 00:11:56,378 INFO src.figma_creative Copy rewritten (angle A, fields=['intro_text']): {'intro_text': "Between grant cycles? Your hard-science expertise is exactly what AI labs can't easily find. Outlier pays for it."}
+2026-04-30 00:11:56,378 INFO src.gemini_creative Creative generation attempt 2/3 (angle=A)
+2026-04-30 00:11:56,378 INFO src.gemini_creative Gemini call — angle=A photo_subject='female South Asian postdoctoral researcher, reviewing academic papers on a lapto'
+2026-04-30 00:11:56,378 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female South Asian postdoctoral researcher, reviewing academic papers on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of
+2026-04-30 00:11:56,378 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-30 00:11:56,378 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-30 00:12:10,205 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-30 00:12:10,275 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-30 00:12:10,817 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpq38ze7yr_gemini_female_south_asian_postdoctora_A.png (1198733 bytes)
+2026-04-30 00:12:28,807 INFO src.gemini_creative QC attempt 2: FAIL (target=gemini, 1 violations)
+2026-04-30 00:12:28,807 INFO src.gemini_creative Attaching 1 failure-region crop(s) to next attempt
+2026-04-30 00:12:28,807 INFO src.gemini_creative Creative generation attempt 3/3 (angle=A)
+2026-04-30 00:12:28,807 INFO src.gemini_creative Gemini call — angle=A photo_subject='female South Asian postdoctoral researcher, reviewing academic papers on a lapto'
+2026-04-30 00:12:28,807 INFO src.gemini_creative Imagen prompt (first 200 chars): PHOTO GENERATION PROMPT:
+
+A close-up environmental portrait of a female South Asian postdoctoral researcher, reviewing academic papers on a laptop at a home desk. HEAD PLACEMENT (CRITICAL): the TOP of
+2026-04-30 00:12:28,807 INFO src.gemini_creative Reference image inline: YES (1727428 chars b64)
+2026-04-30 00:12:28,807 INFO src.gemini_creative QC prompt suffix applied: Append the following to the Gemini prompt for this variant:
+- EDGE STRIPE STILL DETECTED BY PIXEL CHECK. Tell Gemini 'I am sampling the outer 4 pixels of each edge programmatically and counting any sa
+2026-04-30 00:12:28,807 INFO src.gemini_creative Reference image attached inline (1727428 chars base64)
+2026-04-30 00:12:28,807 INFO src.gemini_creative QC feedback crop #1 attached inline (102288 chars base64)
+2026-04-30 00:12:44,107 INFO src.gemini_creative Imagen photo received (1024x1024)
+2026-04-30 00:12:44,181 WARNING src.gemini_creative Could not rasterize Outlier logo SVG: No module named 'cairosvg'
+2026-04-30 00:12:44,489 INFO src.gemini_creative Gemini creative saved: /var/folders/qj/048xp28d495_9y_lnmf479180000gn/T/tmpnm72ka4i_gemini_female_south_asian_postdoctora_A.png (1511643 bytes)
+2026-04-30 00:13:04,712 INFO src.gemini_creative QC attempt 3: FAIL (target=gemini, 4 violations)
+2026-04-30 00:13:04,712 INFO src.gemini_creative QC flagged reference-image mimicry — dropping reference image for next retry
+2026-04-30 00:13:04,712 WARNING src.gemini_creative Creative still failing QC after 3 attempts — returning best-so-far attempt with 1 violations (last had 4)
+2026-04-30 00:13:04,713 ERROR main Static QC FAIL for 'highest_degree_level__Phd' after 1 attempts; REJECTING creative. Campaign will be created without an image. Violations: ['intro_text contains em dash (banned in contributor copy): "Between grant cycles? Your hard-science expertise is exactly what AI labs can\'t easily find — and Outlier pays for it."']
+2026-04-30 00:13:04,713 INFO main [dry-run] _process_static_campaigns: skipping LinkedIn calls (1 cohorts)
+2026-04-30 00:13:04,718 INFO smart_ramp_poller [DRY-RUN] would notify (kind=None) for ramp=GMR-0016
+EXIT=0

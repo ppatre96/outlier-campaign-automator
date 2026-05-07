@@ -250,7 +250,12 @@ def _process_row(
     # signup flow / screening config — captures every activator on the project).
     # Fallback path: legacy flow-scoped RESUME_SQL when no project_id is available.
     if project_id:
-        df_raw = snowflake.fetch_stage1_contributors(project_id)
+        df_raw, resolved_flow_id, resolved_config = snowflake.fetch_screenings_by_project(
+            project_id,
+            end_date=date.today().isoformat(),
+        )
+        flow_id     = flow_id     or resolved_flow_id
+        config_name = config_name or resolved_config
         if df_raw.empty:
             log.info(
                 "No activators found for project=%s — branching to cold_start mode",
@@ -799,7 +804,7 @@ def _process_row(
         run_summary_contexts.append({
             "project_id": project_id or "—",
             "flow_id": flow_id,
-            "config_name": sheet_cfg.get("CONFIG_NAME") if isinstance(sheet_cfg, dict) else None,
+            "config_name": config_name or None,
             "cohort_name": cohort.name,
             "tg_label": getattr(cohort, "_tg_label", None),
             "pass_rate": getattr(cohort, "pass_rate", None),
@@ -2147,19 +2152,16 @@ def _process_static_campaigns(
     for cohort in capped_cohorts:
         # Outer loop: cohort. Middle: geo group. Inner: angle.
         for geo_group in geo_groups:
-            for angle_label in angle_labels:
-                angle_idx = angle_labels.index(angle_label)
-                variants: list[dict] = []
-                png_path: Path | None = None
-
-                geo_label = geo_group.cluster_label
-                group_geos = geo_group.geos or raw_geos  # fallback to raw if no split
+            geo_label   = geo_group.cluster_label
+            group_geos  = geo_group.geos or raw_geos
 
             log.info(
                 "_process_static_campaigns: cohort '%s' × geo_group '%s' (%s) rate=%s",
                 cohort.name, geo_label, group_geos, geo_group.advertised_rate,
             )
 
+            # Copy gen once per cohort×geo (shared across all angles)
+            variants: list[dict] = []
             try:
                 layer_map = (
                     figma_client.get_text_layer_map(figma_file, figma_node)
@@ -2176,55 +2178,61 @@ def _process_static_campaigns(
                 log.warning("Static copy generation failed for '%s' / '%s': %s",
                             cohort.name, geo_label, exc)
 
-            selected_variant = variants[angle_idx] if angle_idx < len(variants) else {}
-
-            # Image gen for this (cohort, geo_group) pair
-            png_path: Path | None = None
             skip_image_gen = dry_run and not os.environ.get("WITH_IMAGES")
-            if not skip_image_gen:
-                if has_figma and variants:
-                    try:
-                        tg_label = variants[0].get("tg_label", cohort.name) if variants else cohort.name
-                        clone_ids = apply_plugin_logic(figma_file, figma_node, variants, tg_label, claude_key)
-                        if clone_ids:
-                            selected_id = clone_ids[angle_idx % len(clone_ids)]
-                            pngs = figma_client.export_clone_pngs(figma_file, [selected_id])
-                            png_path = pngs[0] if pngs else None
-                    except Exception as exc:
-                        log.warning("Static Figma path failed for '%s': %s — falling back to Gemini",
-                                    cohort.name, exc)
 
-                if png_path is None and selected_variant:
-                    try:
-                        from src.figma_creative import rewrite_variant_copy
-                        png_path, qc_report = generate_imagen_creative_with_qc(
-                            variant=selected_variant,
-                            copy_rewriter=rewrite_variant_copy,
-                        )
-                        if qc_report and qc_report.get("verdict") == "FAIL":
-                            log.error(
-                                "Static QC FAIL for '%s' / '%s' after %d attempts; REJECTING creative. "
-                                "Violations: %s",
-                                cohort.name, geo_label,
-                                qc_report.get("attempts", 1),
-                                qc_report.get("violations", []),
+            # Image gen + spec accumulation once per angle
+            for angle_label in angle_labels:
+                angle_idx        = angle_labels.index(angle_label)
+                selected_variant = variants[angle_idx] if angle_idx < len(variants) else {}
+                png_path: Path | None = None
+                qc_report: dict = {}
+
+                if not skip_image_gen:
+                    if has_figma and variants:
+                        try:
+                            tg_label = variants[0].get("tg_label", cohort.name) if variants else cohort.name
+                            clone_ids = apply_plugin_logic(figma_file, figma_node, variants, tg_label, claude_key)
+                            if clone_ids:
+                                selected_id = clone_ids[angle_idx % len(clone_ids)]
+                                pngs = figma_client.export_clone_pngs(figma_file, [selected_id])
+                                png_path = pngs[0] if pngs else None
+                        except Exception as exc:
+                            log.warning("Static Figma path failed for '%s': %s — falling back to Gemini",
+                                        cohort.name, exc)
+
+                    if png_path is None and selected_variant:
+                        try:
+                            from src.figma_creative import rewrite_variant_copy
+                            png_path, qc_report = generate_imagen_creative_with_qc(
+                                variant=selected_variant,
+                                copy_rewriter=rewrite_variant_copy,
                             )
+                            if qc_report and qc_report.get("verdict") == "FAIL":
+                                log.error(
+                                    "Static QC FAIL for '%s' / '%s' after %d attempts; REJECTING creative. "
+                                    "Violations: %s",
+                                    cohort.name, geo_label,
+                                    qc_report.get("attempts", 1),
+                                    qc_report.get("violations", []),
+                                )
+                                png_path = None
+                        except Exception as exc:
+                            log.warning("Static Gemini path failed for '%s' / '%s': %s",
+                                        cohort.name, geo_label, exc)
                             png_path = None
-                    except Exception as exc:
-                        log.warning("Static Gemini path failed for '%s' / '%s': %s",
-                                    cohort.name, geo_label, exc)
-                        png_path = None
+                            qc_report = {}
 
-            # Accumulate spec for LinkedIn creation
-            campaign_specs.append({
-                "cohort":      cohort,
-                "geo_group":   geo_group,
-                "group_geos":  group_geos,
-                "angle_idx":   angle_idx,
-                "angle_label": angle_label,
-                "variants":    variants,
-                "png_path":    png_path,
-            })
+                # Accumulate one spec per (cohort × geo_group × angle)
+                campaign_specs.append({
+                    "cohort":      cohort,
+                    "geo_group":   geo_group,
+                    "group_geos":  group_geos,
+                    "angle_idx":   angle_idx,
+                    "angle_label": angle_label,
+                    "variants":    variants,
+                    "png_path":    png_path,
+                    "qc_report":   qc_report,
+                })
 
     if dry_run:
         log.info(
@@ -2292,7 +2300,8 @@ def _process_static_campaigns(
                      campaign_urn, base_id, geo_group.cluster_label, angle_label)
 
             # Log to campaign registry immediately at creation
-            variant = variants[angle_idx] if angle_idx < len(variants) else {}
+            variant   = variants[angle_idx] if angle_idx < len(variants) else {}
+            qc_report = spec.get("qc_report", {})
             try:
                 _reg_log(
                     smart_ramp_id=ramp_id or "",
@@ -2308,6 +2317,7 @@ def _process_static_campaigns(
                     headline=variant.get("headline", ""),
                     subheadline=variant.get("subheadline", ""),
                     photo_subject=variant.get("photo_subject", ""),
+                    gemini_prompt=qc_report.get("gemini_prompt", ""),
                 )
             except Exception as _exc:
                 log.warning("Registry log failed (non-fatal): %s", _exc)
@@ -2385,8 +2395,8 @@ def _process_static_campaigns(
         except Exception as exc:
             # Per-cohort isolation: log + continue with next cohort.
             log.exception(
-                "_process_static_campaigns: cohort %d '%s' failed — continuing with next cohort: %s",
-                i, getattr(cohort, "name", "?"), exc,
+                "_process_static_campaigns: cohort '%s' angle=%s geo=%s failed — continuing: %s",
+                getattr(cohort, "name", "?"), angle_label, geo_label, exc,
             )
             continue
 

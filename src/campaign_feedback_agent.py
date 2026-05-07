@@ -636,6 +636,292 @@ def _build_brief(score: CreativeScore) -> dict:
     }
 
 
+# ── Replacement angle generation ──────────────────────────────────────────────
+
+_HOOK_ROTATION: dict[str, str] = {
+    "learning_growth":    "expert_identity",
+    "expert_identity":    "community_identity",
+    "community_identity": "financial",
+    "financial":          "legacy_impact",
+    "legacy_impact":      "expert_identity",
+    "story_driven":       "expert_identity",
+    "unknown":            "expert_identity",
+}
+
+_HOOK_DESCRIPTIONS: dict[str, str] = {
+    "expert_identity":    "Open by validating the reader's existing expertise: 'You already know how to X'",
+    "community_identity": "Open by addressing a specific community: 'Python engineers:' or 'ML researchers:'",
+    "financial":          "Lead with a specific rate or earnings claim: '$700–1,100/week for your expertise'",
+    "legacy_impact":      "Open with impact on others: 'The AI models you help train will be used by millions'",
+    "story_driven":       "Open with a short first-person story or anecdote from a contributor",
+}
+
+_REPLACEMENT_COPY_PROMPT = """You are an ad copywriter for Outlier, an AI training platform that pays professionals to evaluate and improve AI models.
+
+A LinkedIn image ad has been deprecated because it underperformed. Generate a SINGLE replacement copy variant using a different hook.
+
+DEPRECATED AD (what failed):
+- Audience: {cohort_name}
+- Headline: {old_headline}
+- Subheadline: {old_subheadline}
+- Problems: {problems}
+
+{winner_section}
+
+AUDIENCE: {cohort_name}
+GEO: {geo_label}
+RATE: {rate}
+
+TARGET HOOK: {target_hook}
+Description: {hook_description}
+
+OUTLIER VOCABULARY RULES — MUST FOLLOW:
+- Never say: job, role, position, required, training, bonus, assign, team, instructions, compensation, performance
+- Always say: opportunity or task (not job), strongly encouraged (not required), become familiar with project guidelines (not training), reward (not bonus), match (not assign), part of this project (not team), project guidelines (not instructions), payment (not compensation), progress (not performance)
+
+Generate exactly ONE ad variant. Return a JSON object with these keys:
+{{
+  "headline":      "...",
+  "subheadline":   "...",
+  "photo_subject": "...",
+  "cta":           "Apply Now"
+}}
+
+Hard limits:
+- headline: max 6 words, max 40 characters (INCLUDING spaces)
+- subheadline: max 7 words, max 48 characters (INCLUDING spaces)
+- Use the TARGET HOOK type — do NOT repeat the hook type from the failed ad
+- Return only valid JSON, no markdown, no extra text"""
+
+
+def _next_angle_label(existing_angles: list[str]) -> str:
+    used = {a.upper() for a in existing_angles if a}
+    for letter in "DEFGHIJKLMNOPQRSTUVWXYZ":
+        if letter not in used:
+            return letter
+    return "Z"
+
+
+def _generate_replacement_copy(
+    cohort_name: str,
+    old_headline: str,
+    old_subheadline: str,
+    problems: list[str],
+    winner_entry: Optional[dict],
+    rate: str,
+    geo_label: str,
+    old_hook: str = "unknown",
+) -> Optional[dict]:
+    """Use Claude to generate a single new copy variant for a deprecated campaign."""
+    target_hook = _HOOK_ROTATION.get(old_hook, "expert_identity")
+    hook_desc   = _HOOK_DESCRIPTIONS.get(target_hook, "")
+
+    if winner_entry and winner_entry.get("headline"):
+        winner_section = (
+            f"WINNING ANGLE (best CTR for this cohort — use as inspiration but do NOT copy):\n"
+            f"- Headline: {winner_entry['headline']}\n"
+            f"- Subheadline: {winner_entry.get('subheadline', '')}\n"
+            f"- CTR: {winner_entry.get('ctr_pct') or 'unknown'}%"
+        )
+    else:
+        winner_section = "WINNING ANGLE: Not yet established for this cohort."
+
+    prompt = _REPLACEMENT_COPY_PROMPT.format(
+        cohort_name=cohort_name,
+        old_headline=old_headline,
+        old_subheadline=old_subheadline,
+        problems="; ".join(problems[:3]) if problems else "underperformed overall",
+        winner_section=winner_section,
+        geo_label=geo_label,
+        rate=rate,
+        target_hook=target_hook,
+        hook_description=hook_desc,
+    )
+
+    try:
+        raw = call_claude(
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=400,
+        ).strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        return json.loads(raw)
+    except Exception as exc:
+        log.warning("Replacement copy gen failed: %s", exc)
+        return None
+
+
+def _launch_replacement_campaign(
+    deprecated_entry: dict,
+    brief: dict,
+    li_client,
+) -> Optional[str]:
+    """
+    Auto-generate and launch a replacement campaign for a deprecated angle.
+
+    Steps:
+      1. Determine next angle label for this cohort+geo
+      2. Idempotency check — skip if an active replacement already exists
+      3. Look up best-performing active angle (for winning signals context)
+      4. Generate replacement copy via Claude
+      5. Generate Gemini image
+      6. Clone deprecated campaign's targeting → new DRAFT campaign
+      7. Upload image + attach creative
+      8. Log to campaign registry
+
+    Returns new campaign URN, or None on skip/failure.
+    """
+    from src.campaign_registry import (
+        get_cohort_entries,
+        log_campaign as _reg_log,
+    )
+    from src.gemini_creative import generate_imagen_creative_with_qc
+    from src.figma_creative import rewrite_variant_copy
+
+    campaign_type = deprecated_entry.get("campaign_type", "static")
+    if campaign_type != "static":
+        log.info(
+            "Replacement angle: skipping non-static campaign %s",
+            deprecated_entry.get("linkedin_campaign_urn"),
+        )
+        return None
+
+    cohort_id   = deprecated_entry.get("cohort_id", "")
+    geo_cluster = deprecated_entry.get("geo_cluster", "")
+    cohort_name = deprecated_entry.get("cohort_signature", "")
+    geo_label   = deprecated_entry.get("geo_cluster_label", "")
+    rate        = deprecated_entry.get("advertised_rate", "$50/hr")
+    geos        = [
+        g.strip() for g in (deprecated_entry.get("geos") or "").split(",") if g.strip()
+    ]
+    deprecated_urn = deprecated_entry.get("linkedin_campaign_urn", "")
+
+    cohort_entries = get_cohort_entries(cohort_id, geo_cluster)
+    existing_angles = [e.get("angle", "") for e in cohort_entries]
+
+    # Idempotency: skip if a non-deprecated replacement angle (D+) already exists
+    active_replacements = [
+        e for e in cohort_entries
+        if (e.get("angle") or "") > "C" and e.get("status") in ("active", "paused")
+    ]
+    if active_replacements:
+        log.info(
+            "Replacement already exists for cohort=%s geo=%s (angles=%s) — skipping",
+            cohort_id, geo_cluster,
+            [e.get("angle") for e in active_replacements],
+        )
+        return None
+
+    next_label = _next_angle_label(existing_angles)
+
+    # Best-performing active angle for winning-signal context
+    active_entries = [
+        e for e in cohort_entries
+        if e.get("status") == "active" and (e.get("ctr_pct") or 0) > 0
+    ]
+    winner_entry = active_entries[0] if active_entries else None
+
+    copy_out = _generate_replacement_copy(
+        cohort_name=cohort_name,
+        old_headline=deprecated_entry.get("headline", ""),
+        old_subheadline=deprecated_entry.get("subheadline", ""),
+        problems=brief.get("problems", []),
+        winner_entry=winner_entry,
+        rate=rate,
+        geo_label=geo_label,
+    )
+    if not copy_out or not copy_out.get("headline"):
+        log.warning("Replacement copy gen returned empty — aborting for %s", cohort_id)
+        return None
+
+    headline      = copy_out["headline"]
+    subheadline   = copy_out.get("subheadline", "")
+    photo_subject = copy_out.get("photo_subject", "")
+
+    variant = {
+        "angle":         next_label,
+        "headline":      headline,
+        "subheadline":   subheadline,
+        "photo_subject": photo_subject,
+        "cta":           copy_out.get("cta", "Apply Now"),
+        "tgLabel":       cohort_name,
+    }
+
+    png_path: Optional[Path] = None
+    try:
+        png_path, qc_report = generate_imagen_creative_with_qc(
+            variant=variant,
+            copy_rewriter=rewrite_variant_copy,
+        )
+        if qc_report and qc_report.get("verdict") == "FAIL":
+            log.warning(
+                "Replacement QC FAIL for cohort=%s angle=%s after %d attempts — shipping best attempt",
+                cohort_id, next_label, qc_report.get("attempts", 1),
+            )
+    except Exception as exc:
+        log.warning("Replacement image gen failed for %s: %s", cohort_id, exc)
+
+    campaign_name = f"{cohort_name[:30]} [{geo_label}] {next_label}"
+    try:
+        new_campaign_urn = li_client.clone_campaign(deprecated_urn, campaign_name)
+    except Exception as exc:
+        log.error("Failed to clone campaign %s: %s", deprecated_urn, exc)
+        return None
+
+    creative_urn = ""
+    if png_path and Path(str(png_path)).exists():
+        try:
+            image_urn = li_client.upload_image(png_path)
+            result = li_client.create_image_ad(
+                campaign_urn=new_campaign_urn,
+                image_urn=image_urn,
+                headline=headline,
+                description=subheadline,
+                cta_button="APPLY",
+            )
+            creative_urn = result.creative_urn if result.status == "ok" else ""
+            if result.status != "ok":
+                log.warning(
+                    "Creative attach returned status=%s: %s",
+                    result.status, result.error_message,
+                )
+        except Exception as exc:
+            log.warning("Creative attach failed for %s: %s", new_campaign_urn, exc)
+    else:
+        log.info(
+            "No PNG for replacement campaign %s — launching without creative",
+            new_campaign_urn,
+        )
+
+    try:
+        _reg_log(
+            smart_ramp_id=deprecated_entry.get("smart_ramp_id", ""),
+            cohort_id=cohort_id,
+            cohort_signature=cohort_name,
+            geo_cluster=geo_cluster,
+            geo_cluster_label=geo_label,
+            geos=geos,
+            angle=next_label,
+            campaign_type="static",
+            advertised_rate=rate,
+            linkedin_campaign_urn=new_campaign_urn,
+            creative_urn=creative_urn,
+            headline=headline,
+            subheadline=subheadline,
+            photo_subject=photo_subject,
+        )
+    except Exception as exc:
+        log.warning("Registry log for replacement failed: %s", exc)
+
+    log.info(
+        "Auto-replacement: %s → %s (cohort=%s angle=%s geo=%s)",
+        deprecated_urn, new_campaign_urn, cohort_id, next_label, geo_label,
+    )
+    return new_campaign_urn
+
+
 # ── Experiment queue management ────────────────────────────────────────────────
 
 def _load_queue() -> list[dict]:
@@ -836,7 +1122,7 @@ def _build_report(scores: list[CreativeScore],
     lines += ["", "*EXPERIMENT QUEUE*"]
 
     if pending:
-        lines.append(f"_Pending ({len(pending)} — awaiting implementation):_")
+        lines.append(f"_Pending ({len(pending)} — auto-replacement launched for static campaigns):_")
         for e in pending:
             lines.append(f"  🟠 {e['id']}")
             lines.append(f"     Campaign: {e['campaign_id']} | Creative: {e['current_creative_id']}")
@@ -947,11 +1233,15 @@ def run(window: int = 60) -> str:
     _save_vision_cache(vision_cache)
 
     # 4. Push metrics + deprecation decisions to campaign registry
+    newly_deprecated: list[tuple[CreativeScore, dict]] = []
     try:
-        from src.campaign_registry import update_metrics as _reg_metrics, deprecate_campaign as _reg_deprecate
+        from src.campaign_registry import (
+            update_metrics as _reg_metrics,
+            deprecate_campaign as _reg_deprecate,
+            get_entry_by_urn as _reg_get_entry,
+        )
         for s in scores:
             m = s.metrics
-            # Build campaign URN from campaign_id (LinkedIn numeric ID → URN format)
             campaign_urn = f"urn:li:sponsoredCampaign:{m.campaign_id}" if m.campaign_id else ""
             if campaign_urn:
                 _reg_metrics(
@@ -966,8 +1256,30 @@ def run(window: int = 60) -> str:
                     campaign_urn,
                     reason=f"PAUSE — score {s.total:.0f}/100 (CTR={m.lp_ctr:.2f}%, CPC=${m.cpc_lp:.2f})",
                 )
+                entry = _reg_get_entry(campaign_urn)
+                if entry:
+                    newly_deprecated.append((s, entry))
     except Exception as _exc:
         log.warning("Registry update failed (non-fatal): %s", _exc)
+
+    # Auto-generate replacement campaigns for newly deprecated angles
+    if newly_deprecated:
+        try:
+            from src.linkedin_api import LinkedInClient
+            li_client = LinkedInClient(token=config.LINKEDIN_TOKEN)
+            for s, entry in newly_deprecated:
+                new_urn = _launch_replacement_campaign(
+                    deprecated_entry=entry,
+                    brief=s.experiment_brief or {},
+                    li_client=li_client,
+                )
+                if new_urn:
+                    log.info(
+                        "Auto-replacement launched: %s → %s",
+                        entry.get("linkedin_campaign_urn"), new_urn,
+                    )
+        except Exception as exc:
+            log.warning("Replacement angle gen failed (non-fatal): %s", exc)
 
     # 5. Load and update experiment queue
     queue = _load_queue()

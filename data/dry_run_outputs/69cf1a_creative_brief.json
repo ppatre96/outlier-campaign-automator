@@ -10,34 +10,43 @@
     {
       "angle": "A",
       "angleLabel": "Expertise Hook",
-      "headline": "AI labs need your\nPhD-level reasoning.",
-      "subheadline": "Review and improve AI outputs in your exact field.",
-      "cta": "Apply Now",
-      "photo_subject": "female East Asian postdoctoral researcher, annotating printed academic papers at a home desk with a laptop open beside her",
-      "layerUpdates": {}
+      "headline": "AI labs need your expertise.",
+      "subheadline": "Improve AI outputs in your field.",
+      "intro_text": "Your PhD expertise has AI value. Train frontier models in your exact field \u2014 remote, on your schedule.",
+      "ad_headline": "Put your PhD-level reasoning to work for AI labs",
+      "ad_description": "Remote. 5\u201315 flexible hours a week. Payment weekly.",
+      "cta_button": "APPLY",
+      "destination_url": "https://outlier.ai/expert-signup?utm_source=linkedin&utm_campaign=69cf1a039ed66cc82e0fa8f3&utm_content=angle_A",
+      "photo_subject": "female East Asian postdoctoral researcher, annotating printed academic papers at a home desk with a laptop open beside her"
     },
     {
       "angle": "B",
       "angleLabel": "Earnings Hook",
-      "headline": "PhD researchers worldwide\nare already earning.",
-      "subheadline": "Scale AI-backed, enterprise-grade security. Flexible payment, real work.",
-      "cta": "Start Earning",
-      "photo_subject": "male South Asian academic researcher, reviewing data charts on a laptop at a home office desk in natural light",
-      "layerUpdates": {}
+      "headline": "PhD researchers are earning.",
+      "subheadline": "Real work, flexible payment. Start today.",
+      "intro_text": "PhD researchers worldwide are earning $25\u2013$50/hr reviewing AI outputs. Scale AI-backed, enterprise-grade.",
+      "ad_headline": "Get paid $25\u2013$50/hr for the expertise you already have",
+      "ad_description": "Scale AI-backed. Flexible payment. Real work in your field.",
+      "cta_button": "APPLY",
+      "destination_url": "https://outlier.ai/expert-signup?utm_source=linkedin&utm_campaign=69cf1a039ed66cc82e0fa8f3&utm_content=angle_B",
+      "photo_subject": "male South Asian academic researcher, reviewing data charts on a laptop at a home office desk in natural light"
     },
     {
       "angle": "C",
       "angleLabel": "Flexibility Hook",
-      "headline": "Grant deadlines don't\ndefine your income.",
-      "subheadline": "Train AI from home, between research cycles.",
-      "cta": "Get Matched Today",
-      "photo_subject": "female Northern European PhD researcher, typing on a laptop at a bright home desk surrounded by academic books and a coffee mug",
-      "layerUpdates": {}
+      "headline": "Work around your research.",
+      "subheadline": "Train AI at home, between lab cycles.",
+      "intro_text": "Between research cycles? Train AI in your exact field \u2014 no grant deadlines, no clients to chase.",
+      "ad_headline": "Earn between research projects, from anywhere",
+      "ad_description": "Remote. Pick your hours. Weekly payment.",
+      "cta_button": "APPLY",
+      "destination_url": "https://outlier.ai/expert-signup?utm_source=linkedin&utm_campaign=69cf1a039ed66cc82e0fa8f3&utm_content=angle_C",
+      "photo_subject": "female Northern European PhD researcher, typing on a laptop at a bright home desk surrounded by academic books and a coffee mug"
     }
   ],
   "image_paths": {
-    "A": "data/dry_run_outputs/69cf1a_A.png",
-    "B": "data/dry_run_outputs/69cf1a_B.png",
-    "C": "data/dry_run_outputs/69cf1a_C.png"
+    "A": "/Users/pranavpatre/outlier-campaign-agent/data/project_creatives/69cf1a039ed66cc82e0fa8f3_variant_A.png",
+    "B": "/Users/pranavpatre/outlier-campaign-agent/data/project_creatives/69cf1a039ed66cc82e0fa8f3_variant_B.png",
+    "C": "/Users/pranavpatre/outlier-campaign-agent/data/project_creatives/69cf1a039ed66cc82e0fa8f3_variant_C.png"
   }
 }

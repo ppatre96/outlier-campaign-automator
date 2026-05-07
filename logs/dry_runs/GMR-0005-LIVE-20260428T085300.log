@@ -1,0 +1,13 @@
+2026-04-28 14:23:00,650 INFO smart_ramp_poller Smart Ramp Poller starting (once=True ramp_id=GMR-0005 dry_run=False) -> /Users/pranavpatre/outlier-campaign-agent/logs/smart_ramp_poller/2026-04-28.log
+2026-04-28 14:23:02,527 INFO smart_ramp_poller Running pipeline for ramp=GMR-0005 version=1 dry_run=False
+2026-04-28 14:23:04,960 INFO src.redash_db RedashClient ready → https://redash.scale.com (data_source_id=30)
+2026-04-28 14:23:04,962 INFO src.redash_db Resolving project_id=699768af59d27cc33ff9f3c1 to signup_flow_id + config_name
+2026-04-28 14:23:11,072 INFO src.redash_db Resolved project → signup_flow_id=699cb29c3defc15797e4590a config='[Experts] Singapore Law' (passes=16)
+2026-04-28 14:23:11,073 INFO src.redash_db Fetching screenings via Redash for flow=699cb29c3defc15797e4590a config=[Experts] Singapore Law
+2026-04-28 14:23:21,134 INFO src.redash_db Fetched 0 screening rows
+2026-04-28 14:23:21,134 WARNING main _resolve_cohorts: no Stage 1 data for project=699768af59d27cc33ff9f3c1 flow=699cb29c3defc15797e4590a — empty result
+2026-04-28 14:23:21,135 WARNING main _process_row_both_modes: no cohorts resolved for row c9a1fde4-3de8-441e-a876-3fca3f2f2eb1 — skipping both arms
+2026-04-28 14:23:22,085 WARNING src.smart_ramp_notifier Slack send to user=U095J930UEL failed: token_expired — continuing with other targets
+2026-04-28 14:23:23,000 WARNING src.smart_ramp_notifier Slack send to user=U08AW9FCP27 failed: token_expired — continuing with other targets
+2026-04-28 14:23:23,927 WARNING src.smart_ramp_notifier Slack send to channel=C0B0NBB986L failed: token_expired — continuing with other targets
+2026-04-28 14:23:25,863 WARNING src.smart_ramp_notifier Degraded mode: all 3 Slack bot targets failed; fell back to webhook. Diego DM and channel C0B0NBB986L SKIPPED — refresh SLACK_BOT_TOKEN to restore full delivery.

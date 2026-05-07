@@ -29,6 +29,20 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
+_sheets_client = None
+
+def _get_sheets():
+    global _sheets_client
+    if _sheets_client is None:
+        try:
+            from src.sheets import SheetsClient
+            _sheets_client = SheetsClient()
+        except Exception as exc:
+            log.warning("Could not init SheetsClient for registry: %s", exc)
+            from src.sheets import NullSheetsClient
+            _sheets_client = NullSheetsClient()
+    return _sheets_client
+
 _REGISTRY_PATH = Path("data/campaign_registry.json")
 _EXCEL_PATH    = Path("data/campaign_registry.xlsx")
 
@@ -56,6 +70,7 @@ COLUMNS = [
     "created_at",
     "status",                   # active | paused | deprecated
     "deprecation_reason",
+    "gemini_prompt",            # base Gemini image gen prompt (first attempt, no QC suffix)
     # ── Performance metrics (filled by feedback agent) ─────────────────────────
     "impressions",
     "clicks",
@@ -90,6 +105,7 @@ class CampaignEntry:
     created_at:             str = ""
     status:                 str = "active"
     deprecation_reason:     str = ""
+    gemini_prompt:          str = ""
     # metrics — empty until feedback agent runs
     impressions:            int | None = None
     clicks:                 int | None = None
@@ -189,6 +205,7 @@ def log_campaign(
     photo_subject: str = "",
     inmail_subject: str = "",
     inmail_body: str = "",
+    gemini_prompt: str = "",
 ) -> None:
     """Append one campaign row to the registry. Safe to call from both arms."""
     entry = CampaignEntry(
@@ -208,16 +225,22 @@ def log_campaign(
         photo_subject=photo_subject,
         inmail_subject=inmail_subject,
         inmail_body_preview=inmail_body[:150] if inmail_body else "",
+        gemini_prompt=gemini_prompt,
         created_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         status="active",
     )
     records = _load()
-    records.append(asdict(entry))
+    entry_dict = asdict(entry)
+    records.append(entry_dict)
     _save(records)
     log.info(
         "Registry: logged %s campaign %s (ramp=%s cohort=%s angle=%s geo=%s)",
         campaign_type, linkedin_campaign_urn, smart_ramp_id, cohort_id, angle, geo_cluster_label,
     )
+    try:
+        _get_sheets().write_registry_row(entry_dict)
+    except Exception as exc:
+        log.warning("Registry sheet write failed (non-fatal): %s", exc)
 
 
 def update_metrics(
@@ -270,6 +293,25 @@ def get_active_campaigns(smart_ramp_id: str | None = None) -> list[dict]:
         if r.get("status") == "active"
         and (smart_ramp_id is None or r.get("smart_ramp_id") == smart_ramp_id)
     ]
+
+
+def get_entry_by_urn(linkedin_campaign_urn: str) -> dict | None:
+    """Return the registry entry for a campaign URN, or None."""
+    records = _load()
+    return next(
+        (r for r in records if r.get("linkedin_campaign_urn") == linkedin_campaign_urn),
+        None,
+    )
+
+
+def get_cohort_entries(cohort_id: str, geo_cluster: str) -> list[dict]:
+    """Return all registry entries for a cohort+geo combo, sorted by CTR desc."""
+    records = _load()
+    entries = [
+        r for r in records
+        if r.get("cohort_id") == cohort_id and r.get("geo_cluster") == geo_cluster
+    ]
+    return sorted(entries, key=lambda r: r.get("ctr_pct") or 0.0, reverse=True)
 
 
 def get_registry_summary() -> dict:
