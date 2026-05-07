@@ -2506,6 +2506,7 @@ def _process_extra_platform_arm(
     ramp_id: str | None,
     cohort_id_override: str | None,
     destination_url_override: str | None,
+    unique_id: str | None = None,
 ) -> dict:
     """Per-platform static-ad arm for non-LinkedIn platforms (Meta + Google).
 
@@ -2834,6 +2835,7 @@ def _process_row_both_modes(
                         ramp_id=ramp_id,
                         cohort_id_override=cohort_id_override,
                         destination_url_override=destination_url_override,
+                        unique_id=unique_id,
                     )
                     extra_platform_results[platform_name] = r
                 except Exception:
