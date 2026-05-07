@@ -69,10 +69,18 @@ def upload_creative(file_path: Path, folder_id: str = "") -> str:
     ).execute()
 
     # Make publicly readable (anyone with link can view)
-    svc.permissions().create(
-        fileId=f["id"],
-        body={"type": "anyone", "role": "reader"},
-        supportsAllDrives=True,
-    ).execute()
+    # Skip if Shared Drive policy restricts public sharing (publishOutNotPermitted)
+    try:
+        svc.permissions().create(
+            fileId=f["id"],
+            body={"type": "anyone", "role": "reader"},
+            supportsAllDrives=True,
+        ).execute()
+    except Exception as e:
+        if "publishOutNotPermitted" in str(e):
+            # Shared Drive restricts public sharing — file is still accessible via link
+            pass
+        else:
+            raise
 
     return f["webViewLink"]

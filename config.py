@@ -53,6 +53,41 @@ LINKEDIN_REFRESH_TOKEN = os.getenv("LINKEDIN_REFRESH_TOKEN", "")
 LINKEDIN_CLIENT_ID     = os.getenv("LINKEDIN_CLIENT_ID", "")
 LINKEDIN_CLIENT_SECRET = os.getenv("LINKEDIN_CLIENT_SECRET", "")
 
+# ── Multi-platform expansion (Meta + Google Ads) ──────────────────────────────
+# Comma-separated list controlling which ad platforms the pipeline targets per
+# Smart Ramp run. Order is preserved (LinkedIn first by default for back-compat).
+ENABLED_PLATFORMS    = os.getenv("ENABLED_PLATFORMS", "linkedin,meta,google")
+
+# Meta and Google both gate certain campaigns under a "special ad category" for
+# regulated verticals. Outlier tasks are 1099 contractor work which Meta/Google
+# may classify as EMPLOYMENT — the safe default is to flag this and absorb the
+# targeting restrictions (no narrow age/gender). Set to "NONE" to disable.
+SPECIAL_AD_CATEGORY  = os.getenv("SPECIAL_AD_CATEGORY", "EMPLOYMENT")
+
+# Common name prefix applied to every campaign / group / creative the agent
+# creates so they're easy to filter in each platform's UI. Mirrors the existing
+# LinkedInClient.AGENT_NAME_PREFIX rule.
+AGENT_NAME_PREFIX    = os.getenv("AGENT_NAME_PREFIX", "agent_")
+
+# ── Meta Ads ──────────────────────────────────────────────────────────────────
+META_ACCESS_TOKEN    = os.getenv("META_ACCESS_TOKEN", "")
+META_APP_ID          = os.getenv("META_APP_ID", "")
+META_APP_SECRET      = os.getenv("META_APP_SECRET", "")
+META_AD_ACCOUNT_ID   = os.getenv("META_AD_ACCOUNT_ID", "")  # "act_<numeric>"
+META_API_VERSION     = os.getenv("META_API_VERSION", "v21.0")
+# Image ads need an object_story_spec.page_id — the Outlier Facebook Page ID.
+# Empty string disables Meta image-ad creation (campaigns + ad sets still get
+# logged, ad creation falls back to "local_fallback" status).
+META_PAGE_ID         = os.getenv("META_PAGE_ID", "")
+
+# ── Google Ads ────────────────────────────────────────────────────────────────
+GOOGLE_ADS_CLIENT_ID         = os.getenv("GOOGLE_ADS_CLIENT_ID", "")
+GOOGLE_ADS_CLIENT_SECRET     = os.getenv("GOOGLE_ADS_CLIENT_SECRET", "")
+GOOGLE_ADS_DEVELOPER_TOKEN   = os.getenv("GOOGLE_ADS_DEVELOPER_TOKEN", "")
+GOOGLE_ADS_CUSTOMER_ID       = os.getenv("GOOGLE_ADS_CUSTOMER_ID", "")
+GOOGLE_ADS_LOGIN_CUSTOMER_ID = os.getenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "")
+GOOGLE_ADS_REFRESH_TOKEN     = os.getenv("GOOGLE_ADS_REFRESH_TOKEN", "")
+
 # ── LiteLLM proxy (kept for image-gen fallback via /images/generations) ───────
 # Public endpoint (no VPN required). Internal: litellm-proxy.ml-serving-internal.scale.com/v1
 LITELLM_BASE_URL = os.getenv("LITELLM_BASE_URL", "https://litellm-proxy.ml.scale.com/v1")
@@ -94,7 +129,7 @@ MCP_FIGMA_URL = os.getenv("MCP_FIGMA_URL", "http://127.0.0.1:3845/sse")
 # and the service account has been added as Content Manager.
 # Until then creatives are saved locally only.
 GDRIVE_ENABLED   = os.getenv("GDRIVE_ENABLED", "false").lower() == "true"
-GDRIVE_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID", "1TrpyIOq6hS4eGAc0sYUIJom4MAanbnm4")
+GDRIVE_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID", "0ALHAgK4RPbnfUk9PVA")
 
 # ── Gemini (image generation) ─────────────────────────────────────────────────
 # Routed through LiteLLM proxy via /images/generations endpoint.
