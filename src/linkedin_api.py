@@ -9,38 +9,27 @@ import logging
 import mimetypes
 import os
 import re
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 import requests
 
 import config
+from src.ad_platform import (
+    AdPlatformClient,
+    CreateAdResult,
+    LINKEDIN_CONSTRAINTS,
+    PlatformConstraints,
+)
 
 log = logging.getLogger(__name__)
 
 
-@dataclass
-class ImageAdResult:
-    """Result of LinkedIn create_image_ad call.
-
-    Phase 2.6 (SR-04): 403 / LINKEDIN_MEMBER_URN errors return
-    status="local_fallback" so callers can save the PNG locally and continue
-    (instead of aborting the cohort). Other unexpected errors surface as
-    status="error" — caller decides whether to log + skip or re-raise.
-
-    Fields:
-        creative_urn: The LinkedIn adCreative URN on success; None otherwise.
-        local_save_path: Caller populates after `shutil.copy2(png, target)`.
-        status: One of "ok" | "local_fallback" | "error".
-        error_class: Exception class name when not ok.
-        error_message: str(exc) trimmed for logs/state-file display.
-    """
-    creative_urn: Optional[str] = None
-    local_save_path: Optional[str] = None
-    status: Literal["ok", "local_fallback", "error"] = "ok"
-    error_class: Optional[str] = None
-    error_message: Optional[str] = None
+# Back-compat alias — `ImageAdResult` was the original LinkedIn-only return
+# type; `CreateAdResult` is the platform-agnostic version with identical
+# semantics. The alias keeps existing call sites and tests working unchanged
+# (`ImageAdResult(creative_urn=...)`, `result.creative_urn`).
+ImageAdResult = CreateAdResult
 
 _LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
@@ -96,7 +85,17 @@ def _update_env_token(new_access: str, new_refresh: str) -> None:
     _ENV_FILE.write_text(text)
 
 
-class LinkedInClient:
+class LinkedInClient(AdPlatformClient):
+    """LinkedIn Marketing API client. Implements `AdPlatformClient` so the
+    pipeline can dispatch generically across LinkedIn, Meta, and Google. The
+    method signatures retain LinkedIn-specific kwarg names (campaign_urn,
+    image_urn, cta_button, ...) for backward compatibility with existing
+    call sites — Python's ABC contract is satisfied as long as the method
+    names match."""
+
+    name = "linkedin"
+    constraints: PlatformConstraints = LINKEDIN_CONSTRAINTS
+
     def __init__(self, token: str):
         self._token = token
         self._session = requests.Session()
@@ -143,31 +142,47 @@ class LinkedInClient:
 
     # ── Stage C: Audience Counts ───────────────────────────────────────────────
 
-    def get_audience_count(self, facet_urns: dict[str, list[str]]) -> int:
+    def get_audience_count(
+        self,
+        facet_urns: dict[str, list[str]],
+        exclude_facet_urns: dict[str, list[str]] | None = None,
+    ) -> int:
         """
-        Call GET /rest/audienceCounts?q=targetingCriteriaV2 with Rest.li-encoded targeting.
-        Returns the total estimated audience size, or 0 on error.
+        Call GET /rest/audienceCounts?q=targetingCriteriaV2 with Rest.li-encoded
+        targeting. Returns the total estimated audience size, or 0 on error.
 
         facet_urns: { "urn:li:adTargetingFacet:skills": ["urn:li:skill:1"], ... }
+        exclude_facet_urns: same shape — adds an `exclude` block to the criteria.
 
         Rules (from LinkedIn docs):
           - q=targetingCriteriaV2  (NOT targetingCriteria)
           - targetingCriteria is Rest.li format (NOT JSON)
           - Do NOT include account param
-          - Response: elements[0]["total"]
+          - At least ONE include criterion is required (LinkedIn errors otherwise)
+          - URN-internal chars (`:`, `(`, `)`) MUST be percent-encoded; structural
+            delimiters of the Rest.li expression MUST be raw. We build the final
+            URL ourselves so requests doesn't double-encode.
+          - Response: elements[0]["total"] (fall back to "active" if absent)
         """
-        targeting_str = _build_restli_targeting(facet_urns)
-        params = {
-            "q":                 "targetingCriteriaV2",
-            "targetingCriteria": targeting_str,
-        }
+        # Empty-include guard: LinkedIn rejects calls that have no include.
+        non_empty = {k: v for k, v in (facet_urns or {}).items() if v}
+        if not non_empty:
+            log.warning("get_audience_count: empty include — skipping API call (returning 0)")
+            return 0
+
+        targeting_str = _build_restli_targeting(non_empty, exclude_facet_urns or {})
+        # Build the URL by hand. The targeting string is already in
+        # "structural-raw, URN-internal-encoded" form per LinkedIn's spec —
+        # passing it through requests params= would double-encode.
+        url = f"{self._url('audienceCounts')}?q=targetingCriteriaV2&targetingCriteria={targeting_str}"
         try:
-            resp = self._req("GET", self._url("audienceCounts"), params=params)
+            resp = self._req("GET", url)
             self._raise_for_status(resp, "audienceCounts")
             data = resp.json()
             elements = data.get("elements", [])
             if elements:
-                total = int(elements[0].get("total", 0))
+                el = elements[0]
+                total = int(el.get("total", 0) or el.get("active", 0))
                 log.info("Audience count: %d", total)
                 return total
         except Exception as exc:
@@ -744,28 +759,77 @@ _FACET_SHORT_TO_URN = {
     "profileLocations": "urn:li:adTargetingFacet:profileLocations",
     "locations":        "urn:li:adTargetingFacet:locations",
     "industries":       "urn:li:adTargetingFacet:industries",
+    "seniorities":      "urn:li:adTargetingFacet:seniorities",
+    "interfaceLocales": "urn:li:adTargetingFacet:interfaceLocales",
+    "staffCountRanges": "urn:li:adTargetingFacet:staffCountRanges",
+    "yearsOfExperienceRanges": "urn:li:adTargetingFacet:yearsOfExperienceRanges",
+    "ageRanges":        "urn:li:adTargetingFacet:ageRanges",
+    "genders":          "urn:li:adTargetingFacet:genders",
+    "memberBehaviors":  "urn:li:adTargetingFacet:memberBehaviors",
+    "groups":           "urn:li:adTargetingFacet:groups",
+    "schools":          "urn:li:adTargetingFacet:schools",
+    "employers":        "urn:li:adTargetingFacet:employers",
+    "followedCompanies":"urn:li:adTargetingFacet:followedCompanies",
 }
 
 
-def _build_restli_targeting(facet_urns: dict[str, list[str]]) -> str:
+def _encode_urn(urn: str) -> str:
+    """Percent-encode the URN-internal characters that conflict with Rest.li's
+    structural delimiters: `:` `(` `)` `,`. Leaves alphanumerics + `-` `_` `.`
+    untouched. Result is what LinkedIn's audienceCounts parser expects inside
+    the `targetingCriteria` query param.
     """
-    Build a Rest.li targeting string for audienceCounts?q=targetingCriteriaV2.
+    return (urn
+            .replace("%", "%25")  # encode any literal % first
+            .replace(":", "%3A")
+            .replace("(", "%28")
+            .replace(")", "%29")
+            .replace(",", "%2C"))
 
-    Accepts either short facet names ("skills") or full URNs.
-    Values must be raw URN strings — do NOT pre-encode them.
-    requests will URL-encode the entire param value exactly once.
 
-    LinkedIn parses the decoded string as Rest.li:
-      (include:(and:List((or:(urn:li:adTargetingFacet:skills:List(urn:li:skill:123))))))
+def _build_restli_targeting(
+    include: dict[str, list[str]],
+    exclude: dict[str, list[str]] | None = None,
+) -> str:
+    """Build a Rest.li targeting string for audienceCounts?q=targetingCriteriaV2.
+
+    Accepts either short facet names ("skills") or full URNs. URN values are
+    percent-encoded character-by-character per `_encode_urn` — the structural
+    parens, colons, and commas of the Rest.li expression are left raw because
+    LinkedIn's URL parser uses them as delimiters.
+
+    Output shape (URN-encoded portions shown lower-case for readability):
+      include only:
+        (include:(and:List((or:(<facet>:List(<urn>,<urn>))))))
+      with exclude:
+        (include:(and:List(...)),exclude:(or:(<facet>:List(<urn>))))
+
+    Spec source: LinkedIn Marketing API docs + colleague's working call
+    pattern (skill `rw_ads`, version 202510, no MDP tier required).
     """
-    or_blocks = []
-    for facet, values in facet_urns.items():
+    include_or_blocks = []
+    for facet, values in (include or {}).items():
         if not values:
             continue
-        full_facet = _FACET_SHORT_TO_URN.get(facet, facet)
-        values_str = ",".join(values)  # raw URNs — no encoding
-        or_blocks.append(f"(or:({full_facet}:List({values_str})))")
-    return f"(include:(and:List({','.join(or_blocks)})))"
+        full_facet = _encode_urn(_FACET_SHORT_TO_URN.get(facet, facet))
+        encoded_vals = ",".join(_encode_urn(v) for v in values)
+        include_or_blocks.append(f"(or:({full_facet}:List({encoded_vals})))")
+    include_part = f"(and:List({','.join(include_or_blocks)}))"
+
+    exclude_or_blocks = []
+    for facet, values in (exclude or {}).items():
+        if not values:
+            continue
+        full_facet = _encode_urn(_FACET_SHORT_TO_URN.get(facet, facet))
+        encoded_vals = ",".join(_encode_urn(v) for v in values)
+        # No outer parens — exclude items go directly inside `or:(...)`.
+        exclude_or_blocks.append(f"{full_facet}:List({encoded_vals})")
+
+    if exclude_or_blocks:
+        # Exclude uses `or:(...)` directly — no `and:List` wrapper.
+        exclude_part = f",exclude:(or:({','.join(exclude_or_blocks)}))"
+        return f"(include:{include_part}{exclude_part})"
+    return f"(include:{include_part})"
 
 
 def _encode_targeting_for_query(targeting: dict) -> str:

@@ -2735,6 +2735,7 @@ def _process_row_both_modes(
     cohort_id_override = row.get("cohort_id")
     destination_url_override = row.get("selected_lp_url")
     included_geos = row.get("included_geos", []) or []
+    unique_id = row.get("unique_id", f"ROW_{row.get('sheet_row', 'UNKNOWN')}")
 
     resolved = _resolve_cohorts(
         row,

@@ -911,6 +911,7 @@ def _launch_replacement_campaign(
             headline=headline,
             subheadline=subheadline,
             photo_subject=photo_subject,
+            creative_image_path=str(png_path) if png_path else "",
         )
     except Exception as exc:
         log.warning("Registry log for replacement failed: %s", exc)
@@ -1261,6 +1262,15 @@ def run(window: int = 60) -> str:
                     newly_deprecated.append((s, entry))
     except Exception as _exc:
         log.warning("Registry update failed (non-fatal): %s", _exc)
+
+    # Fan out to non-LinkedIn platforms — Meta + Google reporting APIs
+    # update the same registry rows so feedback can pause / replace any
+    # underperforming campaign regardless of platform.
+    try:
+        from src.platform_metrics import fetch_metrics_for_active_extra_platforms
+        fetch_metrics_for_active_extra_platforms(window_days=int(window))
+    except Exception as _exc:
+        log.warning("Multi-platform metric fetch failed (non-fatal): %s", _exc)
 
     # Auto-generate replacement campaigns for newly deprecated angles
     if newly_deprecated:
