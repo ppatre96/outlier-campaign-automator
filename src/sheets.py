@@ -23,8 +23,19 @@ log = logging.getLogger(__name__)
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
+    # drive.file lets the service account upload creative PNGs that we then embed
+    # via =IMAGE(...) in the Campaign Registry tab. Scope is limited to files this
+    # app creates/opens (not the full drive).
+    "https://www.googleapis.com/auth/drive.file",
     "https://www.googleapis.com/auth/drive.readonly",
 ]
+
+# Pixel size for the Creative cell in the Campaign Registry tab.
+# Row height & cell width chosen so the 1200×1200 PNG is legible without
+# bloating the sheet. IMAGE() mode 4 takes pixel width × height.
+_REGISTRY_IMAGE_PX = 200
+_REGISTRY_IMAGE_ROW_HEIGHT = 210
+_REGISTRY_IMAGE_COL_WIDTH = 220
 
 
 class NullSheetsClient:
@@ -74,20 +85,21 @@ def _credentials_available() -> bool:
 # Column indices (0-based) for "Triggers 2"
 COL = {
     "date": 0,              # A
-    "flow_id": 1,           # B
-    "tg_status": 2,         # C
-    "master_campaign": 3,   # D
-    "location": 4,          # E
-    "figma_file": 5,        # F
-    "figma_node": 6,        # G
-    "stg_id": 7,            # H
-    "stg_name": 8,          # I
-    "targeting_facet": 9,   # J
-    "targeting_criteria": 10,  # K
-    "li_status": 11,        # L — LI Campaign Creation Status
-    "li_campaign_id": 12,   # M — LI Campaign ID (numeric)
-    "error_detail": 13,     # N — Error Detail
-    "ad_type": 14,          # O — "INMAIL" or blank (defaults to image ad)
+    "unique_id": 1,         # B — unique identifier for image naming
+    "flow_id": 2,           # C
+    "tg_status": 3,         # D
+    "master_campaign": 4,   # E
+    "location": 5,          # F
+    "figma_file": 6,        # G
+    "figma_node": 7,        # H
+    "stg_id": 8,            # I
+    "stg_name": 9,          # J
+    "targeting_facet": 10,  # K
+    "targeting_criteria": 11,  # L
+    "li_status": 12,        # M — LI Campaign Creation Status
+    "li_campaign_id": 13,   # N — LI Campaign ID (numeric)
+    "error_detail": 14,     # O — Error Detail
+    "ad_type": 15,          # P — "INMAIL" or blank (defaults to image ad)
 }
 
 
@@ -115,9 +127,49 @@ class SheetsClient:
         import gspread
         from google.oauth2.service_account import Credentials
         creds = Credentials.from_service_account_file(config.GOOGLE_CREDENTIALS, scopes=SCOPES)
+        self._creds = creds
         self._gc = gspread.authorize(creds)
         self._triggers = self._gc.open_by_key(config.TRIGGERS_SHEET_ID)
         self._urn_sheet = self._gc.open_by_key(config.URN_SHEET_ID)
+        self._drive_service = None  # lazy-init in _get_drive()
+
+    # ── Drive helpers (registry image embedding) ──────────────────────────────
+
+    def _get_drive(self):
+        """Lazy-init Google Drive API client (used for creative image uploads)."""
+        if self._drive_service is None:
+            from googleapiclient.discovery import build
+            self._drive_service = build("drive", "v3", credentials=self._creds, cache_discovery=False)
+        return self._drive_service
+
+    def _upload_creative_to_drive(self, local_path: str) -> str | None:
+        """Upload a PNG to Drive (anyone-with-link viewable) and return the file ID.
+        Returns None on any failure — registry write must continue without the image.
+        """
+        path = Path(local_path)
+        if not path.exists():
+            log.warning("Registry image upload skipped — file missing: %s", local_path)
+            return None
+        try:
+            from googleapiclient.http import MediaFileUpload
+            drive = self._get_drive()
+            metadata = {"name": path.name, "mimeType": "image/png"}
+            media = MediaFileUpload(str(path), mimetype="image/png", resumable=False)
+            created = drive.files().create(
+                body=metadata, media_body=media, fields="id"
+            ).execute()
+            file_id = created["id"]
+            # Make readable by anyone with the link so =IMAGE() can fetch it
+            drive.permissions().create(
+                fileId=file_id,
+                body={"role": "reader", "type": "anyone"},
+                fields="id",
+            ).execute()
+            log.info("Registry: uploaded creative to Drive id=%s (%s)", file_id, path.name)
+            return file_id
+        except Exception as exc:
+            log.warning("Registry image upload failed (non-fatal): %s", exc)
+            return None
 
     # ── Config tab ────────────────────────────────────────────────────────────
 
@@ -148,8 +200,10 @@ class SheetsClient:
                 row.append("")
             status = row[COL["tg_status"]].strip().upper()
             if status == "PENDING":
+                unique_id = row[COL["unique_id"]].strip() or f"ROW_{idx}"
                 pending.append({
                     "sheet_row": idx,
+                    "unique_id":       unique_id,
                     "date":            row[COL["date"]],
                     "flow_id":         row[COL["flow_id"]].strip(),
                     "tg_status":       row[COL["tg_status"]].strip(),
@@ -255,19 +309,30 @@ class SheetsClient:
     # ── Campaign Registry tab ─────────────────────────────────────────────────
 
     def _get_or_create_registry_tab(self):
-        """Return the Campaign Registry worksheet (cached), creating it with headers if missing."""
+        """Return the Campaign Registry worksheet (cached), creating + header-syncing as needed."""
         if getattr(self, "_registry_ws_cache", None) is not None:
             return self._registry_ws_cache
 
         from src.campaign_registry import COLUMNS
+        expected = [c.replace("_", " ").title() for c in COLUMNS]
         try:
             ws = self._triggers.worksheet(config.REGISTRY_TAB)
+            # Header sync: if columns were added in code but not in the sheet,
+            # write the canonical header row. Existing data rows are untouched.
+            existing = ws.row_values(1) if ws.row_count else []
+            if existing != expected:
+                if ws.col_count < len(expected):
+                    ws.add_cols(len(expected) - ws.col_count)
+                ws.update("A1", [expected])
+                log.info(
+                    "Registry tab headers synced: %d -> %d cols",
+                    len(existing), len(expected),
+                )
         except Exception:
             ws = self._triggers.add_worksheet(
                 title=config.REGISTRY_TAB, rows=1000, cols=len(COLUMNS)
             )
-            headers = [c.replace("_", " ").title() for c in COLUMNS]
-            ws.update("A1", [headers])
+            ws.update("A1", [expected])
             ws.freeze(rows=1)
             log.info("Created '%s' tab with %d columns", config.REGISTRY_TAB, len(COLUMNS))
 
@@ -275,17 +340,81 @@ class SheetsClient:
         return ws
 
     def write_registry_row(self, record: dict) -> None:
-        """Append one campaign registry row to the Campaign Registry tab."""
+        """Append one campaign registry row to the Campaign Registry tab.
+
+        If `creative_image_path` is set and the local PNG exists, it is uploaded to
+        Drive (anyone-with-link viewable) and the corresponding cell receives an
+        `=IMAGE(...)` formula so the creative renders inline in the row.
+        """
         from src.campaign_registry import COLUMNS
         ws = self._get_or_create_registry_tab()
+
+        # Resolve image: upload first so we can put the formula straight in the row.
+        image_col_idx = COLUMNS.index("creative_image_path") if "creative_image_path" in COLUMNS else -1
+        image_formula: str | None = None
+        local_path = record.get("creative_image_path") or ""
+        if local_path and image_col_idx >= 0:
+            file_id = self._upload_creative_to_drive(local_path)
+            if file_id:
+                image_url = f"https://drive.google.com/uc?export=view&id={file_id}"
+                # Mode 4 = explicit pixel dims (width, height)
+                image_formula = (
+                    f'=IMAGE("{image_url}", 4, {_REGISTRY_IMAGE_PX}, {_REGISTRY_IMAGE_PX})'
+                )
+
         row = [record.get(col, "") or "" for col in COLUMNS]
+        if image_formula and image_col_idx >= 0:
+            row[image_col_idx] = image_formula
+
         ws.append_row(row, value_input_option="USER_ENTERED")
+
+        # If we embedded an image, bump that row's height + ensure the column
+        # is wide enough so the image isn't clipped.
+        if image_formula and image_col_idx >= 0:
+            try:
+                new_row_idx = len(ws.col_values(1))   # 1-based — last filled row
+                self._resize_registry_image_cell(ws, new_row_idx, image_col_idx)
+            except Exception as exc:
+                log.warning("Registry row/col resize failed (non-fatal): %s", exc)
+
         log.info(
-            "Registry sheet: appended row campaign=%s angle=%s geo=%s",
+            "Registry sheet: appended row campaign=%s angle=%s geo=%s image=%s",
             record.get("linkedin_campaign_urn", ""),
             record.get("angle", ""),
             record.get("geo_cluster_label", ""),
+            "yes" if image_formula else "no",
         )
+
+    def _resize_registry_image_cell(self, ws, row_idx_1based: int, col_idx_0based: int) -> None:
+        """Bump the row height + creative column width so the embedded image is visible."""
+        self._triggers.batch_update({
+            "requests": [
+                {
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": ws.id,
+                            "dimension": "ROWS",
+                            "startIndex": row_idx_1based - 1,
+                            "endIndex": row_idx_1based,
+                        },
+                        "properties": {"pixelSize": _REGISTRY_IMAGE_ROW_HEIGHT},
+                        "fields": "pixelSize",
+                    }
+                },
+                {
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": ws.id,
+                            "dimension": "COLUMNS",
+                            "startIndex": col_idx_0based,
+                            "endIndex": col_idx_0based + 1,
+                        },
+                        "properties": {"pixelSize": _REGISTRY_IMAGE_COL_WIDTH},
+                        "fields": "pixelSize",
+                    }
+                },
+            ]
+        })
 
     # ── URN sheets ────────────────────────────────────────────────────────────
 

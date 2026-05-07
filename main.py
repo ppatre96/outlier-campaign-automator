@@ -239,6 +239,7 @@ def _process_row(
     # Extract Smart Ramp cohort overrides if present
     ramp_id = row.get("ramp_id")
     cohort_id = row.get("cohort_id")
+    unique_id = row.get("unique_id", f"ROW_{row.get('sheet_row', 'UNKNOWN')}")
     destination_url_override = row.get("selected_lp_url")
     included_geos = row.get("included_geos", [])
     cohort_description_supplement = row.get("cohort_description", "")
@@ -2028,6 +2029,47 @@ def _resolve_cohorts(
     )
 
 
+def _save_creative_to_drive(
+    png_path,
+    ramp_id: str,
+    unique_id: str,
+    channel: str,         # "linkedin", "meta", "google"
+    angle: str,           # "A", "B", "C", "F", etc.
+) -> str:
+    """Upload PNG to Google Drive: <ramp_id>/<channel>/<unique_id>_<angle>.png
+
+    Uses the Workspace Shared Drive configured in config.GDRIVE_FOLDER_ID.
+    Creates channel folders (linkedin, meta, google) inside the ramp folder.
+
+    Args:
+        png_path: Path to the generated PNG file.
+        ramp_id: Smart Ramp ID (e.g., "GMR-0006").
+        unique_id: Unique identifier from trigger sheet (e.g., "ROW_2").
+        channel: Ad platform ("linkedin", "meta", or "google").
+        angle: Angle variant ("A", "B", "C", etc.).
+
+    Returns: Google Drive file URL on success, empty string on failure.
+    """
+    from src.gdrive import upload_creative
+
+    if not config.GDRIVE_ENABLED:
+        log.warning("GDRIVE_ENABLED=false — skipping Drive upload for %s", unique_id)
+        return ""
+
+    try:
+        # Rename file to match Drive structure: unique_id_angle.png
+        target_name = f"{unique_id}_{angle}.png"
+        temp_path = Path(tempfile.mktemp(suffix=f"_{target_name}"))
+        shutil.copy2(str(png_path), str(temp_path))
+
+        url = upload_creative(temp_path)
+        log.info("Creative uploaded to Drive: %s → %s", target_name, url)
+        return url
+    except Exception as e:
+        log.error("Failed to upload creative to Drive: %s", e)
+        return ""
+
+
 def _save_creative_locally(
     png_path,
     ramp_id: str,
@@ -2079,6 +2121,7 @@ def _process_static_campaigns(
     cohort_id_override: str | None = None,
     cohort_description: str = "",
     base_rate_usd: float = 50.0,
+    unique_id: str | None = None,
 ) -> dict:
     """Static-ad arm — symmetric counterpart to _process_inmail_campaigns.
 
@@ -2141,7 +2184,7 @@ def _process_static_campaigns(
     creative_paths: dict[str, str] = {}
 
     if not capped_cohorts:
-        return {"campaigns": [], "campaigns_by_cohort": {}, "creative_paths": {}}
+        return {"campaigns": [], "campaigns_by_cohort": {}, "creative_paths": {}, "campaign_specs": []}
 
     # Generate creatives per cohort × geo group × angle
     has_figma = bool(figma_file and figma_node and claude_key)
@@ -2240,7 +2283,12 @@ def _process_static_campaigns(
             "(%d cohorts × %d geo groups × %d angles = %d specs)",
             len(capped_cohorts), len(geo_groups), len(angle_labels), len(campaign_specs),
         )
-        return {"campaigns": [], "campaigns_by_cohort": {}, "creative_paths": {}}
+        return {
+            "campaigns":            [],
+            "campaigns_by_cohort":  {},
+            "creative_paths":       {},
+            "campaign_specs":       campaign_specs,  # multi-platform arms reuse these
+        }
 
     # Create campaign group + campaigns — one per (cohort × geo_group) spec
     group_name = f"Outlier {flow_id} {location} Static".strip()
@@ -2317,6 +2365,7 @@ def _process_static_campaigns(
                     headline=variant.get("headline", ""),
                     subheadline=variant.get("subheadline", ""),
                     photo_subject=variant.get("photo_subject", ""),
+                    creative_image_path=str(png_path) if png_path else "",
                     gemini_prompt=qc_report.get("gemini_prompt", ""),
                 )
             except Exception as _exc:
@@ -2370,22 +2419,55 @@ def _process_static_campaigns(
                 except Exception:
                     pass
             elif ad_result.status == "local_fallback":
-                # SR-04: copy the PNG locally + continue.
-                local_path = _save_creative_locally(
-                    png_path=png_path,
-                    ramp_id=ramp_id or "manual",
-                    cohort_id=by_cohort_id,
-                    mode="static",
-                    angle=angle_label,
-                    campaign_name=campaign_name,
-                )
-                creative_paths[by_cohort_id] = local_path
-                log.warning(
-                    "_process_static_campaigns: creative for cohort %s angle %s saved locally at %s "
-                    "(reason: %s — %s)",
-                    by_cohort_id, angle_label, local_path,
-                    ad_result.error_class, ad_result.error_message,
-                )
+                # SR-04: upload to Drive or save locally + continue.
+                safe_ramp_id = ramp_id or "manual"
+                uid = unique_id or f"ROW_{by_cohort_id}"
+
+                # Try Drive upload first (if enabled)
+                if config.GDRIVE_ENABLED:
+                    drive_url = _save_creative_to_drive(
+                        png_path=png_path,
+                        ramp_id=safe_ramp_id,
+                        unique_id=uid,
+                        channel="linkedin",
+                        angle=angle_label,
+                    )
+                    if drive_url:
+                        creative_paths[by_cohort_id] = drive_url
+                        log.warning(
+                            "_process_static_campaigns: creative for cohort %s angle %s uploaded to Drive "
+                            "(reason: %s — %s)",
+                            by_cohort_id, angle_label,
+                            ad_result.error_class, ad_result.error_message,
+                        )
+                    else:
+                        # Drive upload failed, fall back to local
+                        local_path = _save_creative_locally(
+                            png_path=png_path,
+                            ramp_id=safe_ramp_id,
+                            cohort_id=by_cohort_id,
+                            mode="static",
+                            angle=angle_label,
+                            campaign_name=campaign_name,
+                        )
+                        creative_paths[by_cohort_id] = local_path
+                else:
+                    # GDRIVE_ENABLED=false, save locally
+                    local_path = _save_creative_locally(
+                        png_path=png_path,
+                        ramp_id=safe_ramp_id,
+                        cohort_id=by_cohort_id,
+                        mode="static",
+                        angle=angle_label,
+                        campaign_name=campaign_name,
+                    )
+                    creative_paths[by_cohort_id] = local_path
+                    log.warning(
+                        "_process_static_campaigns: creative for cohort %s angle %s saved locally "
+                        "(reason: %s — %s)",
+                        by_cohort_id, angle_label,
+                        ad_result.error_class, ad_result.error_message,
+                    )
             else:  # status == "error"
                 log.error(
                     "_process_static_campaigns: create_image_ad hard error for cohort %s: %s — %s",
@@ -2406,7 +2488,220 @@ def _process_static_campaigns(
         "creative_paths": creative_paths,
         "campaign_groups": out_groups,
         "group_name": group_name,
+        # campaign_specs is consumed by _process_extra_platform_arm so Meta +
+        # Google can reuse the same cohort × geo × angle plan + PNGs without
+        # re-running Gemini.
+        "campaign_specs": campaign_specs,
     }
+
+
+def _process_extra_platform_arm(
+    *,
+    platform: str,
+    client,
+    resolver,
+    campaign_specs: list[dict],
+    flow_id: str,
+    location: str,
+    ramp_id: str | None,
+    cohort_id_override: str | None,
+    destination_url_override: str | None,
+) -> dict:
+    """Per-platform static-ad arm for non-LinkedIn platforms (Meta + Google).
+
+    Reuses the (cohort × geo × angle) plan + LinkedIn-rendered PNGs from
+    `_process_static_campaigns`; calls the platform-specific copy adapter
+    + targeting resolver + AdPlatformClient. Per (cohort × geo × angle)
+    failures are isolated — one bad combo doesn't abort the rest.
+    """
+    from src.ad_platform import CreateAdResult
+    from src.campaign_registry import log_campaign as _reg_log
+    from src.copy_adapter import adapt_copy_for_platform
+
+    out: dict = {
+        "campaigns": [],
+        "campaigns_by_cohort": {},
+        "creative_paths": {},
+        "campaign_groups": [],
+    }
+    if not campaign_specs:
+        return out
+
+    # One platform-level container ("Campaign" on Meta/Google) per ramp run.
+    # Cohort × geo × angle become Ad Sets / Ad Groups under it.
+    group_name = f"Outlier {flow_id} {location} {platform.title()}".strip()
+    try:
+        group_id = client.create_campaign_group(group_name)
+    except Exception as exc:
+        log.error(
+            "_process_extra_platform_arm[%s]: create_campaign_group failed (%s) — skipping arm",
+            platform, exc,
+        )
+        return out
+    out["campaign_groups"].append(group_id)
+
+    for spec in campaign_specs:
+        cohort      = spec["cohort"]
+        geo_group   = spec["geo_group"]
+        group_geos  = spec.get("group_geos") or []
+        angle_label = spec.get("angle_label", "A")
+        angle_idx   = spec.get("angle_idx", 0)
+        variants    = spec.get("variants") or []
+        png_path    = spec.get("png_path")
+        variant     = variants[angle_idx] if angle_idx < len(variants) else {}
+
+        try:
+            geo_suffix = (
+                f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
+            )
+            campaign_name = f"{cohort._stg_name}{geo_suffix} {angle_label}"
+
+            # Targeting payload — shape is platform-specific.
+            targeting = resolver.resolve_cohort(cohort, geos=group_geos)
+
+            sub_id = client.create_campaign(
+                name=campaign_name,
+                campaign_group_id=group_id,
+                targeting=targeting,
+            )
+            out["campaigns"].append(sub_id)
+            base_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
+            by_key = f"{base_id}_{geo_group.campaign_suffix}_{angle_label}"
+            out["campaigns_by_cohort"][by_key] = sub_id
+
+            # Adapt copy for this platform's char limits.
+            platform_copy = adapt_copy_for_platform(variant, platform) if variant else {}
+
+            ad_result: CreateAdResult
+            if not png_path or not Path(str(png_path)).exists():
+                # No PNG to upload — log the campaign creation but flag
+                # creative as missing. Pipeline keeps moving.
+                ad_result = CreateAdResult(
+                    status="local_fallback",
+                    error_class="MissingPNG",
+                    error_message="static-arm produced no PNG for this spec",
+                )
+            else:
+                try:
+                    image_id = client.upload_image(png_path)
+                except Exception as exc:
+                    log.warning(
+                        "_process_extra_platform_arm[%s]: upload_image failed for %s — %s",
+                        platform, png_path, exc,
+                    )
+                    ad_result = CreateAdResult(
+                        status="error",
+                        error_class=type(exc).__name__,
+                        error_message=str(exc)[:300],
+                    )
+                else:
+                    if platform == "google":
+                        # Google RDA needs the multi-headline / multi-description
+                        # arrays from the copy adapter.
+                        ad_result = client.create_image_ad(
+                            campaign_id=sub_id,
+                            image_id=image_id,
+                            headline=(platform_copy.get("headlines") or [""])[0],
+                            description=(platform_copy.get("descriptions") or [""])[0],
+                            destination_url=destination_url_override,
+                            headlines=platform_copy.get("headlines") or [],
+                            long_headline=platform_copy.get("long_headline") or "",
+                            descriptions=platform_copy.get("descriptions") or [],
+                        )
+                    else:  # meta
+                        ad_result = client.create_image_ad(
+                            campaign_id=sub_id,
+                            image_id=image_id,
+                            headline=platform_copy.get("headline", ""),
+                            description=platform_copy.get("description", ""),
+                            primary_text=platform_copy.get("primary_text"),
+                            cta=platform_copy.get("cta"),
+                            destination_url=destination_url_override,
+                        )
+
+            # Registry log — platform-aware.
+            try:
+                _reg_log(
+                    smart_ramp_id=ramp_id or "",
+                    cohort_id=base_id,
+                    cohort_signature=cohort.name,
+                    geo_cluster=geo_group.cluster,
+                    geo_cluster_label=geo_group.cluster_label,
+                    geos=group_geos,
+                    angle=angle_label,
+                    campaign_type="static",
+                    advertised_rate=geo_group.advertised_rate,
+                    headline=variant.get("headline", "") if variant else "",
+                    subheadline=variant.get("subheadline", "") if variant else "",
+                    photo_subject=variant.get("photo_subject", "") if variant else "",
+                    creative_image_path=str(png_path) if png_path else "",
+                    platform=platform,
+                    platform_campaign_id=sub_id,
+                    platform_creative_id=ad_result.creative_id or "",
+                )
+            except Exception as exc:
+                log.warning(
+                    "_process_extra_platform_arm[%s]: registry log failed (non-fatal): %s",
+                    platform, exc,
+                )
+
+            out["creative_paths"][by_key] = (
+                ad_result.creative_id if ad_result.status == "ok"
+                else (str(png_path) if png_path else "")
+            )
+        except Exception as exc:
+            log.exception(
+                "_process_extra_platform_arm[%s]: spec failed (cohort=%s geo=%s angle=%s) — %s",
+                platform, getattr(cohort, "name", "?"),
+                getattr(geo_group, "cluster_label", "?"),
+                angle_label, exc,
+            )
+            continue
+
+    return out
+
+
+def _build_extra_platform_clients(enabled: list[str]) -> dict:
+    """Lazy-construct the non-LinkedIn AdPlatformClient + TargetingResolver pairs.
+
+    Returns dict[str, dict] keyed by platform name with shape
+    `{platform: {"client": <client>, "resolver": <resolver>}}`. Skips
+    platforms whose required env vars are missing (logged at info level).
+    Always returns an empty dict for "linkedin" since that arm runs through
+    the existing `_process_static_campaigns` code path.
+    """
+    out: dict[str, dict] = {}
+    if "meta" in enabled:
+        if config.META_ACCESS_TOKEN and config.META_AD_ACCOUNT_ID:
+            from src.meta_api import MetaClient
+            from src.meta_targeting import MetaInterestResolver
+            try:
+                out["meta"] = {
+                    "client":   MetaClient(),
+                    "resolver": MetaInterestResolver(),
+                }
+            except Exception as exc:
+                log.warning("Skipping Meta arm — init failed: %s", exc)
+        else:
+            log.info("Skipping Meta arm — META_ACCESS_TOKEN / META_AD_ACCOUNT_ID not set")
+    if "google" in enabled:
+        if (config.GOOGLE_ADS_DEVELOPER_TOKEN and config.GOOGLE_ADS_REFRESH_TOKEN
+                and config.GOOGLE_ADS_CUSTOMER_ID):
+            from src.google_ads_api import GoogleAdsClient
+            from src.google_targeting import GoogleSegmentResolver
+            try:
+                out["google"] = {
+                    "client":   GoogleAdsClient(),
+                    "resolver": GoogleSegmentResolver(),
+                }
+            except Exception as exc:
+                log.warning("Skipping Google arm — init failed: %s", exc)
+        else:
+            log.info(
+                "Skipping Google arm — GOOGLE_ADS_DEVELOPER_TOKEN / GOOGLE_ADS_REFRESH_TOKEN / "
+                "GOOGLE_ADS_CUSTOMER_ID not all set"
+            )
+    return out
 
 
 def _process_row_both_modes(
@@ -2509,11 +2804,43 @@ def _process_row_both_modes(
                 ramp_id=ramp_id,
                 cohort_id_override=cohort_id_override,
                 cohort_description=resolved.smart_ramp_brief,
+                unique_id=unique_id,
             )
             if isinstance(r, dict):
                 static_result.update(r)
         except Exception:
             log.exception("_process_row_both_modes: Static arm aborted — InMail arm result preserved")
+
+    # ── Multi-platform fan-out (Meta + Google) ───────────────────────────────
+    # Reuse the LinkedIn static arm's (cohort × geo × angle) plan + PNGs.
+    # Each platform arm is independent — Meta failures don't affect Google,
+    # and neither affects LinkedIn (already done above).
+    extra_platform_results: dict[str, dict] = {}
+    if "static" in modes and not dry_run:
+        from src.ad_platform import enabled_platforms
+        platforms = [p for p in enabled_platforms() if p != "linkedin"]
+        specs = (static_result or {}).get("campaign_specs") or []
+        if platforms and specs:
+            extras = _build_extra_platform_clients(platforms)
+            for platform_name, parts in extras.items():
+                try:
+                    r = _process_extra_platform_arm(
+                        platform=platform_name,
+                        client=parts["client"],
+                        resolver=parts["resolver"],
+                        campaign_specs=specs,
+                        flow_id=flow_id,
+                        location=location,
+                        ramp_id=ramp_id,
+                        cohort_id_override=cohort_id_override,
+                        destination_url_override=destination_url_override,
+                    )
+                    extra_platform_results[platform_name] = r
+                except Exception:
+                    log.exception(
+                        "_process_row_both_modes: %s arm aborted — other arms preserved",
+                        platform_name,
+                    )
 
     # Aggregate the per-cohort view.
     per_cohort = []
@@ -2528,17 +2855,29 @@ def _process_row_both_modes(
             "static_creative": static_result.get("creative_paths", {}).get(cid),
         })
 
+    extra_groups: list[str] = []
+    extra_campaigns: dict[str, list[str]] = {}
+    extra_creative_paths: dict[str, str] = {}
+    for plat, r in extra_platform_results.items():
+        extra_groups.extend(r.get("campaign_groups") or [])
+        extra_campaigns[plat] = list(r.get("campaigns") or [])
+        for k, v in (r.get("creative_paths") or {}).items():
+            extra_creative_paths[f"{k}_{plat}"] = v
+
     return {
         "ok": True,
         "campaign_groups": (
             list(inmail_result.get("campaign_groups") or [])
             + list(static_result.get("campaign_groups") or [])
+            + extra_groups
         ),
         "inmail_campaigns": list(inmail_result.get("campaigns", [])),
         "static_campaigns": list(static_result.get("campaigns", [])),
+        "extra_platform_campaigns": extra_campaigns,
         "creative_paths": {
             **{f"{k}_inmail": v for k, v in inmail_result.get("creative_paths", {}).items()},
             **{f"{k}_static": v for k, v in static_result.get("creative_paths", {}).items()},
+            **extra_creative_paths,
         },
         "per_cohort": per_cohort,
     }
