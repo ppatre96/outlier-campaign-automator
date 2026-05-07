@@ -9,37 +9,6 @@ jobs:
   launch:
     runs-on: ubuntu-latest
 
-    env:
-      # Non-secret config
-      SNOWFLAKE_ACCOUNT: ${{ vars.SNOWFLAKE_ACCOUNT }}
-      SNOWFLAKE_USER: ${{ vars.SNOWFLAKE_USER }}
-      SNOWFLAKE_WAREHOUSE: ${{ vars.SNOWFLAKE_WAREHOUSE }}
-      SNOWFLAKE_DATABASE: ${{ vars.SNOWFLAKE_DATABASE }}
-      SNOWFLAKE_SCHEMA: ${{ vars.SNOWFLAKE_SCHEMA }}
-      SNOWFLAKE_ROLE: ${{ vars.SNOWFLAKE_ROLE }}
-      LINKEDIN_AD_ACCOUNT_ID: ${{ vars.LINKEDIN_AD_ACCOUNT_ID }}
-      LINKEDIN_ORG_ID: ${{ vars.LINKEDIN_ORG_ID }}
-      LINKEDIN_DESTINATION_URL: ${{ vars.LINKEDIN_DESTINATION_URL }}
-      LINKEDIN_MEMBER_URN: ${{ vars.LINKEDIN_MEMBER_URN }}
-      LINKEDIN_INMAIL_SENDER_URN: ${{ vars.LINKEDIN_INMAIL_SENDER_URN }}
-      LINKEDIN_CLIENT_ID: ${{ vars.LINKEDIN_CLIENT_ID }}
-      LITELLM_BASE_URL: ${{ vars.LITELLM_BASE_URL }}
-      LITELLM_MODEL: ${{ vars.LITELLM_MODEL }}
-      GEMINI_IMAGE_MODEL: ${{ vars.GEMINI_IMAGE_MODEL }}
-      REDASH_URL: ${{ vars.REDASH_URL }}
-      SCREENING_START_DATE: ${{ vars.SCREENING_START_DATE }}
-      SLACK_WEBHOOK_URL: ${{ vars.SLACK_WEBHOOK_URL }}
-      # Secrets
-      SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
-      FIGMA_TOKEN: ${{ secrets.FIGMA_TOKEN }}
-      REDASH_API_KEY: ${{ secrets.REDASH_API_KEY }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      LINKEDIN_ACCESS_TOKEN: ${{ secrets.LINKEDIN_ACCESS_TOKEN }}
-      LINKEDIN_REFRESH_TOKEN: ${{ secrets.LINKEDIN_REFRESH_TOKEN }}
-      LINKEDIN_CLIENT_SECRET: ${{ secrets.LINKEDIN_CLIENT_SECRET }}
-      LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
-      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-
     steps:
       - uses: actions/checkout@v4
 
@@ -51,27 +20,35 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Write Google credentials
-        run: echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > credentials.json
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v4
 
-      - name: Write LinkedIn tokens to .env
-        run: |
-          echo "LINKEDIN_ACCESS_TOKEN=${{ secrets.LINKEDIN_ACCESS_TOKEN }}" >> .env
-          echo "LINKEDIN_REFRESH_TOKEN=${{ secrets.LINKEDIN_REFRESH_TOKEN }}" >> .env
+      - name: Write Google credentials
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: doppler run -- bash -c 'echo "$GOOGLE_CREDENTIALS_JSON" > credentials.json'
 
       - name: Run launch pipeline
-        run: PYTHONPATH=. python3 main.py --mode launch
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: doppler run -- python3 main.py --mode launch
 
-      - name: Persist refreshed LinkedIn tokens to GitHub Secrets
+      - name: Persist refreshed LinkedIn tokens to Doppler
         if: always()
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: |
-          NEW_ACCESS=$(grep '^LINKEDIN_ACCESS_TOKEN=' .env | cut -d= -f2-)
-          NEW_REFRESH=$(grep '^LINKEDIN_REFRESH_TOKEN=' .env | cut -d= -f2-)
+          if [ ! -f .env ]; then
+            echo "No .env produced by run — nothing to persist."
+            exit 0
+          fi
+          NEW_ACCESS=$(grep '^LINKEDIN_ACCESS_TOKEN=' .env | cut -d= -f2- || true)
+          NEW_REFRESH=$(grep '^LINKEDIN_REFRESH_TOKEN=' .env | cut -d= -f2- || true)
           if [ -n "$NEW_ACCESS" ]; then
-            echo "$NEW_ACCESS" | gh secret set LINKEDIN_ACCESS_TOKEN --repo ${{ github.repository }}
+            doppler secrets set LINKEDIN_ACCESS_TOKEN="$NEW_ACCESS" --silent
+            echo "Persisted refreshed LINKEDIN_ACCESS_TOKEN to Doppler."
           fi
           if [ -n "$NEW_REFRESH" ]; then
-            echo "$NEW_REFRESH" | gh secret set LINKEDIN_REFRESH_TOKEN --repo ${{ github.repository }}
+            doppler secrets set LINKEDIN_REFRESH_TOKEN="$NEW_REFRESH" --silent
+            echo "Persisted refreshed LINKEDIN_REFRESH_TOKEN to Doppler."
           fi

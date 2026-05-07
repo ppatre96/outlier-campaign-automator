@@ -1,5 +1,25 @@
 # Outlier Campaign Agent — Claude Guidelines
 
+## Secrets via Doppler
+
+Secrets for this project live in **Doppler** (project: `outlier-campaign-agent`, configs: `dev` for local, `prd` for GitHub Actions). Doppler is the single source of truth — rotate a key in the Doppler dashboard once and every consumer (local CLI, this repo, the GitHub Actions workflows) picks up the new value on next run.
+
+**Local invocation:** wrap any command that reads env vars with `doppler run --`:
+
+```bash
+doppler run -- python3 main.py --mode launch
+doppler run -- python3 main.py --mode launch --dry-run
+doppler run -- python3 scripts/smart_ramp_poller.py --once
+```
+
+`load_dotenv()` in `main.py` is kept as a backwards-compat fallback — if `doppler run` injects vars they take precedence over `.env`. Contributors without Doppler set up can still use a local `.env`.
+
+**CI:** workflows use `dopplerhq/cli-action@v4` and a single `DOPPLER_TOKEN` repo secret (read-write service token scoped to `outlier-campaign-agent/prd`). The 20+ individual GitHub repo secrets that used to live alongside it have been retired.
+
+**LinkedIn token rotation:** `launch.yml`'s post-job step writes refreshed access/refresh tokens back to Doppler via `doppler secrets set`, so the next scheduled run starts with fresh tokens automatically (no GitHub PAT needed).
+
+**To inspect or edit secrets:** open the Doppler dashboard, or use the Doppler MCP server registered in Claude Code (`~/.claude/mcp.json`).
+
 ## Language & Terminology
 
 When generating any copy (ad creatives, headlines, descriptions, CTAs), strictly follow Outlier's approved vocabulary. Never use the words in the "Don't Say" column — always substitute the approved alternative.

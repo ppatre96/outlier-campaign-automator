@@ -70,21 +70,12 @@ jobs:
       - name: Ensure data directory exists
         run: mkdir -p data logs
 
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v4
+
       - name: Run poller
         env:
-          # ── Core API keys ──────────────────────────────────────────────
-          ANTHROPIC_API_KEY:               ${{ secrets.ANTHROPIC_API_KEY }}
-          GEMINI_API_KEY:                  ${{ secrets.GEMINI_API_KEY }}
-          REDASH_API_KEY:                  ${{ secrets.REDASH_API_KEY }}
-          # ── LinkedIn ───────────────────────────────────────────────────
-          LINKEDIN_ACCESS_TOKEN:           ${{ secrets.LINKEDIN_ACCESS_TOKEN }}
-          LINKEDIN_AD_ACCOUNT_ID:          ${{ secrets.LINKEDIN_AD_ACCOUNT_ID }}
-          LINKEDIN_INMAIL_SENDER_URN:      ${{ secrets.LINKEDIN_INMAIL_SENDER_URN }}
-          # ── Smart Ramp ─────────────────────────────────────────────────
-          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-          # ── Slack (optional — pipeline degrades gracefully when absent) ─
-          SLACK_WEBHOOK_URL:               ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_BOT_TOKEN:                 ${{ secrets.SLACK_BOT_TOKEN }}
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: |
           ARGS="--once"
 
@@ -101,8 +92,8 @@ jobs:
             ARGS="$ARGS --dry-run"
           fi
 
-          echo "Running: python scripts/smart_ramp_poller.py $ARGS"
-          python scripts/smart_ramp_poller.py $ARGS
+          echo "Running: doppler run -- python scripts/smart_ramp_poller.py $ARGS"
+          doppler run -- python scripts/smart_ramp_poller.py $ARGS
 
       - name: Save processed_ramps state
         if: always()
