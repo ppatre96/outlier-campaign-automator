@@ -135,8 +135,13 @@ MCP_FIGMA_URL = os.getenv("MCP_FIGMA_URL", "http://127.0.0.1:3845/sse")
 # Set GDRIVE_ENABLED=true in .env once the target folder is a Shared Drive
 # and the service account has been added as Content Manager.
 # Until then creatives are saved locally only.
-GDRIVE_ENABLED   = os.getenv("GDRIVE_ENABLED", "false").lower() == "true"
-GDRIVE_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID", "0ALHAgK4RPbnfUk9PVA")
+GDRIVE_ENABLED   = os.getenv("GDRIVE_ENABLED", "true").lower() == "true"
+# Shared Drive ID (Google Workspace Team Drive — confirmed plugged in).
+# The agent walks/creates this hierarchy under the drive root:
+#   <ramp_id>/<channel>/<cohort_geo>/<angle>.png
+GDRIVE_DRIVE_ID  = os.getenv("GDRIVE_DRIVE_ID", "0ALHAgK4RPbnfUk9PVA")
+# Optional sub-folder root inside the Shared Drive — empty uses the drive root.
+GDRIVE_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID", "")
 
 # ── Gemini (image generation) ─────────────────────────────────────────────────
 # Routed through LiteLLM proxy via /images/generations endpoint.

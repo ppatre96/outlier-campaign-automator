@@ -2034,40 +2034,56 @@ def _save_creative_to_drive(
     ramp_id: str,
     unique_id: str,
     channel: str,         # "linkedin", "meta", "google"
-    angle: str,           # "A", "B", "C", "F", etc.
+    angle: str,           # "A", "B", "C", ...
+    cohort_geo: str = "", # "<cohort_stg_id>__<geo_cluster>"
 ) -> str:
-    """Upload PNG to Google Drive: <ramp_id>/<channel>/<unique_id>_<angle>.png
+    """Upload PNG to the Shared Drive hierarchy
+    `<ramp_id>/<channel>/<cohort_geo>/<angle>.png`. The folders are find-or-
+    created on each run. Falls back to legacy flat upload when cohort_geo is
+    empty (callers that don't have cohort context, e.g. registry image embed).
 
-    Uses the Workspace Shared Drive configured in config.GDRIVE_FOLDER_ID.
-    Creates channel folders (linkedin, meta, google) inside the ramp folder.
-
-    Args:
-        png_path: Path to the generated PNG file.
-        ramp_id: Smart Ramp ID (e.g., "GMR-0006").
-        unique_id: Unique identifier from trigger sheet (e.g., "ROW_2").
-        channel: Ad platform ("linkedin", "meta", or "google").
-        angle: Angle variant ("A", "B", "C", etc.).
-
-    Returns: Google Drive file URL on success, empty string on failure.
+    Returns the Drive web view URL on success, empty string on failure.
     """
-    from src.gdrive import upload_creative
+    from src.gdrive import upload_creative_in_hierarchy, upload_creative
 
     if not config.GDRIVE_ENABLED:
         log.warning("GDRIVE_ENABLED=false — skipping Drive upload for %s", unique_id)
         return ""
 
     try:
-        # Rename file to match Drive structure: unique_id_angle.png
+        if cohort_geo:
+            url = upload_creative_in_hierarchy(
+                file_path=Path(str(png_path)),
+                ramp_id=ramp_id or "no_ramp",
+                channel=channel or "linkedin",
+                cohort_geo=cohort_geo,
+                angle=angle or "creative",
+            )
+            log.info("Creative uploaded to Drive: %s/%s/%s/%s.png → %s",
+                     ramp_id, channel, cohort_geo, angle, url)
+            return url
+        # Legacy flat path (no cohort context — keep filename unique).
         target_name = f"{unique_id}_{angle}.png"
         temp_path = Path(tempfile.mktemp(suffix=f"_{target_name}"))
         shutil.copy2(str(png_path), str(temp_path))
-
         url = upload_creative(temp_path)
-        log.info("Creative uploaded to Drive: %s → %s", target_name, url)
+        log.info("Creative uploaded to Drive (flat): %s → %s", target_name, url)
         return url
     except Exception as e:
         log.error("Failed to upload creative to Drive: %s", e)
         return ""
+
+
+def _cohort_geo_label(cohort, geo_group) -> str:
+    """Stable, filesystem-safe folder name for a (cohort × geo cluster).
+
+    Format: `<stg_id>__<cluster>` — uses the Stage cohort id (short, unique
+    per run) plus the geo cluster slug (anglo / south_asian / etc). Both
+    are alphanumeric-friendly so no extra sanitisation needed.
+    """
+    stg = getattr(cohort, "_stg_id", None) or getattr(cohort, "id", "cohort")
+    cluster = getattr(geo_group, "cluster", "global")
+    return f"{stg}__{cluster}"
 
 
 def _save_creative_locally(
@@ -2412,6 +2428,20 @@ def _process_static_campaigns(
                 log.info("_process_static_campaigns: no PNG for angle %s — skipping creative attach", angle_label)
                 continue
 
+            # Unconditional Drive archive — every successful PNG lands in
+            # <ramp_id>/linkedin/<cohort_geo>/<angle>.png on the Shared Drive
+            # regardless of whether LinkedIn ad-attach succeeds. Reviewer +
+            # downstream tooling can always pull the asset from Drive.
+            if config.GDRIVE_ENABLED:
+                _save_creative_to_drive(
+                    png_path=png_path,
+                    ramp_id=ramp_id or "manual",
+                    unique_id=unique_id or row_id,
+                    channel="linkedin",
+                    angle=angle_label,
+                    cohort_geo=_cohort_geo_label(cohort, geo_group),
+                )
+
             headline = variant.get("headline") or f"Your {_cohort_headline(cohort)} expertise is in demand."
             subhead = variant.get("subheadline") or "Earn payment doing remote AI tasks on your schedule."
 
@@ -2466,6 +2496,7 @@ def _process_static_campaigns(
                         unique_id=uid,
                         channel="linkedin",
                         angle=angle_label,
+                        cohort_geo=_cohort_geo_label(cohort, geo_group),
                     )
                     if drive_url:
                         creative_paths[row_id] = drive_url
@@ -2634,6 +2665,16 @@ def _process_extra_platform_arm(
                     error_message="static-arm produced no PNG for this spec",
                 )
             else:
+                # Unconditional Drive archive in <ramp_id>/<channel>/<cohort_geo>/.
+                if config.GDRIVE_ENABLED:
+                    _save_creative_to_drive(
+                        png_path=png_path,
+                        ramp_id=ramp_id or "manual",
+                        unique_id=row_id,
+                        channel=platform,
+                        angle=angle_label,
+                        cohort_geo=_cohort_geo_label(cohort, geo_group),
+                    )
                 try:
                     image_id = client.upload_image(png_path)
                 except Exception as exc:
