@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import sys
 import urllib.parse
@@ -188,7 +189,10 @@ def main() -> int:
 
     print()
     print("=== Granted scopes ===")
-    granted = granted_scope.split() if granted_scope else granted_scope.split(",")
+    # LinkedIn returns scopes as either space-separated or comma-separated
+    # depending on the consent path. Handle both — split on any whitespace
+    # OR comma, drop empties.
+    granted = [s for s in re.split(r"[\s,]+", granted_scope or "") if s]
     for s in SCOPES:
         mark = "✓" if s in granted else "✗"
         print(f"  {mark} {s}")
