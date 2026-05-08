@@ -46,12 +46,19 @@ REDIRECT_PATH = "/callback"
 REDIRECT_URI  = f"http://{REDIRECT_HOST}:{REDIRECT_PORT}{REDIRECT_PATH}"
 
 # Full scope set this pipeline needs. Order matches LinkedIn's app config UI.
-# w_member_social is the new addition that unblocks DSC post creation.
+# - r_ads / r_ads_reporting / rw_ads: read+write campaign hierarchy
+# - w_member_social: DSC post creation (creative attach)
+# - openid / profile: OpenID Connect userinfo, lets us auto-discover the
+#   token owner's urn:li:person URN immediately after mint so we can
+#   keep LINKEDIN_MEMBER_URN in sync. Both ride on the "Sign In with
+#   LinkedIn using OpenID Connect" product Tuan added 2026-05-08.
 SCOPES = [
     "r_ads",
     "r_ads_reporting",
     "rw_ads",
     "w_member_social",
+    "openid",
+    "profile",
 ]
 
 AUTHORIZE_URL = "https://www.linkedin.com/oauth/v2/authorization"
@@ -201,6 +208,39 @@ def main() -> int:
     print()
     print(f"Access token expires in:  {expires_in} sec  (~{expires_in // 86400} days)")
     print(f"Refresh token expires in: {refresh_exp} sec (~{refresh_exp // 86400} days)")
+
+    # ── Discover the token owner's urn:li:person via /v2/userinfo ───────────
+    # Requires `openid` + `profile` scopes (added above). The `sub` field is
+    # the LinkedIn member's internal ID — same shape as the URN suffix we
+    # need for LINKEDIN_MEMBER_URN.
+    member_urn = ""
+    try:
+        ui_resp = requests.get(
+            "https://api.linkedin.com/v2/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+        if ui_resp.ok:
+            ui = ui_resp.json()
+            sub = ui.get("sub", "").strip()
+            name = ui.get("name", "")
+            email = ui.get("email", "")
+            if sub:
+                member_urn = f"urn:li:person:{sub}"
+                print()
+                print(f"Token owner identity (from /v2/userinfo):")
+                print(f"  name:  {name or '(not provided)'}")
+                print(f"  email: {email or '(not provided)'}")
+                print(f"  URN:   {member_urn}")
+        else:
+            print()
+            print(f"WARN: /v2/userinfo returned {ui_resp.status_code}: {ui_resp.text[:300]}")
+            print("      LINKEDIN_MEMBER_URN cannot be auto-discovered. You'll need to")
+            print("      look it up manually from LinkedIn UI before DSC posts will work.")
+    except Exception as exc:  # noqa: BLE001
+        print()
+        print(f"WARN: /v2/userinfo call failed ({exc}). LINKEDIN_MEMBER_URN auto-discovery skipped.")
+
     print()
     print("=" * 72)
     print(" SUCCESS — minted token has w_member_social.")
@@ -214,6 +254,10 @@ def main() -> int:
     print()
     print(f"  doppler secrets set LINKEDIN_REFRESH_TOKEN='{refresh_token}' \\")
     print(f"    --project outlier-campaign-agent --config dev")
+    if member_urn:
+        print()
+        print(f"  doppler secrets set LINKEDIN_MEMBER_URN='{member_urn}' \\")
+        print(f"    --project outlier-campaign-agent --config dev")
     print()
     print("Then re-run the static-ad smoke test:")
     print()
