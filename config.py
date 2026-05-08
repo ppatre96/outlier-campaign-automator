@@ -124,6 +124,11 @@ MAX_CAMPAIGNS               = int(os.getenv("MAX_CAMPAIGNS", 5))
 # Feedback agent surfaces winners/losers; losers get deprecated and replaced.
 MAX_COHORTS_PER_GEO_CLUSTER = int(os.getenv("MAX_COHORTS_PER_GEO_CLUSTER", 3))
 ANGLES_PER_COHORT           = int(os.getenv("ANGLES_PER_COHORT", 3))
+# Phase 3.1 — image-gen concurrency. Each (cohort × geo × angle) Gemini call
+# is independent; running them in a thread pool collapses ~27 sequential
+# calls (~40 min worst case with QC reroll) to ~10 min at workers=4.
+# Set to 1 to fall back to fully sequential behavior.
+IMAGE_GEN_CONCURRENCY       = int(os.getenv("IMAGE_GEN_CONCURRENCY", 4))
 AUDIENCE_SIZE_MIN           = int(os.getenv("AUDIENCE_SIZE_MIN", 50_000))
 MIN_UNIQUE_AUDIENCE_PCT     = float(os.getenv("MIN_UNIQUE_AUDIENCE_PCT", 80.0))
 URN_FUZZY_MATCH_THRESHOLD   = float(os.getenv("URN_FUZZY_MATCH_THRESHOLD", 0.85))

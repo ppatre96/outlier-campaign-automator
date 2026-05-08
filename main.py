@@ -2202,24 +2202,31 @@ def _process_static_campaigns(
     if not capped_cohorts:
         return {"campaigns": [], "campaigns_by_cohort": {}, "creative_paths": {}, "campaign_specs": []}
 
-    # Generate creatives per cohort × geo group × angle
+    # Generate creatives per cohort × geo group × angle.
+    # Phase 3.1 (2026-05-08): image gen is parallelized across angles via
+    # ThreadPoolExecutor. Copy gen stays sequential per (cohort × geo) — it's
+    # cheap (~5s) compared to image gen (~30-300s with QC reroll).
+    import concurrent.futures as _cf
+
     has_figma = bool(figma_file and figma_node and claude_key)
     figma_client = FigmaCreativeClient() if has_figma else None
     # Flat list of specs — one entry per (cohort × geo_group × angle) = one LinkedIn campaign
     campaign_specs: list[dict] = []
+    skip_image_gen = dry_run and not os.environ.get("WITH_IMAGES")
 
+    # ── Phase A: build the (cohort × geo × angle) task list with copy gen
+    # done sequentially per (cohort × geo). Image gen is deferred to Phase B.
+    tasks: list[dict] = []
     for cohort in capped_cohorts:
-        # Outer loop: cohort. Middle: geo group. Inner: angle.
         for geo_group in geo_groups:
-            geo_label   = geo_group.cluster_label
-            group_geos  = geo_group.geos or raw_geos
+            geo_label  = geo_group.cluster_label
+            group_geos = geo_group.geos or raw_geos
 
             log.info(
                 "_process_static_campaigns: cohort '%s' × geo_group '%s' (%s) rate=%s",
                 cohort.name, geo_label, group_geos, geo_group.advertised_rate,
             )
 
-            # Copy gen once per cohort×geo (shared across all angles)
             variants: list[dict] = []
             try:
                 layer_map = (
@@ -2237,61 +2244,127 @@ def _process_static_campaigns(
                 log.warning("Static copy generation failed for '%s' / '%s': %s",
                             cohort.name, geo_label, exc)
 
-            skip_image_gen = dry_run and not os.environ.get("WITH_IMAGES")
-
-            # Image gen + spec accumulation once per angle
             for angle_label in angle_labels:
-                angle_idx        = angle_labels.index(angle_label)
-                selected_variant = variants[angle_idx] if angle_idx < len(variants) else {}
-                png_path: Path | None = None
-                qc_report: dict = {}
-
-                if not skip_image_gen:
-                    if has_figma and variants:
-                        try:
-                            tg_label = variants[0].get("tg_label", cohort.name) if variants else cohort.name
-                            clone_ids = apply_plugin_logic(figma_file, figma_node, variants, tg_label, claude_key)
-                            if clone_ids:
-                                selected_id = clone_ids[angle_idx % len(clone_ids)]
-                                pngs = figma_client.export_clone_pngs(figma_file, [selected_id])
-                                png_path = pngs[0] if pngs else None
-                        except Exception as exc:
-                            log.warning("Static Figma path failed for '%s': %s — falling back to Gemini",
-                                        cohort.name, exc)
-
-                    if png_path is None and selected_variant:
-                        try:
-                            from src.figma_creative import rewrite_variant_copy
-                            png_path, qc_report = generate_imagen_creative_with_qc(
-                                variant=selected_variant,
-                                copy_rewriter=rewrite_variant_copy,
-                            )
-                            if qc_report and qc_report.get("verdict") == "FAIL":
-                                log.error(
-                                    "Static QC FAIL for '%s' / '%s' after %d attempts; REJECTING creative. "
-                                    "Violations: %s",
-                                    cohort.name, geo_label,
-                                    qc_report.get("attempts", 1),
-                                    qc_report.get("violations", []),
-                                )
-                                png_path = None
-                        except Exception as exc:
-                            log.warning("Static Gemini path failed for '%s' / '%s': %s",
-                                        cohort.name, geo_label, exc)
-                            png_path = None
-                            qc_report = {}
-
-                # Accumulate one spec per (cohort × geo_group × angle)
-                campaign_specs.append({
+                tasks.append({
                     "cohort":      cohort,
                     "geo_group":   geo_group,
                     "group_geos":  group_geos,
-                    "angle_idx":   angle_idx,
+                    "geo_label":   geo_label,
+                    "angle_idx":   angle_labels.index(angle_label),
                     "angle_label": angle_label,
                     "variants":    variants,
-                    "png_path":    png_path,
-                    "qc_report":   qc_report,
                 })
+
+    # ── Phase B: parallelize image gen across all (cohort × geo × angle)
+    # tasks via ThreadPoolExecutor. Gemini calls are I/O-bound (HTTP), so
+    # threads suffice (no asyncio rewrite needed). Concurrency is bounded
+    # by config.IMAGE_GEN_CONCURRENCY (default 4) to keep below Gemini's
+    # rate limits. Each task is independent — exceptions are isolated.
+    def _gen_one(task: dict) -> dict:
+        cohort       = task["cohort"]
+        geo_group    = task["geo_group"]
+        geo_label    = task["geo_label"]
+        angle_idx    = task["angle_idx"]
+        angle_label  = task["angle_label"]
+        variants     = task["variants"]
+        group_geos   = task["group_geos"]
+        selected_variant = variants[angle_idx] if angle_idx < len(variants) else {}
+        png_path: Path | None = None
+        qc_report: dict = {}
+
+        if not skip_image_gen:
+            if has_figma and variants:
+                try:
+                    tg_label = variants[0].get("tg_label", cohort.name) if variants else cohort.name
+                    clone_ids = apply_plugin_logic(figma_file, figma_node, variants, tg_label, claude_key)
+                    if clone_ids:
+                        selected_id = clone_ids[angle_idx % len(clone_ids)]
+                        pngs = figma_client.export_clone_pngs(figma_file, [selected_id])
+                        png_path = pngs[0] if pngs else None
+                except Exception as exc:
+                    log.warning("Static Figma path failed for '%s': %s — falling back to Gemini",
+                                cohort.name, exc)
+
+            if png_path is None and selected_variant:
+                try:
+                    from src.figma_creative import rewrite_variant_copy
+                    png_path, qc_report = generate_imagen_creative_with_qc(
+                        variant=selected_variant,
+                        copy_rewriter=rewrite_variant_copy,
+                    )
+                    if qc_report and qc_report.get("verdict") == "FAIL":
+                        log.error(
+                            "Static QC FAIL for '%s' / '%s' after %d attempts; REJECTING creative. "
+                            "Violations: %s",
+                            cohort.name, geo_label,
+                            qc_report.get("attempts", 1),
+                            qc_report.get("violations", []),
+                        )
+                        png_path = None
+                except Exception as exc:
+                    log.warning("Static Gemini path failed for '%s' / '%s': %s",
+                                cohort.name, geo_label, exc)
+                    png_path = None
+                    qc_report = {}
+
+        return {
+            "cohort":      cohort,
+            "geo_group":   geo_group,
+            "group_geos":  group_geos,
+            "angle_idx":   angle_idx,
+            "angle_label": angle_label,
+            "variants":    variants,
+            "png_path":    png_path,
+            "qc_report":   qc_report,
+        }
+
+    if not tasks:
+        pass  # nothing to gen; campaign_specs stays empty
+    elif config.IMAGE_GEN_CONCURRENCY <= 1 or skip_image_gen:
+        # Sequential fallback (also avoids thread overhead in dry-run mode
+        # where image gen is a no-op).
+        for t in tasks:
+            campaign_specs.append(_gen_one(t))
+    else:
+        log.info(
+            "_process_static_campaigns: dispatching %d image-gen tasks "
+            "with concurrency=%d",
+            len(tasks), config.IMAGE_GEN_CONCURRENCY,
+        )
+        # Preserve task order in campaign_specs by indexing futures.
+        results: dict[int, dict] = {}
+        with _cf.ThreadPoolExecutor(
+            max_workers=config.IMAGE_GEN_CONCURRENCY,
+            thread_name_prefix="static-imggen",
+        ) as ex:
+            future_to_idx = {ex.submit(_gen_one, t): i for i, t in enumerate(tasks)}
+            for fut in _cf.as_completed(future_to_idx):
+                idx = future_to_idx[fut]
+                try:
+                    results[idx] = fut.result()
+                except Exception as exc:
+                    # Should not happen — _gen_one already swallows errors —
+                    # but if it does, fall back to a spec with no image so the
+                    # caller can decide to skip the angle rather than abort
+                    # the whole arm.
+                    t = tasks[idx]
+                    log.exception(
+                        "_process_static_campaigns: unexpected exception in image-gen "
+                        "task cohort=%s geo=%s angle=%s — %s",
+                        t["cohort"].name, t["geo_label"], t["angle_label"], exc,
+                    )
+                    results[idx] = {
+                        "cohort":      t["cohort"],
+                        "geo_group":   t["geo_group"],
+                        "group_geos":  t["group_geos"],
+                        "angle_idx":   t["angle_idx"],
+                        "angle_label": t["angle_label"],
+                        "variants":    t["variants"],
+                        "png_path":    None,
+                        "qc_report":   {},
+                    }
+        for i in range(len(tasks)):
+            campaign_specs.append(results[i])
 
     if dry_run:
         log.info(
