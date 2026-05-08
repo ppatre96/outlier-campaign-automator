@@ -2400,6 +2400,21 @@ def _process_static_campaigns(
             variant = variants[angle_idx] if angle_idx < len(variants) else {}
             row_id = f"{by_cohort_key}_{angle_label}"
 
+            # Upload to Drive FIRST so the URL can be logged into the registry
+            # as `creative_image_path` — gives the Triggers sheet a clickable
+            # link in the Creative Image Path column. Falls back to the local
+            # path if Drive is disabled / upload fails.
+            drive_url = ""
+            if config.GDRIVE_ENABLED and png_path and Path(str(png_path)).exists():
+                drive_url = _save_creative_to_drive(
+                    png_path=png_path,
+                    ramp_id=ramp_id or "manual",
+                    unique_id=unique_id or row_id,
+                    channel="linkedin",
+                    angle=angle_label,
+                    cohort_geo=_cohort_geo_label(cohort, geo_group),
+                )
+
             # One registry row per (cohort × geo × angle) — shared
             # platform_campaign_id (the LinkedIn campaign URN) + distinct
             # platform_creative_id once the creative attaches.
@@ -2418,7 +2433,7 @@ def _process_static_campaigns(
                     headline=variant.get("headline", ""),
                     subheadline=variant.get("subheadline", ""),
                     photo_subject=variant.get("photo_subject", ""),
-                    creative_image_path=str(png_path) if png_path else "",
+                    creative_image_path=drive_url or (str(png_path) if png_path else ""),
                     gemini_prompt=qc_report.get("gemini_prompt", ""),
                 )
             except Exception as _exc:
@@ -2427,20 +2442,6 @@ def _process_static_campaigns(
             if not (png_path and Path(str(png_path)).exists()):
                 log.info("_process_static_campaigns: no PNG for angle %s — skipping creative attach", angle_label)
                 continue
-
-            # Unconditional Drive archive — every successful PNG lands in
-            # <ramp_id>/linkedin/<cohort_geo>/<angle>.png on the Shared Drive
-            # regardless of whether LinkedIn ad-attach succeeds. Reviewer +
-            # downstream tooling can always pull the asset from Drive.
-            if config.GDRIVE_ENABLED:
-                _save_creative_to_drive(
-                    png_path=png_path,
-                    ramp_id=ramp_id or "manual",
-                    unique_id=unique_id or row_id,
-                    channel="linkedin",
-                    angle=angle_label,
-                    cohort_geo=_cohort_geo_label(cohort, geo_group),
-                )
 
             headline = variant.get("headline") or f"Your {_cohort_headline(cohort)} expertise is in demand."
             subhead = variant.get("subheadline") or "Earn payment doing remote AI tasks on your schedule."
@@ -2657,6 +2658,19 @@ def _process_extra_platform_arm(
 
             platform_copy = adapt_copy_for_platform(variant, platform) if variant else {}
 
+            # Drive archive FIRST so the URL can land in the registry's
+            # creative_image_path column (clickable from the Triggers sheet).
+            drive_url = ""
+            if config.GDRIVE_ENABLED and png_path and Path(str(png_path)).exists():
+                drive_url = _save_creative_to_drive(
+                    png_path=png_path,
+                    ramp_id=ramp_id or "manual",
+                    unique_id=row_id,
+                    channel=platform,
+                    angle=angle_label,
+                    cohort_geo=_cohort_geo_label(cohort, geo_group),
+                )
+
             ad_result: CreateAdResult
             if not png_path or not Path(str(png_path)).exists():
                 ad_result = CreateAdResult(
@@ -2665,16 +2679,6 @@ def _process_extra_platform_arm(
                     error_message="static-arm produced no PNG for this spec",
                 )
             else:
-                # Unconditional Drive archive in <ramp_id>/<channel>/<cohort_geo>/.
-                if config.GDRIVE_ENABLED:
-                    _save_creative_to_drive(
-                        png_path=png_path,
-                        ramp_id=ramp_id or "manual",
-                        unique_id=row_id,
-                        channel=platform,
-                        angle=angle_label,
-                        cohort_geo=_cohort_geo_label(cohort, geo_group),
-                    )
                 try:
                     image_id = client.upload_image(png_path)
                 except Exception as exc:
@@ -2726,7 +2730,7 @@ def _process_extra_platform_arm(
                     headline=variant.get("headline", "") if variant else "",
                     subheadline=variant.get("subheadline", "") if variant else "",
                     photo_subject=variant.get("photo_subject", "") if variant else "",
-                    creative_image_path=str(png_path) if png_path else "",
+                    creative_image_path=drive_url or (str(png_path) if png_path else ""),
                     platform=platform,
                     platform_campaign_id=sub_id,
                     platform_creative_id=ad_result.creative_id or "",
