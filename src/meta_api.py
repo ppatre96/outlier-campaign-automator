@@ -41,9 +41,18 @@ log = logging.getLogger(__name__)
 
 
 # Meta CTA enum — facebook_business uses these literal strings on AdCreative.
+# GET_STARTED was removed from Meta's accepted list at some point — confirmed
+# 2026-05-08 via 400 error from /act_*/adcreatives. The platform-agnostic
+# pipeline still emits GET_STARTED occasionally; we map it to APPLY_NOW below.
 _VALID_META_CTAS = {
-    "APPLY_NOW", "LEARN_MORE", "SIGN_UP", "GET_STARTED",
+    "APPLY_NOW", "LEARN_MORE", "SIGN_UP",
     "DOWNLOAD", "CONTACT_US", "GET_OFFER", "SUBSCRIBE",
+    "BOOK_NOW", "ORDER_NOW", "INSTALL_APP", "USE_APP", "GET_QUOTE",
+}
+# Compatibility remap for CTAs the rest of the pipeline picks but Meta no
+# longer accepts. Applied just before /adcreatives is called.
+_META_CTA_REMAP = {
+    "GET_STARTED": "APPLY_NOW",
 }
 
 
@@ -273,6 +282,7 @@ class MetaClient(AdPlatformClient):
             from facebook_business.adobjects.ad import Ad
 
             cta_type = (cta or "LEARN_MORE").upper()
+            cta_type = _META_CTA_REMAP.get(cta_type, cta_type)
             if cta_type not in _VALID_META_CTAS:
                 cta_type = "LEARN_MORE"
 

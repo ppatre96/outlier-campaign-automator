@@ -140,12 +140,44 @@ class GoogleAdsClient(AdPlatformClient):
         c.status = client.enums.CampaignStatusEnum.PAUSED
         c.campaign_budget = budget_resource
         c.manual_cpc.enhanced_cpc_enabled = False
-        if category == "EMPLOYMENT":
-            c.special_ad_category = client.enums.SpecialAdCategoryEnum.EMPLOYMENT
-        elif category in ("HOUSING", "CREDIT"):
-            c.special_ad_category = getattr(
-                client.enums.SpecialAdCategoryEnum, category, client.enums.SpecialAdCategoryEnum.NONE,
+        # EU political advertising declaration — required field in Google
+        # Ads v21+ (2026-05-08 verified). Outlier's tasking ads are not
+        # political; explicitly declare DOES_NOT_CONTAIN.
+        try:
+            c.contains_eu_political_advertising = (
+                client.enums.EuPoliticalAdvertisingStatusEnum
+                .DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING
             )
+        except Exception as exc:  # noqa: BLE001 — defensive on SDK churn
+            log.warning("Could not set contains_eu_political_advertising (%s) — "
+                        "campaign create will fail if Google requires it.", exc)
+        # Special Ad Category was removed from the Campaign proto in
+        # google-ads v21+ (2026-05-08 verified — no `special_ad_category` or
+        # `SpecialAdCategoryEnum` attribute exists on the SDK any more). For
+        # EMPLOYMENT campaigns the reviewer must set the category manually
+        # in Google Ads Manager before activating. Keep the call resilient
+        # so the rest of the arm proceeds.
+        if category in ("EMPLOYMENT", "HOUSING", "CREDIT"):
+            sac_enum = getattr(client.enums, "SpecialAdCategoryEnum", None)
+            target = sac_enum and getattr(sac_enum, category, None)
+            if target is not None and hasattr(c, "special_ad_category"):
+                try:
+                    c.special_ad_category = target
+                except Exception as exc:  # noqa: BLE001 — defensive
+                    log.warning(
+                        "Google special_ad_category=%s could not be set "
+                        "(SDK rejected assignment: %s) — reviewer must set "
+                        "it manually in Ads Manager before activating.",
+                        category, exc,
+                    )
+            else:
+                log.warning(
+                    "Google special_ad_category=%s requested but SDK "
+                    "(google-ads >=22) no longer exposes the field. Reviewer "
+                    "must set the category manually in Ads Manager before "
+                    "activating.",
+                    category,
+                )
 
         try:
             resp = campaign_service.mutate_campaigns(
