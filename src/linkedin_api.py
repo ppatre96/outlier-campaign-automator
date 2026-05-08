@@ -273,6 +273,34 @@ class LinkedInClient(AdPlatformClient):
         self._raise_for_status(resp, "getCampaign")
         return resp.json()
 
+    def get_account_reference_urn(self) -> str:
+        """Return the ad account's `reference` field — the URN of the LinkedIn
+        organization that owns the account. Required as the `sender` for
+        Sponsored InMail creatives (LinkedIn rejects person URNs with
+        SINMAIL_SENDER_NOT_APPROVED). Cached after first call.
+        """
+        cached = getattr(self, "_account_reference_urn", None)
+        if cached:
+            return cached
+        headers = self._default_headers()
+        headers["LinkedIn-Version"] = "202506"
+        resp = self._req(
+            "GET",
+            self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}"),
+            headers=headers,
+        )
+        self._raise_for_status(resp, "getAdAccount")
+        ref = resp.json().get("reference") or ""
+        if not ref:
+            raise RuntimeError(
+                "LinkedIn ad account has no `reference` field — InMail sender "
+                "URN cannot be auto-derived. Set LINKEDIN_INMAIL_SENDER_URN "
+                "manually to the owning organization URN."
+            )
+        self._account_reference_urn = ref
+        log.info("Resolved ad account reference URN: %s", ref)
+        return ref
+
     def clone_campaign(self, source_urn: str, new_name: str) -> str:
         """
         Create a new DRAFT campaign by cloning the targeting criteria from an
@@ -427,7 +455,13 @@ class LinkedInClient(AdPlatformClient):
             "targetingCriteria":     targeting,
             "status":                "DRAFT",
             "locale":                {"country": "US", "language": "en"},
-            "objectiveType":         "LEAD_GENERATION",
+            # WEBSITE_VISIT — drives clicks to the Outlier apply page via the
+            # InMail content's `subContent.regular` callToAction. LEAD_GENERATION
+            # would require a Lead Gen Form attached on the creative, which we
+            # don't use (no top-level `callToAction` field is accepted by the
+            # creative API). LinkedIn rejects creatives whose campaign objective
+            # mismatches the content variant.
+            "objectiveType":         "WEBSITE_VISIT",
             "offsiteDeliveryEnabled": False,
             "politicalIntent":        "NOT_POLITICAL",
             "creativeSelection":      "ROUND_ROBIN",
@@ -455,10 +489,26 @@ class LinkedInClient(AdPlatformClient):
         Create a LinkedIn Message Ad creative and attach it to a campaign.
         Two-step: (1) create inMailContent via REST API, (2) create creative referencing it.
         Uses /rest/inMailContents (no MDP needed) with LinkedIn-Version: 202506 header.
-        sender_urn: urn:li:person:... (must be connected to the ad account).
+
+        sender_urn: must be the URN of the LinkedIn ORGANIZATION that owns the
+                    ad account (e.g. `urn:li:organization:92583550`). Person
+                    URNs are rejected with SINMAIL_SENDER_NOT_APPROVED. If a
+                    person URN or empty string is passed, this method
+                    auto-derives the org URN from the ad account's `reference`
+                    field via `get_account_reference_urn()`.
         Returns the sponsoredCreative URN.
         """
         dest = destination_url or config.LINKEDIN_DESTINATION
+
+        # Auto-correct legacy person-URN sender values. The InMail sender MUST
+        # be the org URN that owns the ad account — LinkedIn validates this on
+        # the inMailContents POST.
+        if not sender_urn or sender_urn.startswith("urn:li:person:"):
+            log.info(
+                "InMail sender %r unsuitable — substituting org URN from ad account",
+                sender_urn,
+            )
+            sender_urn = self.get_account_reference_urn()
 
         # Step 1 — create the InMail content object via REST API (no MDP required)
         content_payload = {
@@ -480,8 +530,13 @@ class LinkedInClient(AdPlatformClient):
         import requests as _req_lib
         resp = _req_lib.post("https://api.linkedin.com/rest/inMailContents", json=content_payload, headers=content_headers)
         self._raise_for_status(resp, "createInMailContent")
-        content_id  = resp.headers.get("x-restli-id") or _id_from_location(resp)
-        content_urn = f"urn:li:adInMailContent:{content_id}"
+        # x-restli-id sometimes contains a bare numeric id, sometimes a full URN
+        # (e.g. "urn:li:adInMailContent:214000216"). Normalize to a full URN.
+        raw = resp.headers.get("x-restli-id") or _id_from_location(resp) or ""
+        if raw.startswith("urn:li:"):
+            content_urn = raw
+        else:
+            content_urn = f"urn:li:adInMailContent:{raw}"
         log.info("Created InMail content %s (no MDP required)", content_urn)
 
         # Step 2 — create the creative referencing the content
@@ -494,8 +549,10 @@ class LinkedInClient(AdPlatformClient):
         creative_headers["LinkedIn-Version"] = "202506"
         resp = self._req("POST", f"https://api.linkedin.com/rest/adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/creatives", json=creative_payload, headers=creative_headers)
         self._raise_for_status(resp, "createInMailCreative")
-        creative_id = resp.headers.get("x-restli-id") or _id_from_location(resp)
-        urn = f"urn:li:sponsoredCreative:{creative_id}"
+        # Same normalisation as for adInMailContent: x-restli-id may be a bare
+        # numeric id or a full URN — return a full URN either way.
+        raw = resp.headers.get("x-restli-id") or _id_from_location(resp) or ""
+        urn = raw if raw.startswith("urn:li:") else f"urn:li:sponsoredCreative:{raw}"
         log.info("Created InMail creative %s", urn)
         return urn
 
