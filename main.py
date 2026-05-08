@@ -2305,24 +2305,45 @@ def _process_static_campaigns(
 
     from src.campaign_registry import log_campaign as _reg_log
 
+    # ── Group specs by (cohort × geo_group) so each (cohort × geo) becomes
+    # ONE LinkedIn campaign with multiple creatives attached (one per angle).
+    # Hierarchy: CampaignGroup → Campaign (per cohort × geo) → 3 Creatives
+    grouped_specs: dict[tuple[str, str], list[dict]] = {}
+    group_meta: dict[tuple[str, str], dict] = {}
     for spec in campaign_specs:
-        cohort = spec["cohort"]
-        geo_group = spec["geo_group"]
-        group_geos = spec["group_geos"]
-        angle_idx = spec["angle_idx"]
-        angle_label = spec.get("angle_label", ["A", "B", "C"][angle_idx])
-        variants = spec["variants"]
-        png_path = spec["png_path"]
-        # Per-(cohort × geo_group × angle) isolation: wrap in try/except so one failure
-        # NEVER aborts the others (SR-04 contract).
+        key = (spec["cohort"]._stg_id, spec["geo_group"].cluster)
+        grouped_specs.setdefault(key, []).append(spec)
+        if key not in group_meta:
+            group_meta[key] = {
+                "cohort": spec["cohort"],
+                "geo_group": spec["geo_group"],
+                "group_geos": spec["group_geos"],
+                "variants": spec["variants"],
+            }
+
+    log.info(
+        "_process_static_campaigns: %d cohort × geo group(s) → 1 LinkedIn campaign each, "
+        "with up to %d creatives per campaign (one per angle)",
+        len(grouped_specs), config.ANGLES_PER_COHORT,
+    )
+
+    for (stg_id, cluster), specs in grouped_specs.items():
+        meta = group_meta[(stg_id, cluster)]
+        cohort = meta["cohort"]
+        geo_group = meta["geo_group"]
+        group_geos = meta["group_geos"]
+        variants = meta["variants"]
+        geo_label = geo_group.cluster_label
+
+        # Per-(cohort × geo_group) isolation: failure in one combo never
+        # aborts another. Each angle inside the combo is also isolated below.
         try:
             facet_urns = urn_res.resolve_cohort_rules(cohort.rules)
             if group_geos:
                 facet_urns = _apply_geo_overrides(facet_urns, group_geos, urn_res)
 
-            # Campaign name: {cohort} [geo_cluster] Angle {A/B/C}
             geo_suffix = f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
-            campaign_name = f"{cohort._stg_name}{geo_suffix} {angle_label}"
+            campaign_name = f"{cohort._stg_name}{geo_suffix}"
 
             cohort_add_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_add", []) or [])
             cohort_remove_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_remove", []) or [])
@@ -2340,16 +2361,32 @@ def _process_static_campaigns(
             campaign_id = campaign_urn.rsplit(":", 1)[-1]
             sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
             out_campaigns.append(campaign_urn)
-            # Key includes geo cluster + angle so campaigns don't collide in by_cohort
             base_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
-            by_cohort_id = f"{base_id}_{geo_group.campaign_suffix}_{angle_label}"
-            by_cohort[by_cohort_id] = campaign_urn
-            log.info("_process_static_campaigns: campaign %s cohort=%s geo=%s angle=%s",
-                     campaign_urn, base_id, geo_group.cluster_label, angle_label)
+            by_cohort_key = f"{base_id}_{geo_group.campaign_suffix}"
+            by_cohort[by_cohort_key] = campaign_urn
+            log.info(
+                "_process_static_campaigns: campaign %s cohort=%s geo=%s (%d angles to attach)",
+                campaign_urn, base_id, geo_group.cluster_label, len(specs),
+            )
+        except Exception as exc:
+            log.exception(
+                "_process_static_campaigns: cohort '%s' geo=%s campaign creation failed — skipping all angles: %s",
+                getattr(cohort, "name", "?"), geo_label, exc,
+            )
+            continue
 
-            # Log to campaign registry immediately at creation
-            variant   = variants[angle_idx] if angle_idx < len(variants) else {}
+        # ── Attach one creative per angle to the just-created campaign. ─────
+        for spec in specs:
+            angle_idx = spec["angle_idx"]
+            angle_label = spec.get("angle_label", ["A", "B", "C"][angle_idx])
+            png_path = spec["png_path"]
             qc_report = spec.get("qc_report", {})
+            variant = variants[angle_idx] if angle_idx < len(variants) else {}
+            row_id = f"{by_cohort_key}_{angle_label}"
+
+            # One registry row per (cohort × geo × angle) — shared
+            # platform_campaign_id (the LinkedIn campaign URN) + distinct
+            # platform_creative_id once the creative attaches.
             try:
                 _reg_log(
                     smart_ramp_id=ramp_id or "",
@@ -2371,14 +2408,10 @@ def _process_static_campaigns(
             except Exception as _exc:
                 log.warning("Registry log failed (non-fatal): %s", _exc)
 
-            # Image attach — sentinel-aware (SR-04).
             if not (png_path and Path(str(png_path)).exists()):
-                log.info("_process_static_campaigns: no PNG for cohort '%s' / '%s' — skipping creative attach",
-                         cohort.name, geo_group.cluster_label)
+                log.info("_process_static_campaigns: no PNG for angle %s — skipping creative attach", angle_label)
                 continue
 
-            angle_label = ["A", "B", "C"][angle_idx]
-            variant = variants[angle_idx] if angle_idx < len(variants) else {}
             headline = variant.get("headline") or f"Your {_cohort_headline(cohort)} expertise is in demand."
             subhead = variant.get("subheadline") or "Earn payment doing remote AI tasks on your schedule."
 
@@ -2396,34 +2429,36 @@ def _process_static_campaigns(
                     destination_url=destination_url_override,
                 )
             except Exception as exc:
-                # upload_image (or other unexpected error) → record as fallback.
-                log.warning("_process_static_campaigns: upload/attach raised for '%s': %s", cohort.name, exc)
-                creative_paths[by_cohort_id] = ""
+                log.warning("_process_static_campaigns: upload/attach raised for angle %s: %s", angle_label, exc)
+                creative_paths[row_id] = ""
                 continue
 
             if ad_result.status == "ok":
                 creative_urn = ad_result.creative_urn
                 sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
-                creative_paths[by_cohort_id] = creative_urn
-                log.info("_process_static_campaigns: creative %s attached", creative_urn)
-                # Update registry with creative URN now that we have it
+                creative_paths[row_id] = creative_urn
+                log.info("_process_static_campaigns: angle=%s creative %s attached to %s",
+                         angle_label, creative_urn, campaign_urn)
+                # Update the matching registry row with its creative URN.
                 try:
-                    from src.campaign_registry import update_metrics as _noop
                     from src.campaign_registry import _load as _reg_load, _save as _reg_save
                     recs = _reg_load()
                     for _r in recs:
-                        if _r.get("linkedin_campaign_urn") == campaign_urn:
+                        if (
+                            _r.get("linkedin_campaign_urn") == campaign_urn
+                            and _r.get("angle") == angle_label
+                            and not _r.get("creative_urn")
+                        ):
                             _r["creative_urn"] = creative_urn
+                            _r["platform_creative_id"] = creative_urn
                             break
                     _reg_save(recs)
                 except Exception:
                     pass
             elif ad_result.status == "local_fallback":
-                # SR-04: upload to Drive or save locally + continue.
+                # SR-04: upload to Drive (if enabled) or save locally + continue.
                 safe_ramp_id = ramp_id or "manual"
-                uid = unique_id or f"ROW_{by_cohort_id}"
-
-                # Try Drive upload first (if enabled)
+                uid = unique_id or f"ROW_{row_id}"
                 if config.GDRIVE_ENABLED:
                     drive_url = _save_creative_to_drive(
                         png_path=png_path,
@@ -2433,54 +2468,37 @@ def _process_static_campaigns(
                         angle=angle_label,
                     )
                     if drive_url:
-                        creative_paths[by_cohort_id] = drive_url
-                        log.warning(
-                            "_process_static_campaigns: creative for cohort %s angle %s uploaded to Drive "
-                            "(reason: %s — %s)",
-                            by_cohort_id, angle_label,
-                            ad_result.error_class, ad_result.error_message,
-                        )
+                        creative_paths[row_id] = drive_url
                     else:
-                        # Drive upload failed, fall back to local
                         local_path = _save_creative_locally(
                             png_path=png_path,
                             ramp_id=safe_ramp_id,
-                            cohort_id=by_cohort_id,
+                            cohort_id=row_id,
                             mode="static",
                             angle=angle_label,
                             campaign_name=campaign_name,
                         )
-                        creative_paths[by_cohort_id] = local_path
+                        creative_paths[row_id] = local_path
                 else:
-                    # GDRIVE_ENABLED=false, save locally
                     local_path = _save_creative_locally(
                         png_path=png_path,
                         ramp_id=safe_ramp_id,
-                        cohort_id=by_cohort_id,
+                        cohort_id=row_id,
                         mode="static",
                         angle=angle_label,
                         campaign_name=campaign_name,
                     )
-                    creative_paths[by_cohort_id] = local_path
-                    log.warning(
-                        "_process_static_campaigns: creative for cohort %s angle %s saved locally "
-                        "(reason: %s — %s)",
-                        by_cohort_id, angle_label,
-                        ad_result.error_class, ad_result.error_message,
-                    )
+                    creative_paths[row_id] = local_path
+                log.warning(
+                    "_process_static_campaigns: angle=%s saved as fallback (reason: %s — %s)",
+                    angle_label, ad_result.error_class, ad_result.error_message,
+                )
             else:  # status == "error"
                 log.error(
-                    "_process_static_campaigns: create_image_ad hard error for cohort %s: %s — %s",
-                    by_cohort_id, ad_result.error_class, ad_result.error_message,
+                    "_process_static_campaigns: create_image_ad hard error angle=%s: %s — %s",
+                    angle_label, ad_result.error_class, ad_result.error_message,
                 )
-                creative_paths[by_cohort_id] = ""
-        except Exception as exc:
-            # Per-cohort isolation: log + continue with next cohort.
-            log.exception(
-                "_process_static_campaigns: cohort '%s' angle=%s geo=%s failed — continuing: %s",
-                getattr(cohort, "name", "?"), angle_label, geo_label, exc,
-            )
-            continue
+                creative_paths[row_id] = ""
 
     return {
         "campaigns": out_campaigns,
@@ -2541,42 +2559,75 @@ def _process_extra_platform_arm(
         return out
     out["campaign_groups"].append(group_id)
 
+    # ── Group specs by (cohort × geo_group) so each becomes ONE Meta Ad Set
+    # (or Google Ad Group), with multiple ads attached (one per angle).
+    grouped: dict[tuple[str, str], list[dict]] = {}
+    g_meta: dict[tuple[str, str], dict] = {}
     for spec in campaign_specs:
-        cohort      = spec["cohort"]
-        geo_group   = spec["geo_group"]
-        group_geos  = spec.get("group_geos") or []
-        angle_label = spec.get("angle_label", "A")
-        angle_idx   = spec.get("angle_idx", 0)
-        variants    = spec.get("variants") or []
-        png_path    = spec.get("png_path")
-        variant     = variants[angle_idx] if angle_idx < len(variants) else {}
+        key = (spec["cohort"]._stg_id, spec["geo_group"].cluster)
+        grouped.setdefault(key, []).append(spec)
+        if key not in g_meta:
+            g_meta[key] = {
+                "cohort":     spec["cohort"],
+                "geo_group":  spec["geo_group"],
+                "group_geos": spec.get("group_geos") or [],
+                "variants":   spec.get("variants") or [],
+            }
 
+    log.info(
+        "_process_extra_platform_arm[%s]: %d cohort × geo group(s) → 1 ad set/group each, "
+        "with up to %d ads per group",
+        platform, len(grouped),
+        max((len(v) for v in grouped.values()), default=0),
+    )
+
+    for (stg_id, cluster), specs in grouped.items():
+        meta = g_meta[(stg_id, cluster)]
+        cohort     = meta["cohort"]
+        geo_group  = meta["geo_group"]
+        group_geos = meta["group_geos"]
+        variants   = meta["variants"]
+        base_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
+        by_cohort_key = f"{base_id}_{geo_group.campaign_suffix}"
+
+        # Per (cohort × geo) isolation: failure in one combo never aborts another.
         try:
             geo_suffix = (
                 f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
             )
-            campaign_name = f"{cohort._stg_name}{geo_suffix} {angle_label}"
-
-            # Targeting payload — shape is platform-specific.
+            campaign_name = f"{cohort._stg_name}{geo_suffix}"
             targeting = resolver.resolve_cohort(cohort, geos=group_geos)
-
             sub_id = client.create_campaign(
                 name=campaign_name,
                 campaign_group_id=group_id,
                 targeting=targeting,
             )
             out["campaigns"].append(sub_id)
-            base_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
-            by_key = f"{base_id}_{geo_group.campaign_suffix}_{angle_label}"
-            out["campaigns_by_cohort"][by_key] = sub_id
+            out["campaigns_by_cohort"][by_cohort_key] = sub_id
+            log.info(
+                "_process_extra_platform_arm[%s]: ad set/group %s cohort=%s geo=%s (%d angles)",
+                platform, sub_id, base_id, geo_group.cluster_label, len(specs),
+            )
+        except Exception as exc:
+            log.exception(
+                "_process_extra_platform_arm[%s]: ad set creation failed cohort=%s geo=%s — skipping all angles: %s",
+                platform, getattr(cohort, "name", "?"),
+                getattr(geo_group, "cluster_label", "?"), exc,
+            )
+            continue
 
-            # Adapt copy for this platform's char limits.
+        # ── Attach one ad/RDA per angle to the just-created ad set/group. ───
+        for spec in specs:
+            angle_label = spec.get("angle_label", "A")
+            angle_idx   = spec.get("angle_idx", 0)
+            png_path    = spec.get("png_path")
+            variant     = variants[angle_idx] if angle_idx < len(variants) else {}
+            row_id = f"{by_cohort_key}_{angle_label}"
+
             platform_copy = adapt_copy_for_platform(variant, platform) if variant else {}
 
             ad_result: CreateAdResult
             if not png_path or not Path(str(png_path)).exists():
-                # No PNG to upload — log the campaign creation but flag
-                # creative as missing. Pipeline keeps moving.
                 ad_result = CreateAdResult(
                     status="local_fallback",
                     error_class="MissingPNG",
@@ -2587,8 +2638,8 @@ def _process_extra_platform_arm(
                     image_id = client.upload_image(png_path)
                 except Exception as exc:
                     log.warning(
-                        "_process_extra_platform_arm[%s]: upload_image failed for %s — %s",
-                        platform, png_path, exc,
+                        "_process_extra_platform_arm[%s]: upload_image failed angle=%s — %s",
+                        platform, angle_label, exc,
                     )
                     ad_result = CreateAdResult(
                         status="error",
@@ -2597,8 +2648,6 @@ def _process_extra_platform_arm(
                     )
                 else:
                     if platform == "google":
-                        # Google RDA needs the multi-headline / multi-description
-                        # arrays from the copy adapter.
                         ad_result = client.create_image_ad(
                             campaign_id=sub_id,
                             image_id=image_id,
@@ -2620,7 +2669,8 @@ def _process_extra_platform_arm(
                             destination_url=destination_url_override,
                         )
 
-            # Registry log — platform-aware.
+            # Registry: one row per (cohort × geo × angle), shared
+            # platform_campaign_id, distinct platform_creative_id.
             try:
                 _reg_log(
                     smart_ramp_id=ramp_id or "",
@@ -2642,22 +2692,14 @@ def _process_extra_platform_arm(
                 )
             except Exception as exc:
                 log.warning(
-                    "_process_extra_platform_arm[%s]: registry log failed (non-fatal): %s",
-                    platform, exc,
+                    "_process_extra_platform_arm[%s]: registry log failed angle=%s (non-fatal): %s",
+                    platform, angle_label, exc,
                 )
 
-            out["creative_paths"][by_key] = (
+            out["creative_paths"][row_id] = (
                 ad_result.creative_id if ad_result.status == "ok"
                 else (str(png_path) if png_path else "")
             )
-        except Exception as exc:
-            log.exception(
-                "_process_extra_platform_arm[%s]: spec failed (cohort=%s geo=%s angle=%s) — %s",
-                platform, getattr(cohort, "name", "?"),
-                getattr(geo_group, "cluster_label", "?"),
-                angle_label, exc,
-            )
-            continue
 
     return out
 

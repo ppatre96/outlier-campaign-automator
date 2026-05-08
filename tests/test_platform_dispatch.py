@@ -128,27 +128,31 @@ def test_extra_platform_arm_creates_full_chain(png):
     assert mock_log.call_args.kwargs["platform_creative_id"] == "ad-4"
 
 
-def test_extra_platform_arm_isolates_per_spec_failures(png):
-    """A spec that throws inside create_campaign must NOT abort sibling specs."""
+def test_extra_platform_arm_isolates_per_cohort_geo_failures(png):
+    """A failed create_campaign for one (cohort × geo) group must NOT abort
+    other groups. Under the grouped structure, all 3 angles within a single
+    (cohort × geo) share one ad set — so isolation is at the group level."""
     client = _FakePlatformClient()
-    # Make the second create_campaign call raise.
     orig = client.create_campaign
 
     def boom(name, *a, **kw):
-        if "B" in name:
+        if "BOOM" in name:
             raise RuntimeError("simulated platform 500")
         return orig(name, *a, **kw)
     client.create_campaign = boom  # type: ignore[assignment]
 
-    cohort = _FakeCohort(name="cohort_a", stg_id="STG-A")
+    cohort_ok = _FakeCohort(name="cohort_ok",   stg_id="STG-OK")
+    cohort_x  = _FakeCohort(name="cohort_BOOM", stg_id="STG-BOOM")
     geo = _FakeGeoGroup(label="English-speaking", geos=["US"], suffix="anglo")
-    specs = [
-        {"cohort": cohort, "geo_group": geo, "group_geos": geo.geos,
-         "angle_idx": i, "angle_label": label,
-         "variants": [{"angle": label, "headline": "h"}],
-         "png_path": png}
-        for i, label in enumerate(("A", "B", "C"))
-    ]
+    specs = []
+    for cohort in (cohort_ok, cohort_x):
+        for i, label in enumerate(("A", "B", "C")):
+            specs.append({
+                "cohort": cohort, "geo_group": geo, "group_geos": geo.geos,
+                "angle_idx": i, "angle_label": label,
+                "variants": [{"angle": label, "headline": "h"}],
+                "png_path": png,
+            })
 
     with patch("src.campaign_registry.log_campaign"):
         out = main._process_extra_platform_arm(
@@ -159,8 +163,41 @@ def test_extra_platform_arm_isolates_per_spec_failures(png):
             ramp_id="RAMP", cohort_id_override=None,
             destination_url_override=None,
         )
-    # 3 specs, 1 fails → 2 successes.
-    assert len(out["campaigns"]) == 2
+    # 2 (cohort × geo) groups, 1 fails → exactly 1 ad set created (for cohort_ok).
+    assert len(out["campaigns"]) == 1
+
+
+def test_extra_platform_arm_attaches_3_ads_per_group(png):
+    """One (cohort × geo) group with 3 angles must produce 1 ad set + 3 ads."""
+    client = _FakePlatformClient()
+    cohort = _FakeCohort(name="cohort_a", stg_id="STG-A")
+    geo = _FakeGeoGroup(label="English-speaking", geos=["US"], suffix="anglo")
+    specs = [
+        {"cohort": cohort, "geo_group": geo, "group_geos": geo.geos,
+         "angle_idx": i, "angle_label": label,
+         "variants": [{"angle": label, "headline": f"h_{label}"}],
+         "png_path": png}
+        for i, label in enumerate(("A", "B", "C"))
+    ]
+    with patch("src.campaign_registry.log_campaign") as mock_log:
+        out = main._process_extra_platform_arm(
+            platform="meta",
+            client=client, resolver=_FakeResolver(),
+            campaign_specs=specs,
+            flow_id="F1", location="US",
+            ramp_id="RAMP", cohort_id_override=None,
+            destination_url_override=None,
+        )
+    # 1 group → 1 create_campaign call, 3 ads.
+    op_names = [c[0] for c in client.calls]
+    assert op_names.count("create_campaign") == 1
+    assert op_names.count("upload_image") == 3
+    assert op_names.count("create_image_ad") == 3
+    # 3 registry rows (one per angle), all sharing the same platform_campaign_id.
+    pcids = {c.kwargs["platform_campaign_id"] for c in mock_log.call_args_list}
+    assert len(pcids) == 1
+    pcrids = {c.kwargs["platform_creative_id"] for c in mock_log.call_args_list}
+    assert len(pcrids) == 3   # creative ids differ per angle
 
 
 def test_extra_platform_arm_skips_when_no_specs():
