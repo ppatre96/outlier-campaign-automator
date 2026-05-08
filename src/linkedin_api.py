@@ -273,6 +273,46 @@ class LinkedInClient(AdPlatformClient):
         self._raise_for_status(resp, "getCampaign")
         return resp.json()
 
+    def attach_conversion_to_campaign(self, campaign_urn: str, conversion_id: int | None = None) -> bool:
+        """Associate a LinkedIn conversion with a sponsored campaign.
+
+        WEBSITE_CONVERSION campaigns require at least one conversion attached
+        (otherwise LinkedIn doesn't optimize / report). We attach by appending
+        `campaign_urn` to the conversion's `campaigns` list via PATCH on
+        `/conversions/{id}` (Rest.li PARTIAL_UPDATE). Idempotent — skips if
+        the campaign is already linked.
+
+        Returns True on success, False on failure (logged, non-fatal).
+        Set LINKEDIN_CONVERSION_ID=0 to disable auto-attach globally.
+        """
+        cid = conversion_id if conversion_id is not None else config.LINKEDIN_CONVERSION_ID
+        if not cid:
+            log.debug("attach_conversion_to_campaign: LINKEDIN_CONVERSION_ID=0 — skipping")
+            return False
+        try:
+            # Fetch current campaigns list. Required because PATCH $set replaces
+            # the whole array — must include existing entries to preserve them.
+            url = f"{config.LINKEDIN_API_BASE}/conversions/{cid}"
+            resp = self._req("GET", url)
+            self._raise_for_status(resp, "getConversion")
+            current = resp.json().get("campaigns", []) or []
+            if campaign_urn in current:
+                log.info("conversion %d already linked to %s — skipping", cid, campaign_urn)
+                return True
+
+            patch_headers = self._default_headers()
+            patch_headers["X-RestLi-Method"] = "PARTIAL_UPDATE"
+            payload = {"patch": {"$set": {"campaigns": current + [campaign_urn]}}}
+            resp = self._req("POST", url, json=payload, headers=patch_headers)
+            self._raise_for_status(resp, "attachConversion")
+            log.info("attached conversion %d to %s (now %d campaigns linked)",
+                     cid, campaign_urn, len(current) + 1)
+            return True
+        except Exception as exc:
+            log.warning("attach_conversion_to_campaign(%s, %s) failed: %s",
+                        campaign_urn, cid, exc)
+            return False
+
     def get_account_reference_urn(self) -> str:
         """Return the ad account's `reference` field — the URN of the LinkedIn
         organization that owns the account. Required as the `sender` for
@@ -374,7 +414,11 @@ class LinkedInClient(AdPlatformClient):
             "targetingCriteria": targeting,
             "status":                 "DRAFT",
             "locale":                 {"country": "US", "language": "en"},
-            "objectiveType":          "WEBSITE_VISIT",
+            # WEBSITE_CONVERSION matches Outlier's standard for production
+            # Sponsored Content (78% of active campaigns; per
+            # 2026-05-08 ad-account audit). Attached conversion is
+            # auto-linked below via attach_conversion_to_campaign().
+            "objectiveType":          "WEBSITE_CONVERSION",
             "offsiteDeliveryEnabled": False,
             "politicalIntent":        "NOT_POLITICAL",
             "runSchedule":            {"start": _now_ms()},
@@ -384,6 +428,10 @@ class LinkedInClient(AdPlatformClient):
         campaign_id = resp.headers.get("x-linkedin-id") or _id_from_location(resp)
         urn = f"urn:li:sponsoredCampaign:{campaign_id}"
         log.info("Created campaign %s '%s'", urn, name)
+        # Auto-attach the configured conversion when objective is WEBSITE_CONVERSION.
+        # Required for LinkedIn to optimize + report on conversion events.
+        if payload.get("objectiveType") == "WEBSITE_CONVERSION":
+            self.attach_conversion_to_campaign(urn)
         return urn
 
     # ── Image upload ───────────────────────────────────────────────────────────
@@ -455,13 +503,12 @@ class LinkedInClient(AdPlatformClient):
             "targetingCriteria":     targeting,
             "status":                "DRAFT",
             "locale":                {"country": "US", "language": "en"},
-            # WEBSITE_VISIT — drives clicks to the Outlier apply page via the
-            # InMail content's `subContent.regular` callToAction. LEAD_GENERATION
-            # would require a Lead Gen Form attached on the creative, which we
-            # don't use (no top-level `callToAction` field is accepted by the
-            # creative API). LinkedIn rejects creatives whose campaign objective
-            # mismatches the content variant.
-            "objectiveType":         "WEBSITE_VISIT",
+            # WEBSITE_CONVERSION — Outlier's standard for InMail. 100% of the
+            # 1500 ACTIVE InMail campaigns audited 2026-05-08 use this
+            # objective. Requires a conversion attached via
+            # attach_conversion_to_campaign() — done after create_campaign /
+            # create_inmail_campaign returns.
+            "objectiveType":         "WEBSITE_CONVERSION",
             "offsiteDeliveryEnabled": False,
             "politicalIntent":        "NOT_POLITICAL",
             "creativeSelection":      "ROUND_ROBIN",
@@ -472,6 +519,11 @@ class LinkedInClient(AdPlatformClient):
         campaign_id = resp.headers.get("x-restli-id") or resp.headers.get("x-linkedin-id") or _id_from_location(resp)
         urn = f"urn:li:sponsoredCampaign:{campaign_id}"
         log.info("Created InMail campaign %s '%s'", urn, name)
+        # WEBSITE_CONVERSION campaigns require a conversion attached for LinkedIn
+        # to optimize / report. Attach the default conversion (id 19801700 by
+        # default — Outlier "OCP Complete" signup pixel).
+        if payload.get("objectiveType") == "WEBSITE_CONVERSION":
+            self.attach_conversion_to_campaign(urn)
         return urn
 
     # ── InMail Creative ────────────────────────────────────────────────────────

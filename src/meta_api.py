@@ -63,7 +63,10 @@ class MetaClient(AdPlatformClient):
     constraints: PlatformConstraints = META_CONSTRAINTS
 
     AGENT_NAME_PREFIX = config.AGENT_NAME_PREFIX  # "agent_"
-    DEFAULT_OBJECTIVE = "OUTCOME_TRAFFIC"
+    # OUTCOME_LEADS — matches Outlier's production default. Per ad-account
+    # audit 2026-05-08, ~99% of active Meta campaigns use OUTCOME_LEADS.
+    # Override via META_DEFAULT_OBJECTIVE env var if needed.
+    DEFAULT_OBJECTIVE = os.getenv("META_DEFAULT_OBJECTIVE", "OUTCOME_LEADS")
 
     # Placeholder daily budget. The Meta ABO ad-set creation API requires a
     # daily_budget value, but our pipeline only creates DRAFT/PAUSED entities

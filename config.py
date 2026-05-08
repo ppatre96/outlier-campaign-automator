@@ -53,6 +53,13 @@ LINKEDIN_REFRESH_TOKEN = os.getenv("LINKEDIN_REFRESH_TOKEN", "")
 LINKEDIN_CLIENT_ID     = os.getenv("LINKEDIN_CLIENT_ID", "")
 LINKEDIN_CLIENT_SECRET = os.getenv("LINKEDIN_CLIENT_SECRET", "")
 
+# LinkedIn conversion to attach to every WEBSITE_CONVERSION campaign created
+# by the pipeline. Default is "Marketing Conversion - OCP Complete" (id 19801700,
+# type COMPLETE_SIGNUP, enabled) — Outlier's standard signup conversion.
+# To use "Successful Application" instead set LINKEDIN_CONVERSION_ID=19259804.
+# Set to "0" to disable auto-attach.
+LINKEDIN_CONVERSION_ID = int(os.getenv("LINKEDIN_CONVERSION_ID", "19801700"))
+
 # ── Multi-platform expansion (Meta + Google Ads) ──────────────────────────────
 # Comma-separated list controlling which ad platforms the pipeline targets per
 # Smart Ramp run. Order is preserved (LinkedIn first by default for back-compat).
