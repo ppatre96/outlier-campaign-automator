@@ -754,11 +754,13 @@ def _process_row(
                     log.info("Attached creative %s to campaign %s", creative_urn, campaign_urn)
                     cohort_creative_urns[angle_label] = creative_urn
                 elif ad_result.status == "local_fallback":
-                    # SR-04: LinkedIn upload blocked → save PNG locally + continue.
-                    # _save_creative_locally is wired via _process_static_campaigns
-                    # in the Smart Ramp dual-arm flow (Task 2). For the legacy
-                    # single-arm CLI path here, we record the blocker only — the
-                    # PNG already lives on disk at png_path; manual upload uses it.
+                    # SR-04: LinkedIn creative attach blocked (DSC 403 — MDP
+                    # entitlement gate). Drive-only policy (no local PNG):
+                    # PNGs from Outlier designer (Gemini) live exclusively in
+                    # Shared Drive at <ramp_id>/<channel>/<cohort_geo>/<angle>.png;
+                    # this CLI legacy single-arm path just records the blocker
+                    # since it doesn't carry the cohort×geo metadata needed to
+                    # build the Drive hierarchy from here.
                     if "LINKEDIN_MEMBER_URN" in (ad_result.error_message or ""):
                         log.warning(
                             "Image ad creative skipped for '%s' — LINKEDIN_MEMBER_URN not set.",
@@ -2086,36 +2088,6 @@ def _cohort_geo_label(cohort, geo_group) -> str:
     return f"{stg}__{cluster}"
 
 
-def _save_creative_locally(
-    png_path,
-    ramp_id: str,
-    cohort_id: str,
-    mode: str,            # "inmail" or "static"
-    angle: str,           # "A", "B", "C", "F", etc.
-    campaign_name: str,
-) -> str:
-    """Copy a generated PNG to data/ramp_creatives/<ramp_id>/<cohort>_<mode>_<angle>__<safe_name>.png.
-
-    SR-04: LinkedIn upload-blocked fallback. The PNG already exists at png_path
-    (created by gemini_creative.py); we just copy it under a deterministic name
-    so manual upload knows which campaign it belongs to. Original PNG is
-    preserved (shutil.copy2, NOT shutil.move).
-
-    The campaign_name is URL-encoded via urllib.parse.quote_plus to make it
-    filesystem-safe. Group/campaign names are auto-prefixed with `agent_`
-    upstream (LinkedInClient._prefixed) and are vocabulary-clean per CLAUDE.md.
-
-    Returns the absolute target path as a string.
-    """
-    target_dir = Path("data/ramp_creatives") / ramp_id
-    target_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = quote_plus(campaign_name or "unnamed")
-    target = target_dir / f"{cohort_id}_{mode}_{angle}__{safe_name}.png"
-    shutil.copy2(str(png_path), str(target))
-    log.info("Creative saved locally: %s", target)
-    return str(target)
-
-
 def _process_static_campaigns(
     selected,
     *,
@@ -2560,43 +2532,28 @@ def _process_static_campaigns(
                 except Exception:
                     pass
             elif ad_result.status == "local_fallback":
-                # SR-04: upload to Drive (if enabled) or save locally + continue.
-                safe_ramp_id = ramp_id or "manual"
-                uid = unique_id or f"ROW_{row_id}"
-                if config.GDRIVE_ENABLED:
-                    drive_url = _save_creative_to_drive(
-                        png_path=png_path,
-                        ramp_id=safe_ramp_id,
-                        unique_id=uid,
-                        channel="linkedin",
-                        angle=angle_label,
-                        cohort_geo=_cohort_geo_label(cohort, geo_group),
-                    )
-                    if drive_url:
-                        creative_paths[row_id] = drive_url
-                    else:
-                        local_path = _save_creative_locally(
-                            png_path=png_path,
-                            ramp_id=safe_ramp_id,
-                            cohort_id=row_id,
-                            mode="static",
-                            angle=angle_label,
-                            campaign_name=campaign_name,
-                        )
-                        creative_paths[row_id] = local_path
+                # SR-04: LinkedIn creative attach blocked (typically DSC 403
+                # gated by MDP entitlement). The PNG was already uploaded to
+                # Shared Drive at the top of this loop (line ~2482) — that
+                # `drive_url` variable holds the canonical Drive URL.
+                # Pranav rule: never write creatives locally; Drive is the
+                # source of truth. If the prior Drive upload failed, log and
+                # skip without falling back to local disk.
+                if drive_url:
+                    creative_paths[row_id] = drive_url
                 else:
-                    local_path = _save_creative_locally(
-                        png_path=png_path,
-                        ramp_id=safe_ramp_id,
-                        cohort_id=row_id,
-                        mode="static",
-                        angle=angle_label,
-                        campaign_name=campaign_name,
+                    creative_paths[row_id] = ""
+                    log.error(
+                        "_process_static_campaigns: angle=%s creative attach blocked AND "
+                        "Drive upload had failed earlier — no creative path recorded "
+                        "(no local fallback per Drive-only policy). reason=%s — %s",
+                        angle_label, ad_result.error_class, ad_result.error_message,
                     )
-                    creative_paths[row_id] = local_path
                 log.warning(
-                    "_process_static_campaigns: angle=%s saved as fallback (reason: %s — %s)",
+                    "_process_static_campaigns: angle=%s creative attach blocked "
+                    "(reason: %s — %s); PNG lives at Drive URL=%s",
                     angle_label, ad_result.error_class, ad_result.error_message,
+                    drive_url or "(upload failed)",
                 )
             else:  # status == "error"
                 log.error(
