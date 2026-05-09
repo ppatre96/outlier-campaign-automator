@@ -754,6 +754,20 @@ class LinkedInClient(AdPlatformClient):
                 "Content-Type":               "application/json",
             },
         )
+        # NOTE (2026-05-09): /rest/posts with adContext.dscAdAccount returns
+        # a generic 403 FORBIDDEN regardless of OAuth scope or LinkedIn user
+        # role. Confirmed via direct probing — even with w_member_social +
+        # ACCOUNT_MANAGER on the ad account + Page Super-Admin on the owning
+        # organization, the call still 403s. The legacy /v2/ugcPosts path
+        # surfaces the specific reason: "Unpermitted fields present in
+        # REQUEST_BODY: [/adContext]". Setting adContext is gated by LinkedIn
+        # Marketing Developer Platform (MDP) entitlement on the OAuth app,
+        # which is a separate multi-week LinkedIn approval process. Until MDP
+        # is granted, this call cannot succeed and the static-ad arm falls
+        # back to local PNG via the create_image_ad wrapper's 403 handler.
+        # Duplicate-detection 422 responses on retry contain phantom URNs
+        # (returned for spam-prevention fingerprinting) that 404 on creative
+        # attach — they are NOT a viable workaround.
         self._raise_for_status(dsc_resp, "createDscPost")
         post_id  = dsc_resp.headers.get("x-restli-id") or _id_from_location(dsc_resp)
         post_urn = f"urn:li:share:{post_id}"
