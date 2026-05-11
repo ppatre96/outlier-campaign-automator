@@ -125,6 +125,7 @@ class SheetsClient:
         if isinstance(self, NullSheetsClient):
             return  # already initialised by __new__
         import gspread
+        import threading
         from google.oauth2.service_account import Credentials
         creds = Credentials.from_service_account_file(config.GOOGLE_CREDENTIALS, scopes=SCOPES)
         self._creds = creds
@@ -132,6 +133,13 @@ class SheetsClient:
         self._triggers = self._gc.open_by_key(config.TRIGGERS_SHEET_ID)
         self._urn_sheet = self._gc.open_by_key(config.URN_SHEET_ID)
         self._drive_service = None  # lazy-init in _get_drive()
+        # Phase 3.3 — gspread is not thread-safe (sequential http client + no
+        # internal locking). With the InMail + Static arms now running
+        # concurrently, calls to update_li_campaign_id / write_creative /
+        # write_registry_row can race against each other on the same Sheet.
+        # A coarse instance-level RLock serializes those writes; concurrent
+        # READs are still allowed (we don't lock the reader methods).
+        self._write_lock = threading.RLock()
 
     # ── Drive helpers (registry image embedding) ──────────────────────────────
 
@@ -288,23 +296,25 @@ class SheetsClient:
 
     def update_li_campaign_id(self, stg_id: str, campaign_id: str) -> None:
         """Write the LinkedIn campaign status + ID back to the row matching stg_id."""
-        ws = self._triggers.worksheet(config.TRIGGERS_TAB)
-        cell = ws.find(stg_id)
-        if cell:
-            ws.update_cell(cell.row, COL["li_status"] + 1, "Created")
-            ws.update_cell(cell.row, COL["li_campaign_id"] + 1, campaign_id)
+        with self._write_lock:
+            ws = self._triggers.worksheet(config.TRIGGERS_TAB)
+            cell = ws.find(stg_id)
+            if cell:
+                ws.update_cell(cell.row, COL["li_status"] + 1, "Created")
+                ws.update_cell(cell.row, COL["li_campaign_id"] + 1, campaign_id)
 
     # ── Creatives tab ─────────────────────────────────────────────────────────
 
     def write_creative(self, stg_id: str, creative_name: str, li_creative_id: str) -> None:
-        ws = self._triggers.worksheet(config.CREATIVES_TAB)
-        ws.append_row([
-            stg_id,
-            creative_name,
-            li_creative_id,
-            datetime.utcnow().isoformat(timespec="seconds") + "Z",
-        ], value_input_option="RAW")
-        log.info("Wrote creative %s → %s", stg_id, creative_name)
+        with self._write_lock:
+            ws = self._triggers.worksheet(config.CREATIVES_TAB)
+            ws.append_row([
+                stg_id,
+                creative_name,
+                li_creative_id,
+                datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            ], value_input_option="RAW")
+            log.info("Wrote creative %s → %s", stg_id, creative_name)
 
     # ── Campaign Registry tab ─────────────────────────────────────────────────
 
@@ -345,8 +355,16 @@ class SheetsClient:
         If `creative_image_path` is set and the local PNG exists, it is uploaded to
         Drive (anyone-with-link viewable) and the corresponding cell receives an
         `=IMAGE(...)` formula so the creative renders inline in the row.
+
+        Locked under self._write_lock so concurrent calls from the InMail
+        and Static arms (Phase 3.3) can't race against gspread's internal
+        state.
         """
         from src.campaign_registry import COLUMNS
+        with self._write_lock:
+            self._write_registry_row_locked(record, COLUMNS)
+
+    def _write_registry_row_locked(self, record: dict, COLUMNS: list) -> None:
         ws = self._get_or_create_registry_tab()
 
         # Resolve image: upload first so we can put the formula straight in the row.
