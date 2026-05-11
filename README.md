@@ -10,6 +10,44 @@ python main.py --dry-run
 
 See `WORKFLOW.md` for full pipeline walkthrough and `AGENT-PIPELINE.md` for sub-agent architecture.
 
+## Performance Tuning (Phase 3.x parallelism)
+
+Three pools control concurrency in the static-ad pipeline. All default to 4; set to 1 to fall back to fully sequential behavior.
+
+| Doppler key | Default | What it parallelizes | Measured win |
+|---|---|---|---|
+| `IMAGE_GEN_CONCURRENCY` | `4` | Gemini image-gen across `(cohort × geo × angle)` tasks in `_process_static_campaigns` | **2.67x** live |
+| `COPY_GEN_CONCURRENCY` | `IMAGE_GEN_CONCURRENCY` | Anthropic copy-gen via `build_copy_variants` across `(cohort × geo)` combos | **2.50x** live |
+| _(implicit, no knob)_ | `2` | `_process_inmail_campaigns` + `_process_static_campaigns` run as parallel arms in `_process_row_both_modes` | **1.47x–2x** live |
+
+Combined per-ramp wall-clock on a typical 9-cell ramp: **~50 min → ~13 min** of LLM/image work (~4x).
+
+Bench harnesses to re-measure against live APIs (each ~$0.30–$1 in credits):
+
+```bash
+DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib doppler run --project outlier-campaign-agent --config dev -- \
+    venv/bin/python scripts/bench_image_gen_concurrency.py    # image gen
+    venv/bin/python scripts/bench_copy_gen_concurrency.py     # copy gen
+    venv/bin/python scripts/bench_arms_parallelism.py         # InMail + Static arm overlap
+```
+
+Shared-state locks added alongside Phase 3.3 (no config — transparent):
+- `src/campaign_registry.py::_registry_lock` (RLock) — atomic load → mutate → save across concurrent writers
+- `src/sheets.py::SheetsClient._write_lock` — serializes gspread `update_li_campaign_id` / `write_creative` / `write_registry_row`
+- `src/linkedin_api.py::LinkedInClient._refresh_lock` — serializes OAuth token refresh + session header update
+- `src/claude_client.py::get_client` — double-checked `threading.Lock` around lazy Anthropic SDK singleton
+
+## Current External Blockers (2026-05-11)
+
+| Blocker | Impact | Owner | Status |
+|---|---|---|---|
+| LinkedIn **Marketing Developer Platform (MDP)** entitlement on OAuth app `86g4m92v2vfq68` | `/rest/posts` with `adContext.dscAdAccount` 403s → static-ad creative attach blocked; campaigns + ad sets still create cleanly | Manager → apply at https://www.linkedin.com/developers/apps/86g4m92v2vfq68/products → "Marketing Developer Platform" → Request Access | 2-4 week LinkedIn approval. Diagnostic detail at `src/linkedin_api.py:692` (DSC create site). |
+| Google Ads access on customer `8840244968` (Outlier ad-serving account, child of MCC `6301406350`) | `OPERATION_NOT_PERMITTED_FOR_CONTEXT` — pipeline can read MCC but can't create campaigns on the child | Manager → direct Standard-user invite on `8840244968` (previous approval request not yet sign-off-ed) | Diag: `scripts/diag_google_ads_access.py`. Per-channel isolation means LinkedIn + Meta keep running. |
+
+**Working channels:** LinkedIn campaigns + InMail (with conversion auto-attach), Meta (end-to-end verified via `scripts/verify_meta_ad_creation.py`).
+
+**Drive-only policy:** Generated creative PNGs live exclusively in Shared Drive `0ALHAgK4RPbnfUk9PVA` at `<ramp_id>/<channel>/<cohort_geo>/<angle>.png`. The `_save_creative_locally` helper was removed; no local-disk fallback paths exist anywhere in the pipeline.
+
 ## TG Classifier Buckets
 
 `classify_tg()` in `src/figma_creative.py` maps a cohort (name + rules) to one of these buckets. First regex match wins, so order matters.

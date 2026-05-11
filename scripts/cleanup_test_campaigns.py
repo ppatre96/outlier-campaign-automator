@@ -48,6 +48,16 @@ TEST_PATTERNS = [
     "test_3ch",
     "smoke_test",
     "test_v",  # matches inmail_full_test_v1, _v2, ...
+    # 2026-05-09/11 verifier scripts (Phase 3.x session)
+    "verify-li-ad-attach",
+    "verify-meta-ad-creation",
+    "verify-meta",
+    "bench-cardio",
+    "bench_cohort",   # matches scripts/bench_copy_gen_concurrency.py outputs
+    "bench-copy",
+    "bench-arms",
+    "bench_arms",
+    "e2e_probe",
 ]
 
 # Statuses we are willing to touch. ACTIVE campaigns are NOT in this list —
@@ -101,7 +111,10 @@ def main() -> int:
     group_rows: list[dict] = []
     start = 0
     page_size = 100
-    max_groups = 5000  # safety cap; each ramp creates ~3-4 groups
+    # LinkedIn's q=search offset caps at 10K id-ascending. Set near the
+    # ceiling so we still see today's freshly-created verifier groups even
+    # on an account with thousands of accumulated historical groups.
+    max_groups = 9900
     while start < max_groups:
         params = {"q": "search", "start": start, "count": page_size}
         resp = requests.get(groups_url, headers=common_headers, params=params, timeout=30)
