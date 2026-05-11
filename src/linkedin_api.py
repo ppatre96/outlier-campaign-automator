@@ -97,6 +97,7 @@ class LinkedInClient(AdPlatformClient):
     constraints: PlatformConstraints = LINKEDIN_CONSTRAINTS
 
     def __init__(self, token: str):
+        import threading
         self._token = token
         self._session = requests.Session()
         self._session.headers.update({
@@ -105,6 +106,14 @@ class LinkedInClient(AdPlatformClient):
             "X-Restli-Protocol-Version": "2.0.0",
             "Content-Type": "application/json",
         })
+        # Phase 3.3 — serialize token refresh across threads. Both the
+        # InMail and Static arms (now run concurrently) share this
+        # LinkedInClient instance; if both hit a 401 simultaneously they
+        # would each kick off a refresh_access_token() call, write competing
+        # tokens back to .env, and could leave the session header pointing
+        # at a stale value. The lock ensures only one thread refreshes; the
+        # other waits and inherits the new token.
+        self._refresh_lock = threading.Lock()
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -118,9 +127,14 @@ class LinkedInClient(AdPlatformClient):
 
     def _refresh_and_retry(self, method: str, url: str, **kwargs) -> requests.Response:
         """Refresh the access token and retry a failed request once."""
-        new_token = refresh_access_token()
-        self._token = new_token
-        self._session.headers.update({"Authorization": f"Bearer {new_token}"})
+        # Serialize the refresh + session-header update across threads.
+        # Double-checked pattern: a thread that finds the token already
+        # refreshed (someone else won the race) skips the network call and
+        # just retries with the current header.
+        with self._refresh_lock:
+            new_token = refresh_access_token()
+            self._token = new_token
+            self._session.headers.update({"Authorization": f"Bearer {new_token}"})
         return self._session.request(method, url, **kwargs)
 
     def _default_headers(self) -> dict:

@@ -2573,19 +2573,28 @@ def _process_static_campaigns(
                 log.info("_process_static_campaigns: angle=%s creative %s attached to %s",
                          angle_label, creative_urn, campaign_urn)
                 # Update the matching registry row with its creative URN.
+                # Atomic under Phase 3.3's concurrent-arms model — the
+                # registry_critical_section context manager re-entrant-locks
+                # the file across load → mutate → save so InMail arm can't
+                # interleave a write between our load and save.
                 try:
-                    from src.campaign_registry import _load as _reg_load, _save as _reg_save
-                    recs = _reg_load()
-                    for _r in recs:
-                        if (
-                            _r.get("linkedin_campaign_urn") == campaign_urn
-                            and _r.get("angle") == angle_label
-                            and not _r.get("creative_urn")
-                        ):
-                            _r["creative_urn"] = creative_urn
-                            _r["platform_creative_id"] = creative_urn
-                            break
-                    _reg_save(recs)
+                    from src.campaign_registry import (
+                        _load as _reg_load,
+                        _save as _reg_save,
+                        registry_critical_section,
+                    )
+                    with registry_critical_section():
+                        recs = _reg_load()
+                        for _r in recs:
+                            if (
+                                _r.get("linkedin_campaign_urn") == campaign_urn
+                                and _r.get("angle") == angle_label
+                                and not _r.get("creative_urn")
+                            ):
+                                _r["creative_urn"] = creative_urn
+                                _r["platform_creative_id"] = creative_urn
+                                break
+                        _reg_save(recs)
                 except Exception:
                     pass
             elif ad_result.status == "local_fallback":
@@ -2934,7 +2943,22 @@ def _process_row_both_modes(
     inmail_result: dict = {"campaigns": [], "campaigns_by_cohort": {}, "creative_paths": {}, "campaign_groups": []}
     static_result: dict = {"campaigns": [], "campaigns_by_cohort": {}, "creative_paths": {}, "campaign_groups": []}
 
-    if "inmail" in modes:
+    # ── Phase 3.3 — InMail + Static arms run concurrently ──────────────────
+    # Pre-3.3 the two arms ran sequentially (~25 min + ~25 min = ~50 min);
+    # they now overlap into ~25 min wall-clock per ramp. Shared mutable
+    # state is gated by locks added in the same release:
+    #   - SheetsClient._write_lock: serializes update_li_campaign_id /
+    #     write_creative / write_registry_row across the two arms
+    #   - campaign_registry._registry_lock (RLock): serializes the registry
+    #     load → mutate → save windows in both log_campaign and the inline
+    #     patch in _process_static_campaigns
+    #   - LinkedInClient._refresh_lock: serializes token refresh + session
+    #     header update so two arms can't double-refresh on a 401
+    # The Meta + Google fan-out stays sequential after Static completes
+    # because it reuses Static's PNGs.
+    import concurrent.futures as _cf
+
+    def _run_inmail() -> dict:
         try:
             r = _process_inmail_campaigns(
                 selected=resolved.selected,
@@ -2952,14 +2976,14 @@ def _process_row_both_modes(
                 destination_url_override=destination_url_override,
                 included_geos=included_geos,
             )
-            # Legacy _process_inmail_campaigns returns None and writes to sheets directly;
-            # to keep backwards compat we synthesize an empty dict if r is None.
-            if isinstance(r, dict):
-                inmail_result.update(r)
+            return r if isinstance(r, dict) else {}
         except Exception:
-            log.exception("_process_row_both_modes: InMail arm aborted — Static arm will still run")
+            log.exception(
+                "_process_row_both_modes: InMail arm aborted — Static arm preserved"
+            )
+            return {}
 
-    if "static" in modes:
+    def _run_static() -> dict:
         try:
             r = _process_static_campaigns(
                 selected=resolved.selected,
@@ -2982,10 +3006,50 @@ def _process_row_both_modes(
                 cohort_description=resolved.smart_ramp_brief,
                 unique_id=unique_id,
             )
-            if isinstance(r, dict):
-                static_result.update(r)
+            return r if isinstance(r, dict) else {}
         except Exception:
-            log.exception("_process_row_both_modes: Static arm aborted — InMail arm result preserved")
+            log.exception(
+                "_process_row_both_modes: Static arm aborted — InMail arm preserved"
+            )
+            return {}
+
+    arm_funcs: dict[str, "callable"] = {}
+    if "inmail" in modes:
+        arm_funcs["inmail"] = _run_inmail
+    if "static" in modes:
+        arm_funcs["static"] = _run_static
+
+    if len(arm_funcs) <= 1 or dry_run:
+        # Single-arm or dry-run: skip the executor overhead and run inline.
+        # dry_run keeps sequential ordering to make logs deterministic for
+        # test fixtures that compare log output across runs.
+        for name, fn in arm_funcs.items():
+            r = fn()
+            if name == "inmail":
+                inmail_result.update(r)
+            else:
+                static_result.update(r)
+    else:
+        log.info(
+            "_process_row_both_modes: running InMail + Static arms concurrently (Phase 3.3)"
+        )
+        with _cf.ThreadPoolExecutor(
+            max_workers=len(arm_funcs),
+            thread_name_prefix="ramp-arm",
+        ) as ex:
+            futures = {ex.submit(fn): name for name, fn in arm_funcs.items()}
+            for fut in _cf.as_completed(futures):
+                name = futures[fut]
+                try:
+                    r = fut.result()
+                except Exception:
+                    # Each arm's wrapper already swallows; defensive only.
+                    log.exception("_process_row_both_modes: %s arm executor surface", name)
+                    r = {}
+                if name == "inmail":
+                    inmail_result.update(r)
+                else:
+                    static_result.update(r)
 
     # ── Multi-platform fan-out (Meta + Google) ───────────────────────────────
     # Reuse the LinkedIn static arm's (cohort × geo × angle) plan + PNGs.

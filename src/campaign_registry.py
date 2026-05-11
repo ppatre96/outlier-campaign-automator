@@ -22,12 +22,39 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
+
+# Phase 3.3 — registry file I/O lock. Both the Static arm and the InMail
+# arm (now run concurrently per Phase 3.3) call log_campaign / _load /
+# _save against `data/campaign_registry.json` + `.xlsx`. The read-modify-
+# write pattern (load → mutate → save) MUST be atomic across threads;
+# without a lock, two arms can each load the same snapshot and overwrite
+# each other's rows on save. The lock is re-entrant so a single thread
+# can hold it across nested helper calls (e.g. log_campaign internally
+# calling _save).
+_registry_lock = threading.RLock()
+
+
+@contextmanager
+def registry_critical_section():
+    """Acquire the registry lock for an atomic read-modify-write block.
+
+    Use this when the caller needs to load → inspect → mutate → save the
+    registry as one atomic operation (e.g. patching a creative URN onto
+    a previously-logged row). Single-shot writes via log_campaign /
+    update_metrics already acquire the lock internally; this context
+    manager is for callers that need to hold the lock across multiple
+    helper calls.
+    """
+    with _registry_lock:
+        yield
 
 _sheets_client = None
 
@@ -138,18 +165,22 @@ def _channel_label(platform: str) -> str:
 
 
 def _load() -> list[dict]:
-    if _REGISTRY_PATH.exists():
-        try:
-            return json.loads(_REGISTRY_PATH.read_text())
-        except Exception:
-            pass
-    return []
+    # Lock acquisition is cheap on the RLock fast path; load is read-only
+    # but we lock to prevent reading a half-written file mid-save.
+    with _registry_lock:
+        if _REGISTRY_PATH.exists():
+            try:
+                return json.loads(_REGISTRY_PATH.read_text())
+            except Exception:
+                pass
+        return []
 
 
 def _save(records: list[dict]) -> None:
-    _REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _REGISTRY_PATH.write_text(json.dumps(records, indent=2, default=str))
-    _write_excel(records)
+    with _registry_lock:
+        _REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _REGISTRY_PATH.write_text(json.dumps(records, indent=2, default=str))
+        _write_excel(records)
 
 
 def _write_excel(records: list[dict]) -> None:
@@ -274,10 +305,14 @@ def log_campaign(
         created_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         status="active",
     )
-    records = _load()
-    entry_dict = asdict(entry)
-    records.append(entry_dict)
-    _save(records)
+    # Hold the registry lock across the load-mutate-save window. _load and
+    # _save also acquire the (re-entrant) lock internally; this ensures the
+    # append is atomic w.r.t. concurrent writers from the other arm.
+    with _registry_lock:
+        records = _load()
+        entry_dict = asdict(entry)
+        records.append(entry_dict)
+        _save(records)
     log.info(
         "Registry: logged %s/%s campaign %s (ramp=%s cohort=%s angle=%s geo=%s)",
         platform, campaign_type, pcid, smart_ramp_id, cohort_id, angle, geo_cluster_label,
@@ -309,37 +344,39 @@ def update_metrics(
     The first kwarg name is preserved for back-compat — it accepts any
     platform's campaign id (LinkedIn URN, Meta numeric, Google resource).
     """
-    records = _load()
-    updated = False
-    for rec in records:
-        if _id_match(rec, linkedin_campaign_urn):
-            rec["impressions"] = impressions
-            rec["clicks"] = clicks
-            rec["spend_usd"] = round(spend_usd, 2)
-            rec["cpm_usd"] = round(spend_usd / impressions * 1000, 2) if impressions else None
-            rec["ctr_pct"] = round(clicks / impressions * 100, 3) if impressions else None
-            rec["cpc_usd"] = round(spend_usd / clicks, 2) if clicks else None
-            rec["applications"] = applications
-            rec["cpa_usd"] = round(spend_usd / applications, 2) if applications else None
-            rec["last_metrics_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-            updated = True
-            break
-    if updated:
-        _save(records)
-        log.info("Registry: metrics updated for %s", linkedin_campaign_urn)
-    else:
-        log.warning("Registry: campaign not found for metrics update: %s", linkedin_campaign_urn)
+    with _registry_lock:
+        records = _load()
+        updated = False
+        for rec in records:
+            if _id_match(rec, linkedin_campaign_urn):
+                rec["impressions"] = impressions
+                rec["clicks"] = clicks
+                rec["spend_usd"] = round(spend_usd, 2)
+                rec["cpm_usd"] = round(spend_usd / impressions * 1000, 2) if impressions else None
+                rec["ctr_pct"] = round(clicks / impressions * 100, 3) if impressions else None
+                rec["cpc_usd"] = round(spend_usd / clicks, 2) if clicks else None
+                rec["applications"] = applications
+                rec["cpa_usd"] = round(spend_usd / applications, 2) if applications else None
+                rec["last_metrics_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                updated = True
+                break
+        if updated:
+            _save(records)
+            log.info("Registry: metrics updated for %s", linkedin_campaign_urn)
+        else:
+            log.warning("Registry: campaign not found for metrics update: %s", linkedin_campaign_urn)
 
 
 def deprecate_campaign(linkedin_campaign_urn: str, reason: str) -> None:
     """Mark a campaign as deprecated. Accepts any platform's campaign id."""
-    records = _load()
-    for rec in records:
-        if _id_match(rec, linkedin_campaign_urn):
-            rec["status"] = "deprecated"
-            rec["deprecation_reason"] = reason
-            break
-    _save(records)
+    with _registry_lock:
+        records = _load()
+        for rec in records:
+            if _id_match(rec, linkedin_campaign_urn):
+                rec["status"] = "deprecated"
+                rec["deprecation_reason"] = reason
+                break
+        _save(records)
     log.info("Registry: deprecated %s — %s", linkedin_campaign_urn, reason)
 
 
