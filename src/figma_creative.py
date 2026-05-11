@@ -76,12 +76,17 @@ def classify_tg(cohort_name: str, rules: list) -> str:
 
 class FigmaCreativeClient:
     def __init__(self, token: str | None = None):
+        import threading
         self._token = token or config.FIGMA_TOKEN
         self._session = requests.Session()
         self._session.headers.update({"X-Figma-Token": self._token})
+        # Phase 3.4 — requests.Session header dict is shared mutable state.
+        # Ramp-parallel callers race on _session.get(); serialize.
+        self._session_lock = threading.Lock()
 
     def _get(self, path: str, **kwargs):
-        resp = self._session.get(f"{FIGMA_API}/{path.lstrip('/')}", **kwargs)
+        with self._session_lock:
+            resp = self._session.get(f"{FIGMA_API}/{path.lstrip('/')}", **kwargs)
         resp.raise_for_status()
         return resp.json()
 

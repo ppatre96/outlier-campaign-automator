@@ -12,6 +12,7 @@ import os
 import shutil
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -163,7 +164,10 @@ def run_launch(dry_run: bool = False, flow_id: str | None = None, project_id: st
 
     log.info("Found %d PENDING rows, %d retry rows", len(pending), len(retry))
 
-    for row in pending:
+    def _run_one(row: dict) -> None:
+        """Process a single pending row. Extracted so it can be submitted to
+        a ThreadPoolExecutor when RAMP_CONCURRENCY > 1.
+        """
         flow_id    = row["flow_id"]
         location   = row.get("location", "")
         figma_file = row.get("figma_file", "").strip()
@@ -179,32 +183,67 @@ def run_launch(dry_run: bool = False, flow_id: str | None = None, project_id: st
 
         config_name = row.get("config_name") or sheet_cfg.get("SCREENING_CONFIG_NAME", "") or flow_id
 
-        try:
-            _process_row(
-                row=row,
-                flow_id=flow_id,
-                config_name=config_name,
-                project_id=project_id,   # scope tier CTEs (T3/T2) to the project
-                location=location,
-                figma_file=figma_file,
-                figma_node=figma_node,
-                ad_type=ad_type,
-                inmail_sender=inmail_sender,
-                sheets=sheets,
-                snowflake=snowflake,
-                li_client=li_client,
-                urn_res=urn_res,
-                claude_key=claude_key,
-                mj_token=mj_token,
-                dry_run=dry_run,
-                linear_client=linear_client,
-                post_to_linear=post_to_linear,
-            )
-        except RuntimeError as exc:
-            log.error("HARD STOP for flow %s: %s", flow_id, exc)
-            raise
-        except Exception as exc:
-            log.exception("Unexpected error for flow %s: %s", flow_id, exc)
+        _process_row(
+            row=row,
+            flow_id=flow_id,
+            config_name=config_name,
+            project_id=project_id,   # scope tier CTEs (T3/T2) to the project
+            location=location,
+            figma_file=figma_file,
+            figma_node=figma_node,
+            ad_type=ad_type,
+            inmail_sender=inmail_sender,
+            sheets=sheets,
+            snowflake=snowflake,
+            li_client=li_client,
+            urn_res=urn_res,
+            claude_key=claude_key,
+            mj_token=mj_token,
+            dry_run=dry_run,
+            linear_client=linear_client,
+            post_to_linear=post_to_linear,
+        )
+
+    ramp_workers = max(1, int(getattr(config, "RAMP_CONCURRENCY", 1) or 1))
+    if ramp_workers > 1 and len(pending) > 1:
+        # Phase 3.4 — process multiple pending rows (cohorts within a Smart
+        # Ramp, or independent flows from the Triggers sheet) concurrently.
+        # Each _process_row runs Stage 1+2+C, creative gen (already pooled
+        # inside via IMAGE_GEN_CONCURRENCY / COPY_GEN_CONCURRENCY), and
+        # campaign creation across LinkedIn/Meta/Google. The shared clients
+        # (LinkedInClient, SheetsClient, UrnResolver, gdrive cache) all have
+        # internal locks; see Phase 3.3 + Phase 3.4 docstrings.
+        log.info("Phase 3.4: running %d rows in parallel (RAMP_CONCURRENCY=%d)",
+                 len(pending), ramp_workers)
+        hard_error: Exception | None = None
+        with ThreadPoolExecutor(max_workers=ramp_workers, thread_name_prefix="ramp") as ex:
+            future_to_row = {ex.submit(_run_one, row): row for row in pending}
+            for fut in as_completed(future_to_row):
+                row = future_to_row[fut]
+                fid = row.get("flow_id", "?")
+                try:
+                    fut.result()
+                except RuntimeError as exc:
+                    # HARD STOP — preserve current semantics but only after
+                    # already-running rows finish; submitting more rows is
+                    # safe because all `pending` were submitted up-front.
+                    log.error("HARD STOP for flow %s: %s", fid, exc)
+                    hard_error = hard_error or exc
+                except Exception as exc:
+                    log.exception("Unexpected error for flow %s: %s", fid, exc)
+        if hard_error is not None:
+            raise hard_error
+    else:
+        # Sequential fallback (RAMP_CONCURRENCY=1 or only one row) — preserves
+        # the historical single-threaded behavior and stack-trace surfaces.
+        for row in pending:
+            try:
+                _run_one(row)
+            except RuntimeError as exc:
+                log.error("HARD STOP for flow %s: %s", row.get("flow_id", "?"), exc)
+                raise
+            except Exception as exc:
+                log.exception("Unexpected error for flow %s: %s", row.get("flow_id", "?"), exc)
 
     for row in retry:
         log.info("=" * 60)

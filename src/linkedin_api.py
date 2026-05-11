@@ -114,6 +114,15 @@ class LinkedInClient(AdPlatformClient):
         # at a stale value. The lock ensures only one thread refreshes; the
         # other waits and inherits the new token.
         self._refresh_lock = threading.Lock()
+        # Phase 3.4 — requests.Session is documented as thread-safe for
+        # request issuance, but `_session.headers` (a shared dict) is read
+        # on every call and mutated by `_refresh_and_retry`. With ramp-level
+        # parallelism, two threads can read the Authorization header while
+        # a third refreshes it — leading to one request going out with the
+        # stale token. Serializing the session.request() call eliminates
+        # the read/write race on headers without measurable cost (the API
+        # call itself dominates the lock-hold time).
+        self._session_lock = threading.Lock()
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -135,7 +144,8 @@ class LinkedInClient(AdPlatformClient):
             new_token = refresh_access_token()
             self._token = new_token
             self._session.headers.update({"Authorization": f"Bearer {new_token}"})
-        return self._session.request(method, url, **kwargs)
+        with self._session_lock:
+            return self._session.request(method, url, **kwargs)
 
     def _default_headers(self) -> dict:
         """Return a copy of the default request headers for one-off calls that bypass _session."""
@@ -148,7 +158,8 @@ class LinkedInClient(AdPlatformClient):
 
     def _req(self, method: str, url: str, **kwargs) -> requests.Response:
         """Make a request; auto-refresh and retry once on 401."""
-        resp = self._session.request(method, url, **kwargs)
+        with self._session_lock:
+            resp = self._session.request(method, url, **kwargs)
         if resp.status_code == 401 and config.LINKEDIN_REFRESH_TOKEN and config.LINKEDIN_CLIENT_ID:
             log.warning("LinkedIn 401 — attempting token refresh")
             resp = self._refresh_and_retry(method, url, **kwargs)

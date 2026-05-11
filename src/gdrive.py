@@ -29,6 +29,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 
 from googleapiclient.discovery import build
@@ -47,6 +48,9 @@ _FOLDER_MIME = "application/vnd.google-apps.folder"
 # Cache: (parent_id, name) → folder_id. Saves the find-or-create lookups
 # from re-hitting the API for every creative within the same run.
 _folder_cache: dict[tuple[str, str], str] = {}
+# Phase 3.4 — guard against ramp-parallel threads both missing the cache
+# for the same (parent, name) and both creating a duplicate folder.
+_folder_cache_lock = threading.Lock()
 
 
 def _service():
@@ -73,44 +77,51 @@ def find_or_create_folder(name: str, parent_id: str, svc=None) -> str:
     """Return the id of the folder named `name` under `parent_id`. Creates
     it if missing. Caches results per process to avoid re-querying."""
     cache_key = (parent_id, name)
+    # Fast path: cache hit.
     if cache_key in _folder_cache:
         return _folder_cache[cache_key]
 
-    svc = svc or _service()
-    drive_id = _drive_id()
+    with _folder_cache_lock:
+        # Double-checked: another thread may have created the folder while
+        # we were waiting on the lock.
+        if cache_key in _folder_cache:
+            return _folder_cache[cache_key]
 
-    # Look for an existing folder with this exact name under the parent.
-    # Escape single-quotes in the name to keep the Drive query syntax valid.
-    safe_name = name.replace("'", r"\'")
-    q = (
-        f"name = '{safe_name}' "
-        f"and mimeType = '{_FOLDER_MIME}' "
-        f"and '{parent_id}' in parents "
-        f"and trashed = false"
-    )
-    list_kwargs = {
-        "q": q,
-        "fields": "files(id,name)",
-        "pageSize": 5,
-        "supportsAllDrives": True,
-        "includeItemsFromAllDrives": True,
-    }
-    if drive_id:
-        list_kwargs["corpora"] = "drive"
-        list_kwargs["driveId"] = drive_id
-    resp = svc.files().list(**list_kwargs).execute()
-    files = resp.get("files", [])
-    if files:
-        folder_id = files[0]["id"]
-    else:
-        meta = {"name": name, "mimeType": _FOLDER_MIME, "parents": [parent_id]}
-        created = svc.files().create(
-            body=meta, fields="id", supportsAllDrives=True,
-        ).execute()
-        folder_id = created["id"]
-        log.info("Drive: created folder '%s' under %s → %s", name, parent_id, folder_id)
-    _folder_cache[cache_key] = folder_id
-    return folder_id
+        svc = svc or _service()
+        drive_id = _drive_id()
+
+        # Look for an existing folder with this exact name under the parent.
+        # Escape single-quotes in the name to keep the Drive query syntax valid.
+        safe_name = name.replace("'", r"\'")
+        q = (
+            f"name = '{safe_name}' "
+            f"and mimeType = '{_FOLDER_MIME}' "
+            f"and '{parent_id}' in parents "
+            f"and trashed = false"
+        )
+        list_kwargs = {
+            "q": q,
+            "fields": "files(id,name)",
+            "pageSize": 5,
+            "supportsAllDrives": True,
+            "includeItemsFromAllDrives": True,
+        }
+        if drive_id:
+            list_kwargs["corpora"] = "drive"
+            list_kwargs["driveId"] = drive_id
+        resp = svc.files().list(**list_kwargs).execute()
+        files = resp.get("files", [])
+        if files:
+            folder_id = files[0]["id"]
+        else:
+            meta = {"name": name, "mimeType": _FOLDER_MIME, "parents": [parent_id]}
+            created = svc.files().create(
+                body=meta, fields="id", supportsAllDrives=True,
+            ).execute()
+            folder_id = created["id"]
+            log.info("Drive: created folder '%s' under %s → %s", name, parent_id, folder_id)
+        _folder_cache[cache_key] = folder_id
+        return folder_id
 
 
 def _ensure_path(parts: list[str], svc=None) -> str:

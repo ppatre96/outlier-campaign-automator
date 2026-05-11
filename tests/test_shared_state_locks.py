@@ -199,3 +199,170 @@ def test_linkedin_refresh_serialized_across_threads(monkeypatch):
     )
     # Both calls returned a response
     assert len(results) == 2
+
+
+# ─── Phase 3.4 locks — LinkedIn session, UrnResolver, gdrive, Figma ────────
+
+
+def test_linkedin_session_lock_serializes_request():
+    """The session_lock (added in Phase 3.4) must serialize the underlying
+    requests.Session.request() call so concurrent reads can't fire with a
+    stale Authorization header during a refresh."""
+    from src import linkedin_api
+    import threading as _t
+
+    client = linkedin_api.LinkedInClient(token="TOKEN")
+    in_flight = 0
+    max_in_flight = 0
+    counter_lock = _t.Lock()
+
+    def fake_request(method, url, **kw):
+        nonlocal in_flight, max_in_flight
+        with counter_lock:
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+        time.sleep(0.02)
+        with counter_lock:
+            in_flight -= 1
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.ok = True
+        return resp
+
+    client._session.request = fake_request
+
+    barrier = _t.Barrier(8)
+    def worker():
+        barrier.wait()
+        client._req("GET", "http://example.com")
+    threads = [_t.Thread(target=worker) for _ in range(8)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+
+    assert max_in_flight == 1, (
+        f"LinkedInClient._req did not serialize session.request() — "
+        f"max_in_flight={max_in_flight} (expected 1)"
+    )
+
+
+def test_urn_resolver_cache_lock_prevents_duplicate_loads():
+    """Concurrent _load_tab calls for the same tab must only trigger one
+    underlying sheets.read_urn_tab call (cache+lock collapse the others)."""
+    from src.linkedin_urn import UrnResolver
+    import threading as _t
+
+    call_count = {"n": 0}
+    call_count_lock = _t.Lock()
+    sheets = MagicMock()
+
+    def fake_read(tab_name):
+        with call_count_lock:
+            call_count["n"] += 1
+        time.sleep(0.05)
+        return [{"name": "Cardiology", "urn": "urn:li:skill:1"}]
+
+    sheets.read_urn_tab = fake_read
+
+    resolver = UrnResolver(sheets_client=sheets)
+
+    barrier = _t.Barrier(16)
+    def worker():
+        barrier.wait()
+        resolver._load_tab("Skills")
+
+    threads = [_t.Thread(target=worker) for _ in range(16)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+
+    assert call_count["n"] == 1, (
+        f"UrnResolver._load_tab fired read_urn_tab {call_count['n']} times "
+        "for the same tab; cache lock missed the race"
+    )
+
+
+def test_gdrive_folder_cache_lock_prevents_duplicate_creates(monkeypatch):
+    """Concurrent find_or_create_folder calls for the same (parent, name)
+    must hit the Drive API only once — the rest fan in on the cached id."""
+    from src import gdrive
+    import threading as _t
+
+    monkeypatch.setattr(gdrive, "_folder_cache", {})
+
+    api_call_count = {"n": 0}
+    api_call_lock = _t.Lock()
+
+    class FakeFilesAPI:
+        def list(self, **kw):
+            with api_call_lock:
+                api_call_count["n"] += 1
+            time.sleep(0.03)
+            ret = MagicMock()
+            ret.execute.return_value = {"files": [{"id": "folder_abc", "name": kw.get("q", "")}]}
+            return ret
+        def create(self, **kw):
+            ret = MagicMock()
+            ret.execute.return_value = {"id": "folder_new"}
+            return ret
+
+    class FakeSvc:
+        def files(self):
+            return FakeFilesAPI()
+
+    monkeypatch.setattr(gdrive, "_service", lambda: FakeSvc())
+    monkeypatch.setattr(gdrive, "_drive_id", lambda: None)
+
+    barrier = _t.Barrier(8)
+    results = []
+    def worker():
+        barrier.wait()
+        results.append(gdrive.find_or_create_folder("ramp_x", "parent_root"))
+    threads = [_t.Thread(target=worker) for _ in range(8)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+
+    assert api_call_count["n"] == 1, (
+        f"gdrive.find_or_create_folder fired the Drive list API "
+        f"{api_call_count['n']} times; expected exactly 1 — cache lock failed"
+    )
+    assert set(results) == {"folder_abc"}
+
+
+def test_figma_session_lock_serializes_get():
+    """FigmaCreativeClient._get must serialize the underlying requests.Session.get
+    so concurrent fetches don't race on the shared session headers."""
+    from src import figma_creative
+    import threading as _t
+
+    # Build without hitting config.FIGMA_TOKEN validation
+    client = figma_creative.FigmaCreativeClient(token="dummy")
+    in_flight = 0
+    max_in_flight = 0
+    counter_lock = _t.Lock()
+
+    def fake_get(url, **kw):
+        nonlocal in_flight, max_in_flight
+        with counter_lock:
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+        time.sleep(0.02)
+        with counter_lock:
+            in_flight -= 1
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json = MagicMock(return_value={})
+        return resp
+
+    client._session.get = fake_get
+
+    barrier = _t.Barrier(6)
+    def worker():
+        barrier.wait()
+        client._get("files/abc/nodes")
+    threads = [_t.Thread(target=worker) for _ in range(6)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+
+    assert max_in_flight == 1, (
+        f"FigmaCreativeClient._get did not serialize session.get() — "
+        f"max_in_flight={max_in_flight} (expected 1)"
+    )
