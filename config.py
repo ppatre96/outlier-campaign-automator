@@ -129,6 +129,12 @@ ANGLES_PER_COHORT           = int(os.getenv("ANGLES_PER_COHORT", 3))
 # calls (~40 min worst case with QC reroll) to ~10 min at workers=4.
 # Set to 1 to fall back to fully sequential behavior.
 IMAGE_GEN_CONCURRENCY       = int(os.getenv("IMAGE_GEN_CONCURRENCY", 4))
+# Phase 3.2 — copy-gen concurrency. build_copy_variants is one Anthropic
+# call per (cohort × geo) ≈ 5 s; pooled across 9 combos this drops ~45 s
+# sequential to ~12 s at workers=4. Defaults to IMAGE_GEN_CONCURRENCY so a
+# single env flip controls both pools; can be tuned independently if
+# Anthropic RPM/TPM limits surface separately from Gemini limits.
+COPY_GEN_CONCURRENCY        = int(os.getenv("COPY_GEN_CONCURRENCY", IMAGE_GEN_CONCURRENCY))
 AUDIENCE_SIZE_MIN           = int(os.getenv("AUDIENCE_SIZE_MIN", 50_000))
 MIN_UNIQUE_AUDIENCE_PCT     = float(os.getenv("MIN_UNIQUE_AUDIENCE_PCT", 80.0))
 URN_FUZZY_MATCH_THRESHOLD   = float(os.getenv("URN_FUZZY_MATCH_THRESHOLD", 0.85))

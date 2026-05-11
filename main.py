@@ -2186,46 +2186,103 @@ def _process_static_campaigns(
     campaign_specs: list[dict] = []
     skip_image_gen = dry_run and not os.environ.get("WITH_IMAGES")
 
-    # ── Phase A: build the (cohort × geo × angle) task list with copy gen
-    # done sequentially per (cohort × geo). Image gen is deferred to Phase B.
-    tasks: list[dict] = []
+    # ── Phase A1: enumerate (cohort × geo) jobs in stable order (cohort-outer,
+    # geo-inner). This order is the contract downstream consumers (the angle
+    # fan-out in A3, the grouping at line ~2378, and _process_extra_platform_arm)
+    # rely on, so it must not be re-shuffled by A2's parallel completion order.
+    copy_jobs: list[dict] = []
     for cohort in capped_cohorts:
         for geo_group in geo_groups:
             geo_label  = geo_group.cluster_label
             group_geos = geo_group.geos or raw_geos
-
             log.info(
                 "_process_static_campaigns: cohort '%s' × geo_group '%s' (%s) rate=%s",
                 cohort.name, geo_label, group_geos, geo_group.advertised_rate,
             )
+            copy_jobs.append({
+                "cohort":     cohort,
+                "geo_group":  geo_group,
+                "geo_label":  geo_label,
+                "group_geos": group_geos,
+            })
 
-            variants: list[dict] = []
-            try:
-                layer_map = (
-                    figma_client.get_text_layer_map(figma_file, figma_node)
-                    if has_figma else {}
-                )
-                variants = build_copy_variants(
-                    cohort, layer_map,
-                    geos=group_geos,
-                    description_hint=cohort_description,
-                    hourly_rate=geo_group.advertised_rate,
-                    geo_icp_hint=geo_group.icp_hint,
-                )
-            except Exception as exc:
-                log.warning("Static copy generation failed for '%s' / '%s': %s",
-                            cohort.name, geo_label, exc)
+    # ── Phase A2: parallelize build_copy_variants across (cohort × geo).
+    # build_copy_variants is one Anthropic call per job (~5 s) and is read-only
+    # — confirmed no shared mutable state, file writes, or cohort mutation. The
+    # shared anthropic.Anthropic client (src/claude_client.get_client) is
+    # constructed under threading.Lock so concurrent first calls don't race.
+    # Per-job exceptions are isolated: a single failed copy gen leaves that
+    # job's variants=[] and the downstream angle loop falls through with
+    # empty selected_variant (same path as today's single-threaded except).
+    def _copy_one(job: dict) -> list[dict]:
+        cohort     = job["cohort"]
+        geo_group  = job["geo_group"]
+        group_geos = job["group_geos"]
+        try:
+            layer_map = (
+                figma_client.get_text_layer_map(figma_file, figma_node)
+                if has_figma else {}
+            )
+            return build_copy_variants(
+                cohort, layer_map,
+                geos=group_geos,
+                description_hint=cohort_description,
+                hourly_rate=geo_group.advertised_rate,
+                geo_icp_hint=geo_group.icp_hint,
+            )
+        except Exception as exc:
+            log.warning("Static copy generation failed for '%s' / '%s': %s",
+                        cohort.name, job["geo_label"], exc)
+            return []
 
-            for angle_label in angle_labels:
-                tasks.append({
-                    "cohort":      cohort,
-                    "geo_group":   geo_group,
-                    "group_geos":  group_geos,
-                    "geo_label":   geo_label,
-                    "angle_idx":   angle_labels.index(angle_label),
-                    "angle_label": angle_label,
-                    "variants":    variants,
-                })
+    variants_by_idx: dict[int, list[dict]] = {}
+    if not copy_jobs:
+        pass
+    elif config.COPY_GEN_CONCURRENCY <= 1:
+        # Sequential fallback (also avoids thread overhead for tiny ramps).
+        for i, job in enumerate(copy_jobs):
+            variants_by_idx[i] = _copy_one(job)
+    else:
+        log.info(
+            "_process_static_campaigns: dispatching %d copy-gen jobs "
+            "with concurrency=%d",
+            len(copy_jobs), config.COPY_GEN_CONCURRENCY,
+        )
+        with _cf.ThreadPoolExecutor(
+            max_workers=config.COPY_GEN_CONCURRENCY,
+            thread_name_prefix="static-copygen",
+        ) as ex:
+            fut_to_idx = {ex.submit(_copy_one, j): i for i, j in enumerate(copy_jobs)}
+            for fut in _cf.as_completed(fut_to_idx):
+                idx = fut_to_idx[fut]
+                try:
+                    variants_by_idx[idx] = fut.result()
+                except Exception as exc:
+                    # _copy_one already swallows, but a future raised by other
+                    # paths (executor shutdown, etc.) shouldn't abort the arm.
+                    log.exception(
+                        "_process_static_campaigns: unexpected copy-gen exception "
+                        "idx=%d: %s", idx, exc,
+                    )
+                    variants_by_idx[idx] = []
+
+    # ── Phase A3: fan out to (cohort × geo × angle) image-gen tasks. The
+    # cohort-outer/geo-inner/angle-innermost order matches the pre-3.2 layout
+    # so Phase B (image-gen executor below) and downstream campaign_specs
+    # consumers see the identical structure.
+    tasks: list[dict] = []
+    for i, job in enumerate(copy_jobs):
+        variants = variants_by_idx.get(i, [])
+        for angle_label in angle_labels:
+            tasks.append({
+                "cohort":      job["cohort"],
+                "geo_group":   job["geo_group"],
+                "group_geos":  job["group_geos"],
+                "geo_label":   job["geo_label"],
+                "angle_idx":   angle_labels.index(angle_label),
+                "angle_label": angle_label,
+                "variants":    variants,
+            })
 
     # ── Phase B: parallelize image gen across all (cohort × geo × angle)
     # tasks via ThreadPoolExecutor. Gemini calls are I/O-bound (HTTP), so

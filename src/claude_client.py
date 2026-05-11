@@ -22,6 +22,7 @@ the 5-min TTL window return a cache hit and cost ~10x less.
 from __future__ import annotations
 
 import logging
+import threading
 
 import anthropic
 
@@ -30,12 +31,21 @@ import config
 log = logging.getLogger(__name__)
 
 _client: anthropic.Anthropic | None = None
+# Double-checked locking around lazy client init — required once Phase 3.2
+# parallelizes copy gen across (cohort × geo) and multiple threads call
+# call_claude simultaneously. Without this, racing threads can each
+# construct their own anthropic.Anthropic (resource leak, not crash). The
+# fast-path `if _client is None` outside the lock keeps warm-call overhead
+# at zero.
+_client_lock = threading.Lock()
 
 
 def get_client() -> anthropic.Anthropic:
     global _client
-    if _client is None:
-        _client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    if _client is None:                          # fast path — no lock once warm
+        with _client_lock:
+            if _client is None:                  # re-check inside the lock
+                _client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
     return _client
 
 
