@@ -7,10 +7,12 @@ Tab names mirror LinkedIn facet names:
 """
 import logging
 from functools import lru_cache
+from typing import Any
 
 from rapidfuzz import fuzz, process
 
 import config
+from src.targeting_resolver import TargetingResolver
 
 log = logging.getLogger(__name__)
 
@@ -37,11 +39,34 @@ FACET_API_NAME = {
 }
 
 
-class UrnResolver:
+class UrnResolver(TargetingResolver):
+    """LinkedIn implementation of `TargetingResolver` — fuzzy-matches cohort
+    facet values to LinkedIn URNs and returns a `{facet_api_name: [urn]}`
+    dict ready for `LinkedInClient.create_campaign(..., facet_urns=...)`."""
+
+    name = "linkedin"
+
     def __init__(self, sheets_client):
         self._sheets = sheets_client
         # { tab_name: [(name_lower, urn), ...] }
         self._cache: dict[str, list[tuple[str, str]]] = {}
+
+    def resolve_cohort(
+        self,
+        cohort: Any,
+        geos: list[str] | None = None,
+        exclude_pairs: list[tuple[str, str]] | None = None,
+    ) -> dict[str, list[str]]:
+        """Platform-agnostic facade over `resolve_cohort_rules`.
+
+        Existing call sites use `resolve_cohort_rules(cohort.rules)` directly;
+        this method wraps that for the new `_process_static_campaigns(platform, ...)`
+        dispatcher in main.py. Geos and exclude_pairs are not yet folded in
+        here — the existing pipeline applies geo overrides + excludes via
+        separate calls (see `_apply_geo_overrides`, `resolve_facet_pairs`).
+        """
+        rules = getattr(cohort, "rules", None) or []
+        return self.resolve_cohort_rules(rules)
 
     def _load_tab(self, tab_name: str) -> list[tuple[str, str]]:
         if tab_name in self._cache:

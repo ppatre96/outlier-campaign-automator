@@ -57,13 +57,19 @@ COLUMNS = [
     "angle",                    # A / B / C / F
     "campaign_type",            # "static" | "inmail"
     "advertised_rate",          # e.g. "$50/hr"
-    # ── LinkedIn URNs ─────────────────────────────────────────────────────────
+    # ── Ad platform identity ──────────────────────────────────────────────────
+    "channel",                  # display alias for platform — "LinkedIn" | "Meta" | "Google"
+    "platform",                 # internal lower-case key — "linkedin" | "meta" | "google"
+    "platform_campaign_id",     # platform-native id (URN / numeric / resource name)
+    "platform_creative_id",     # platform-native creative or ad id
+    # ── LinkedIn URNs (legacy — duplicates platform_* for back-compat) ────────
     "linkedin_campaign_urn",
     "creative_urn",             # static: image creative URN; inmail: message ad URN
     # ── Copy snapshot ─────────────────────────────────────────────────────────
     "headline",
     "subheadline",
     "photo_subject",
+    "creative_image_path",      # local path to the rendered PNG (used to embed image in Sheets)
     "inmail_subject",
     "inmail_body_preview",      # first 150 chars
     # ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -95,11 +101,16 @@ class CampaignEntry:
     angle:                  str = ""
     campaign_type:          str = ""
     advertised_rate:        str = ""
-    linkedin_campaign_urn:  str = ""
-    creative_urn:           str = ""
+    channel:                str = "LinkedIn"   # mirrors platform, title-cased for the Sheet view
+    platform:               str = "linkedin"
+    platform_campaign_id:   str = ""
+    platform_creative_id:   str = ""
+    linkedin_campaign_urn:  str = ""    # legacy alias of platform_campaign_id when platform=linkedin
+    creative_urn:           str = ""    # legacy alias of platform_creative_id
     headline:               str = ""
     subheadline:            str = ""
     photo_subject:          str = ""
+    creative_image_path:    str = ""
     inmail_subject:         str = ""
     inmail_body_preview:    str = ""
     created_at:             str = ""
@@ -116,6 +127,14 @@ class CampaignEntry:
     applications:           int | None = None
     cpa_usd:                float | None = None
     last_metrics_at:        str = ""
+
+
+# Internal lower-case platform key → user-facing channel label shown in Sheet.
+_CHANNEL_LABEL = {"linkedin": "LinkedIn", "meta": "Meta", "google": "Google"}
+
+
+def _channel_label(platform: str) -> str:
+    return _CHANNEL_LABEL.get((platform or "").lower(), (platform or "").title())
 
 
 def _load() -> list[dict]:
@@ -198,16 +217,35 @@ def log_campaign(
     angle: str,
     campaign_type: str,
     advertised_rate: str,
-    linkedin_campaign_urn: str,
+    linkedin_campaign_urn: str = "",
     creative_urn: str = "",
     headline: str = "",
     subheadline: str = "",
     photo_subject: str = "",
+    creative_image_path: str = "",
     inmail_subject: str = "",
     inmail_body: str = "",
     gemini_prompt: str = "",
+    *,
+    platform: str = "linkedin",
+    platform_campaign_id: str = "",
+    platform_creative_id: str = "",
 ) -> None:
-    """Append one campaign row to the registry. Safe to call from both arms."""
+    """Append one campaign row to the registry. Safe to call from any platform arm.
+
+    `platform` defaults to "linkedin" so existing callers (which pass
+    `linkedin_campaign_urn=` only) keep working. New multi-platform callers
+    pass `platform=` plus `platform_campaign_id=` / `platform_creative_id=`.
+
+    The legacy `linkedin_campaign_urn` / `creative_urn` columns are
+    populated when platform="linkedin" so the existing readers + Google
+    Sheets writers continue to work without further changes.
+    """
+    # Resolve the platform-native id pair from whichever set of kwargs the
+    # caller used. LinkedIn callers may pass either set.
+    pcid = platform_campaign_id or linkedin_campaign_urn
+    pcrid = platform_creative_id or creative_urn
+
     entry = CampaignEntry(
         smart_ramp_id=smart_ramp_id,
         cohort_id=cohort_id,
@@ -218,11 +256,18 @@ def log_campaign(
         angle=angle,
         campaign_type=campaign_type,
         advertised_rate=advertised_rate,
-        linkedin_campaign_urn=linkedin_campaign_urn,
-        creative_urn=creative_urn,
+        channel=_channel_label(platform),
+        platform=platform,
+        platform_campaign_id=pcid,
+        platform_creative_id=pcrid,
+        # Legacy aliases — kept populated only for LinkedIn rows so old
+        # consumers (Sheets columns, downstream queries) keep working.
+        linkedin_campaign_urn=pcid if platform == "linkedin" else "",
+        creative_urn=pcrid if platform == "linkedin" else "",
         headline=headline,
         subheadline=subheadline,
         photo_subject=photo_subject,
+        creative_image_path=creative_image_path,
         inmail_subject=inmail_subject,
         inmail_body_preview=inmail_body[:150] if inmail_body else "",
         gemini_prompt=gemini_prompt,
@@ -234,13 +279,22 @@ def log_campaign(
     records.append(entry_dict)
     _save(records)
     log.info(
-        "Registry: logged %s campaign %s (ramp=%s cohort=%s angle=%s geo=%s)",
-        campaign_type, linkedin_campaign_urn, smart_ramp_id, cohort_id, angle, geo_cluster_label,
+        "Registry: logged %s/%s campaign %s (ramp=%s cohort=%s angle=%s geo=%s)",
+        platform, campaign_type, pcid, smart_ramp_id, cohort_id, angle, geo_cluster_label,
     )
     try:
         _get_sheets().write_registry_row(entry_dict)
     except Exception as exc:
         log.warning("Registry sheet write failed (non-fatal): %s", exc)
+
+
+def _id_match(rec: dict, campaign_id: str) -> bool:
+    """True if the registry record matches `campaign_id` on either the new
+    `platform_campaign_id` column or the legacy `linkedin_campaign_urn`."""
+    return (
+        rec.get("platform_campaign_id") == campaign_id
+        or rec.get("linkedin_campaign_urn") == campaign_id
+    )
 
 
 def update_metrics(
@@ -250,11 +304,15 @@ def update_metrics(
     spend_usd: float,
     applications: int = 0,
 ) -> None:
-    """Update performance metrics for a campaign. Called by the feedback agent."""
+    """Update performance metrics for a campaign. Called by the feedback agent.
+
+    The first kwarg name is preserved for back-compat — it accepts any
+    platform's campaign id (LinkedIn URN, Meta numeric, Google resource).
+    """
     records = _load()
     updated = False
     for rec in records:
-        if rec.get("linkedin_campaign_urn") == linkedin_campaign_urn:
+        if _id_match(rec, linkedin_campaign_urn):
             rec["impressions"] = impressions
             rec["clicks"] = clicks
             rec["spend_usd"] = round(spend_usd, 2)
@@ -274,10 +332,10 @@ def update_metrics(
 
 
 def deprecate_campaign(linkedin_campaign_urn: str, reason: str) -> None:
-    """Mark a campaign as deprecated (feedback agent determined it's underperforming)."""
+    """Mark a campaign as deprecated. Accepts any platform's campaign id."""
     records = _load()
     for rec in records:
-        if rec.get("linkedin_campaign_urn") == linkedin_campaign_urn:
+        if _id_match(rec, linkedin_campaign_urn):
             rec["status"] = "deprecated"
             rec["deprecation_reason"] = reason
             break
@@ -296,10 +354,13 @@ def get_active_campaigns(smart_ramp_id: str | None = None) -> list[dict]:
 
 
 def get_entry_by_urn(linkedin_campaign_urn: str) -> dict | None:
-    """Return the registry entry for a campaign URN, or None."""
+    """Return the registry entry for a campaign id, or None.
+
+    Accepts either platform_campaign_id (new) or linkedin_campaign_urn (legacy).
+    """
     records = _load()
     return next(
-        (r for r in records if r.get("linkedin_campaign_urn") == linkedin_campaign_urn),
+        (r for r in records if _id_match(r, linkedin_campaign_urn)),
         None,
     )
 

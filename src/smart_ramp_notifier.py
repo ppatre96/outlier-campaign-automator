@@ -45,23 +45,37 @@ def build_success_message(
     requester_name: str,
     per_cohort: list[dict],
     version: int = 1,
+    extra_platform_campaigns: dict | None = None,
 ) -> str:
     """Build the success-path Slack body.
 
-    Template locked in CONTEXT.md §Slack Notifier. Vocabulary-clean: uses
-    "draft" (not "campaign awaiting approval"), "review and activate" (not
-    "approve"), "creative" (not "ad"). Never emits banned tokens.
+    Vocabulary-clean: uses "draft", "review and activate", "creative".
+    Never emits banned tokens.
+
+    `extra_platform_campaigns` is the dict returned by run_launch_for_ramp:
+        {"meta": ["120245...", ...], "google": ["customers/.../adGroups/...", ...]}
+    Each entry is a top-level Ad Set (Meta) or Ad Group (Google) created
+    during the run. Counts are surfaced in the summary; full lists in the
+    Triggers sheet → Campaign Registry tab.
     """
     if version > 1:
         header = f"*Smart Ramp processed (v{version}): {ramp_id}* — {project_name}"
     else:
         header = f"*Smart Ramp processed: {ramp_id}* — {project_name}"
 
+    extra_platform_campaigns = extra_platform_campaigns or {}
+    meta_count   = len(extra_platform_campaigns.get("meta") or [])
+    google_count = len(extra_platform_campaigns.get("google") or [])
+
     lines = [
         header,
         f"Requester: {requester_name}",
         f"Cohorts: {len(per_cohort)}",
     ]
+    if meta_count or google_count:
+        lines.append(
+            f"Multi-channel ad sets: LinkedIn={len(per_cohort)}  Meta={meta_count}  Google={google_count}"
+        )
     if version > 1:
         lines.append(
             "Prior version superseded — review old drafts at LinkedIn Campaign Manager."
@@ -79,8 +93,18 @@ def build_success_message(
         lines.append(f"  • Creative (Static): {static_creative}")
         lines.append("")
 
+    if extra_platform_campaigns:
+        lines.append("*Other channels (DRAFT)*")
+        for plat, ids in extra_platform_campaigns.items():
+            if not ids:
+                continue
+            label = {"meta": "Meta", "google": "Google Ads"}.get(plat, plat.title())
+            lines.append(f"  • {label}: {len(ids)} ad set(s)/group(s) — first: `{ids[0]}`")
+        lines.append("")
+
     lines.append("Review and activate in LinkedIn Campaign Manager:")
     lines.append(LINKEDIN_CAMPAIGN_MANAGER_URL)
+    lines.append("Full per-creative breakdown in the Triggers sheet → Campaign Registry tab.")
     return "\n".join(lines)
 
 
@@ -259,6 +283,7 @@ def notify_success(ramp_record, result: dict, version: int = 1) -> dict:
         requester_name=ramp_record.requester_name or "—",
         per_cohort=result.get("per_cohort") or [],
         version=version,
+        extra_platform_campaigns=result.get("extra_platform_campaigns") or {},
     )
     return _send_to_all_targets(text)
 

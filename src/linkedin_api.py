@@ -9,38 +9,27 @@ import logging
 import mimetypes
 import os
 import re
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 import requests
 
 import config
+from src.ad_platform import (
+    AdPlatformClient,
+    CreateAdResult,
+    LINKEDIN_CONSTRAINTS,
+    PlatformConstraints,
+)
 
 log = logging.getLogger(__name__)
 
 
-@dataclass
-class ImageAdResult:
-    """Result of LinkedIn create_image_ad call.
-
-    Phase 2.6 (SR-04): 403 / LINKEDIN_MEMBER_URN errors return
-    status="local_fallback" so callers can save the PNG locally and continue
-    (instead of aborting the cohort). Other unexpected errors surface as
-    status="error" — caller decides whether to log + skip or re-raise.
-
-    Fields:
-        creative_urn: The LinkedIn adCreative URN on success; None otherwise.
-        local_save_path: Caller populates after `shutil.copy2(png, target)`.
-        status: One of "ok" | "local_fallback" | "error".
-        error_class: Exception class name when not ok.
-        error_message: str(exc) trimmed for logs/state-file display.
-    """
-    creative_urn: Optional[str] = None
-    local_save_path: Optional[str] = None
-    status: Literal["ok", "local_fallback", "error"] = "ok"
-    error_class: Optional[str] = None
-    error_message: Optional[str] = None
+# Back-compat alias — `ImageAdResult` was the original LinkedIn-only return
+# type; `CreateAdResult` is the platform-agnostic version with identical
+# semantics. The alias keeps existing call sites and tests working unchanged
+# (`ImageAdResult(creative_urn=...)`, `result.creative_urn`).
+ImageAdResult = CreateAdResult
 
 _LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
@@ -96,7 +85,17 @@ def _update_env_token(new_access: str, new_refresh: str) -> None:
     _ENV_FILE.write_text(text)
 
 
-class LinkedInClient:
+class LinkedInClient(AdPlatformClient):
+    """LinkedIn Marketing API client. Implements `AdPlatformClient` so the
+    pipeline can dispatch generically across LinkedIn, Meta, and Google. The
+    method signatures retain LinkedIn-specific kwarg names (campaign_urn,
+    image_urn, cta_button, ...) for backward compatibility with existing
+    call sites — Python's ABC contract is satisfied as long as the method
+    names match."""
+
+    name = "linkedin"
+    constraints: PlatformConstraints = LINKEDIN_CONSTRAINTS
+
     def __init__(self, token: str):
         self._token = token
         self._session = requests.Session()
@@ -143,31 +142,47 @@ class LinkedInClient:
 
     # ── Stage C: Audience Counts ───────────────────────────────────────────────
 
-    def get_audience_count(self, facet_urns: dict[str, list[str]]) -> int:
+    def get_audience_count(
+        self,
+        facet_urns: dict[str, list[str]],
+        exclude_facet_urns: dict[str, list[str]] | None = None,
+    ) -> int:
         """
-        Call GET /rest/audienceCounts?q=targetingCriteriaV2 with Rest.li-encoded targeting.
-        Returns the total estimated audience size, or 0 on error.
+        Call GET /rest/audienceCounts?q=targetingCriteriaV2 with Rest.li-encoded
+        targeting. Returns the total estimated audience size, or 0 on error.
 
         facet_urns: { "urn:li:adTargetingFacet:skills": ["urn:li:skill:1"], ... }
+        exclude_facet_urns: same shape — adds an `exclude` block to the criteria.
 
         Rules (from LinkedIn docs):
           - q=targetingCriteriaV2  (NOT targetingCriteria)
           - targetingCriteria is Rest.li format (NOT JSON)
           - Do NOT include account param
-          - Response: elements[0]["total"]
+          - At least ONE include criterion is required (LinkedIn errors otherwise)
+          - URN-internal chars (`:`, `(`, `)`) MUST be percent-encoded; structural
+            delimiters of the Rest.li expression MUST be raw. We build the final
+            URL ourselves so requests doesn't double-encode.
+          - Response: elements[0]["total"] (fall back to "active" if absent)
         """
-        targeting_str = _build_restli_targeting(facet_urns)
-        params = {
-            "q":                 "targetingCriteriaV2",
-            "targetingCriteria": targeting_str,
-        }
+        # Empty-include guard: LinkedIn rejects calls that have no include.
+        non_empty = {k: v for k, v in (facet_urns or {}).items() if v}
+        if not non_empty:
+            log.warning("get_audience_count: empty include — skipping API call (returning 0)")
+            return 0
+
+        targeting_str = _build_restli_targeting(non_empty, exclude_facet_urns or {})
+        # Build the URL by hand. The targeting string is already in
+        # "structural-raw, URN-internal-encoded" form per LinkedIn's spec —
+        # passing it through requests params= would double-encode.
+        url = f"{self._url('audienceCounts')}?q=targetingCriteriaV2&targetingCriteria={targeting_str}"
         try:
-            resp = self._req("GET", self._url("audienceCounts"), params=params)
+            resp = self._req("GET", url)
             self._raise_for_status(resp, "audienceCounts")
             data = resp.json()
             elements = data.get("elements", [])
             if elements:
-                total = int(elements[0].get("total", 0))
+                el = elements[0]
+                total = int(el.get("total", 0) or el.get("active", 0))
                 log.info("Audience count: %d", total)
                 return total
         except Exception as exc:
@@ -258,6 +273,74 @@ class LinkedInClient:
         self._raise_for_status(resp, "getCampaign")
         return resp.json()
 
+    def attach_conversion_to_campaign(self, campaign_urn: str, conversion_id: int | None = None) -> bool:
+        """Associate a LinkedIn conversion with a sponsored campaign.
+
+        WEBSITE_CONVERSION campaigns require at least one conversion attached
+        (otherwise LinkedIn doesn't optimize / report). We attach by appending
+        `campaign_urn` to the conversion's `campaigns` list via PATCH on
+        `/conversions/{id}` (Rest.li PARTIAL_UPDATE). Idempotent — skips if
+        the campaign is already linked.
+
+        Returns True on success, False on failure (logged, non-fatal).
+        Set LINKEDIN_CONVERSION_ID=0 to disable auto-attach globally.
+        """
+        cid = conversion_id if conversion_id is not None else config.LINKEDIN_CONVERSION_ID
+        if not cid:
+            log.debug("attach_conversion_to_campaign: LINKEDIN_CONVERSION_ID=0 — skipping")
+            return False
+        try:
+            # Fetch current campaigns list. Required because PATCH $set replaces
+            # the whole array — must include existing entries to preserve them.
+            url = f"{config.LINKEDIN_API_BASE}/conversions/{cid}"
+            resp = self._req("GET", url)
+            self._raise_for_status(resp, "getConversion")
+            current = resp.json().get("campaigns", []) or []
+            if campaign_urn in current:
+                log.info("conversion %d already linked to %s — skipping", cid, campaign_urn)
+                return True
+
+            patch_headers = self._default_headers()
+            patch_headers["X-RestLi-Method"] = "PARTIAL_UPDATE"
+            payload = {"patch": {"$set": {"campaigns": current + [campaign_urn]}}}
+            resp = self._req("POST", url, json=payload, headers=patch_headers)
+            self._raise_for_status(resp, "attachConversion")
+            log.info("attached conversion %d to %s (now %d campaigns linked)",
+                     cid, campaign_urn, len(current) + 1)
+            return True
+        except Exception as exc:
+            log.warning("attach_conversion_to_campaign(%s, %s) failed: %s",
+                        campaign_urn, cid, exc)
+            return False
+
+    def get_account_reference_urn(self) -> str:
+        """Return the ad account's `reference` field — the URN of the LinkedIn
+        organization that owns the account. Required as the `sender` for
+        Sponsored InMail creatives (LinkedIn rejects person URNs with
+        SINMAIL_SENDER_NOT_APPROVED). Cached after first call.
+        """
+        cached = getattr(self, "_account_reference_urn", None)
+        if cached:
+            return cached
+        headers = self._default_headers()
+        headers["LinkedIn-Version"] = "202506"
+        resp = self._req(
+            "GET",
+            self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}"),
+            headers=headers,
+        )
+        self._raise_for_status(resp, "getAdAccount")
+        ref = resp.json().get("reference") or ""
+        if not ref:
+            raise RuntimeError(
+                "LinkedIn ad account has no `reference` field — InMail sender "
+                "URN cannot be auto-derived. Set LINKEDIN_INMAIL_SENDER_URN "
+                "manually to the owning organization URN."
+            )
+        self._account_reference_urn = ref
+        log.info("Resolved ad account reference URN: %s", ref)
+        return ref
+
     def clone_campaign(self, source_urn: str, new_name: str) -> str:
         """
         Create a new DRAFT campaign by cloning the targeting criteria from an
@@ -331,7 +414,11 @@ class LinkedInClient:
             "targetingCriteria": targeting,
             "status":                 "DRAFT",
             "locale":                 {"country": "US", "language": "en"},
-            "objectiveType":          "WEBSITE_VISIT",
+            # WEBSITE_CONVERSION matches Outlier's standard for production
+            # Sponsored Content (78% of active campaigns; per
+            # 2026-05-08 ad-account audit). Attached conversion is
+            # auto-linked below via attach_conversion_to_campaign().
+            "objectiveType":          "WEBSITE_CONVERSION",
             "offsiteDeliveryEnabled": False,
             "politicalIntent":        "NOT_POLITICAL",
             "runSchedule":            {"start": _now_ms()},
@@ -341,6 +428,10 @@ class LinkedInClient:
         campaign_id = resp.headers.get("x-linkedin-id") or _id_from_location(resp)
         urn = f"urn:li:sponsoredCampaign:{campaign_id}"
         log.info("Created campaign %s '%s'", urn, name)
+        # Auto-attach the configured conversion when objective is WEBSITE_CONVERSION.
+        # Required for LinkedIn to optimize + report on conversion events.
+        if payload.get("objectiveType") == "WEBSITE_CONVERSION":
+            self.attach_conversion_to_campaign(urn)
         return urn
 
     # ── Image upload ───────────────────────────────────────────────────────────
@@ -412,7 +503,12 @@ class LinkedInClient:
             "targetingCriteria":     targeting,
             "status":                "DRAFT",
             "locale":                {"country": "US", "language": "en"},
-            "objectiveType":         "LEAD_GENERATION",
+            # WEBSITE_CONVERSION — Outlier's standard for InMail. 100% of the
+            # 1500 ACTIVE InMail campaigns audited 2026-05-08 use this
+            # objective. Requires a conversion attached via
+            # attach_conversion_to_campaign() — done after create_campaign /
+            # create_inmail_campaign returns.
+            "objectiveType":         "WEBSITE_CONVERSION",
             "offsiteDeliveryEnabled": False,
             "politicalIntent":        "NOT_POLITICAL",
             "creativeSelection":      "ROUND_ROBIN",
@@ -423,6 +519,11 @@ class LinkedInClient:
         campaign_id = resp.headers.get("x-restli-id") or resp.headers.get("x-linkedin-id") or _id_from_location(resp)
         urn = f"urn:li:sponsoredCampaign:{campaign_id}"
         log.info("Created InMail campaign %s '%s'", urn, name)
+        # WEBSITE_CONVERSION campaigns require a conversion attached for LinkedIn
+        # to optimize / report. Attach the default conversion (id 19801700 by
+        # default — Outlier "OCP Complete" signup pixel).
+        if payload.get("objectiveType") == "WEBSITE_CONVERSION":
+            self.attach_conversion_to_campaign(urn)
         return urn
 
     # ── InMail Creative ────────────────────────────────────────────────────────
@@ -440,10 +541,26 @@ class LinkedInClient:
         Create a LinkedIn Message Ad creative and attach it to a campaign.
         Two-step: (1) create inMailContent via REST API, (2) create creative referencing it.
         Uses /rest/inMailContents (no MDP needed) with LinkedIn-Version: 202506 header.
-        sender_urn: urn:li:person:... (must be connected to the ad account).
+
+        sender_urn: must be the URN of the LinkedIn ORGANIZATION that owns the
+                    ad account (e.g. `urn:li:organization:92583550`). Person
+                    URNs are rejected with SINMAIL_SENDER_NOT_APPROVED. If a
+                    person URN or empty string is passed, this method
+                    auto-derives the org URN from the ad account's `reference`
+                    field via `get_account_reference_urn()`.
         Returns the sponsoredCreative URN.
         """
         dest = destination_url or config.LINKEDIN_DESTINATION
+
+        # Auto-correct legacy person-URN sender values. The InMail sender MUST
+        # be the org URN that owns the ad account — LinkedIn validates this on
+        # the inMailContents POST.
+        if not sender_urn or sender_urn.startswith("urn:li:person:"):
+            log.info(
+                "InMail sender %r unsuitable — substituting org URN from ad account",
+                sender_urn,
+            )
+            sender_urn = self.get_account_reference_urn()
 
         # Step 1 — create the InMail content object via REST API (no MDP required)
         content_payload = {
@@ -465,8 +582,13 @@ class LinkedInClient:
         import requests as _req_lib
         resp = _req_lib.post("https://api.linkedin.com/rest/inMailContents", json=content_payload, headers=content_headers)
         self._raise_for_status(resp, "createInMailContent")
-        content_id  = resp.headers.get("x-restli-id") or _id_from_location(resp)
-        content_urn = f"urn:li:adInMailContent:{content_id}"
+        # x-restli-id sometimes contains a bare numeric id, sometimes a full URN
+        # (e.g. "urn:li:adInMailContent:214000216"). Normalize to a full URN.
+        raw = resp.headers.get("x-restli-id") or _id_from_location(resp) or ""
+        if raw.startswith("urn:li:"):
+            content_urn = raw
+        else:
+            content_urn = f"urn:li:adInMailContent:{raw}"
         log.info("Created InMail content %s (no MDP required)", content_urn)
 
         # Step 2 — create the creative referencing the content
@@ -479,8 +601,10 @@ class LinkedInClient:
         creative_headers["LinkedIn-Version"] = "202506"
         resp = self._req("POST", f"https://api.linkedin.com/rest/adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/creatives", json=creative_payload, headers=creative_headers)
         self._raise_for_status(resp, "createInMailCreative")
-        creative_id = resp.headers.get("x-restli-id") or _id_from_location(resp)
-        urn = f"urn:li:sponsoredCreative:{creative_id}"
+        # Same normalisation as for adInMailContent: x-restli-id may be a bare
+        # numeric id or a full URN — return a full URN either way.
+        raw = resp.headers.get("x-restli-id") or _id_from_location(resp) or ""
+        urn = raw if raw.startswith("urn:li:") else f"urn:li:sponsoredCreative:{raw}"
         log.info("Created InMail creative %s", urn)
         return urn
 
@@ -630,6 +754,20 @@ class LinkedInClient:
                 "Content-Type":               "application/json",
             },
         )
+        # NOTE (2026-05-09): /rest/posts with adContext.dscAdAccount returns
+        # a generic 403 FORBIDDEN regardless of OAuth scope or LinkedIn user
+        # role. Confirmed via direct probing — even with w_member_social +
+        # ACCOUNT_MANAGER on the ad account + Page Super-Admin on the owning
+        # organization, the call still 403s. The legacy /v2/ugcPosts path
+        # surfaces the specific reason: "Unpermitted fields present in
+        # REQUEST_BODY: [/adContext]". Setting adContext is gated by LinkedIn
+        # Marketing Developer Platform (MDP) entitlement on the OAuth app,
+        # which is a separate multi-week LinkedIn approval process. Until MDP
+        # is granted, this call cannot succeed and the static-ad arm falls
+        # back to local PNG via the create_image_ad wrapper's 403 handler.
+        # Duplicate-detection 422 responses on retry contain phantom URNs
+        # (returned for spam-prevention fingerprinting) that 404 on creative
+        # attach — they are NOT a viable workaround.
         self._raise_for_status(dsc_resp, "createDscPost")
         post_id  = dsc_resp.headers.get("x-restli-id") or _id_from_location(dsc_resp)
         post_urn = f"urn:li:share:{post_id}"
@@ -744,28 +882,77 @@ _FACET_SHORT_TO_URN = {
     "profileLocations": "urn:li:adTargetingFacet:profileLocations",
     "locations":        "urn:li:adTargetingFacet:locations",
     "industries":       "urn:li:adTargetingFacet:industries",
+    "seniorities":      "urn:li:adTargetingFacet:seniorities",
+    "interfaceLocales": "urn:li:adTargetingFacet:interfaceLocales",
+    "staffCountRanges": "urn:li:adTargetingFacet:staffCountRanges",
+    "yearsOfExperienceRanges": "urn:li:adTargetingFacet:yearsOfExperienceRanges",
+    "ageRanges":        "urn:li:adTargetingFacet:ageRanges",
+    "genders":          "urn:li:adTargetingFacet:genders",
+    "memberBehaviors":  "urn:li:adTargetingFacet:memberBehaviors",
+    "groups":           "urn:li:adTargetingFacet:groups",
+    "schools":          "urn:li:adTargetingFacet:schools",
+    "employers":        "urn:li:adTargetingFacet:employers",
+    "followedCompanies":"urn:li:adTargetingFacet:followedCompanies",
 }
 
 
-def _build_restli_targeting(facet_urns: dict[str, list[str]]) -> str:
+def _encode_urn(urn: str) -> str:
+    """Percent-encode the URN-internal characters that conflict with Rest.li's
+    structural delimiters: `:` `(` `)` `,`. Leaves alphanumerics + `-` `_` `.`
+    untouched. Result is what LinkedIn's audienceCounts parser expects inside
+    the `targetingCriteria` query param.
     """
-    Build a Rest.li targeting string for audienceCounts?q=targetingCriteriaV2.
+    return (urn
+            .replace("%", "%25")  # encode any literal % first
+            .replace(":", "%3A")
+            .replace("(", "%28")
+            .replace(")", "%29")
+            .replace(",", "%2C"))
 
-    Accepts either short facet names ("skills") or full URNs.
-    Values must be raw URN strings — do NOT pre-encode them.
-    requests will URL-encode the entire param value exactly once.
 
-    LinkedIn parses the decoded string as Rest.li:
-      (include:(and:List((or:(urn:li:adTargetingFacet:skills:List(urn:li:skill:123))))))
+def _build_restli_targeting(
+    include: dict[str, list[str]],
+    exclude: dict[str, list[str]] | None = None,
+) -> str:
+    """Build a Rest.li targeting string for audienceCounts?q=targetingCriteriaV2.
+
+    Accepts either short facet names ("skills") or full URNs. URN values are
+    percent-encoded character-by-character per `_encode_urn` — the structural
+    parens, colons, and commas of the Rest.li expression are left raw because
+    LinkedIn's URL parser uses them as delimiters.
+
+    Output shape (URN-encoded portions shown lower-case for readability):
+      include only:
+        (include:(and:List((or:(<facet>:List(<urn>,<urn>))))))
+      with exclude:
+        (include:(and:List(...)),exclude:(or:(<facet>:List(<urn>))))
+
+    Spec source: LinkedIn Marketing API docs + colleague's working call
+    pattern (skill `rw_ads`, version 202510, no MDP tier required).
     """
-    or_blocks = []
-    for facet, values in facet_urns.items():
+    include_or_blocks = []
+    for facet, values in (include or {}).items():
         if not values:
             continue
-        full_facet = _FACET_SHORT_TO_URN.get(facet, facet)
-        values_str = ",".join(values)  # raw URNs — no encoding
-        or_blocks.append(f"(or:({full_facet}:List({values_str})))")
-    return f"(include:(and:List({','.join(or_blocks)})))"
+        full_facet = _encode_urn(_FACET_SHORT_TO_URN.get(facet, facet))
+        encoded_vals = ",".join(_encode_urn(v) for v in values)
+        include_or_blocks.append(f"(or:({full_facet}:List({encoded_vals})))")
+    include_part = f"(and:List({','.join(include_or_blocks)}))"
+
+    exclude_or_blocks = []
+    for facet, values in (exclude or {}).items():
+        if not values:
+            continue
+        full_facet = _encode_urn(_FACET_SHORT_TO_URN.get(facet, facet))
+        encoded_vals = ",".join(_encode_urn(v) for v in values)
+        # No outer parens — exclude items go directly inside `or:(...)`.
+        exclude_or_blocks.append(f"{full_facet}:List({encoded_vals})")
+
+    if exclude_or_blocks:
+        # Exclude uses `or:(...)` directly — no `and:List` wrapper.
+        exclude_part = f",exclude:(or:({','.join(exclude_or_blocks)}))"
+        return f"(include:{include_part}{exclude_part})"
+    return f"(include:{include_part})"
 
 
 def _encode_targeting_for_query(targeting: dict) -> str:

@@ -160,47 +160,13 @@ def test_both_modes_per_cohort(monkeypatch):
         assert entry["static_urn"] is not None, f"missing static_urn for {entry['cohort_id']}"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SR-04: 403 → local PNG fallback (filesystem write)
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def test_image_403_falls_back_to_local(tmp_path, monkeypatch):
-    """SR-04: _save_creative_locally writes the PNG to the locked path format
-    AND preserves the source file (copy2, not move)."""
-    import main as M
-
-    src_png = tmp_path / "source.png"
-    src_png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"FAKE")
-
-    # Run with cwd=tmp_path so "data/ramp_creatives/..." resolves there.
-    monkeypatch.chdir(tmp_path)
-
-    target = M._save_creative_locally(
-        png_path=str(src_png),
-        ramp_id="GMR-0010",
-        cohort_id="bn-in",
-        mode="static",
-        angle="A",
-        campaign_name="agent_67e2f912 Coders T2 India",
-    )
-
-    expected_dir = tmp_path / "data" / "ramp_creatives" / "GMR-0010"
-    assert expected_dir.exists(), f"expected {expected_dir} to exist"
-
-    target_path = Path(target)
-    assert target_path.exists(), f"expected {target_path} to exist"
-    # Filename format: <cohort>_<mode>_<angle>__<urlencoded_name>.png
-    assert "bn-in_static_A__" in target_path.name, (
-        f"expected 'bn-in_static_A__' prefix in {target_path.name}"
-    )
-    # quote_plus encodes spaces as +
-    assert "+" in target_path.name, f"expected URL-encoded spaces (+) in {target_path.name}"
-    assert target_path.suffix == ".png"
-
-    # Contents preserved (copy2 — not move)
-    assert target_path.read_bytes() == src_png.read_bytes()
-    assert src_png.exists(), "source PNG must be preserved (copy2, not move)"
+# Removed test_image_403_falls_back_to_local 2026-05-09 — Drive-only policy
+# means PNGs from Outlier designer (Gemini) are written ONLY to Shared Drive
+# at <ramp_id>/<channel>/<cohort_geo>/<angle>.png. The _save_creative_locally
+# helper that this test exercised has been deleted from main.py. When the
+# LinkedIn DSC creative attach fails (e.g. MDP gate), the registry simply
+# records the Drive URL that was uploaded earlier in the same loop; no local
+# disk write occurs.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
