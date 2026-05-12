@@ -114,14 +114,11 @@ class LinkedInClient(AdPlatformClient):
         # at a stale value. The lock ensures only one thread refreshes; the
         # other waits and inherits the new token.
         self._refresh_lock = threading.Lock()
-        # Phase 3.4 — requests.Session is documented as thread-safe for
-        # request issuance, but `_session.headers` (a shared dict) is read
-        # on every call and mutated by `_refresh_and_retry`. With ramp-level
-        # parallelism, two threads can read the Authorization header while
-        # a third refreshes it — leading to one request going out with the
-        # stale token. Serializing the session.request() call eliminates
-        # the read/write race on headers without measurable cost (the API
-        # call itself dominates the lock-hold time).
+        # Phase 3.4 — guard reads of `_session.headers["Authorization"]`
+        # against concurrent rewrites by `_refresh_and_retry`. Lock is held
+        # ONLY long enough to snapshot the header; never during the HTTP
+        # call (an earlier version did, and a hanging LinkedIn DSC call
+        # deadlocked the whole pipeline in 2026-05-13's GMR-0020 run).
         self._session_lock = threading.Lock()
 
     # ── helpers ───────────────────────────────────────────────────────────────
@@ -137,15 +134,16 @@ class LinkedInClient(AdPlatformClient):
     def _refresh_and_retry(self, method: str, url: str, **kwargs) -> requests.Response:
         """Refresh the access token and retry a failed request once."""
         # Serialize the refresh + session-header update across threads.
-        # Double-checked pattern: a thread that finds the token already
-        # refreshed (someone else won the race) skips the network call and
-        # just retries with the current header.
         with self._refresh_lock:
             new_token = refresh_access_token()
             self._token = new_token
             self._session.headers.update({"Authorization": f"Bearer {new_token}"})
-        with self._session_lock:
-            return self._session.request(method, url, **kwargs)
+        # Apply pinned auth to this retry WITHOUT holding the session_lock
+        # during the HTTP call — see _req for the deadlock motivation.
+        user_headers = kwargs.pop("headers", None) or {}
+        merged_headers = {**user_headers, "Authorization": f"Bearer {new_token}"}
+        kwargs.setdefault("timeout", 60)
+        return self._session.request(method, url, headers=merged_headers, **kwargs)
 
     def _default_headers(self) -> dict:
         """Return a copy of the default request headers for one-off calls that bypass _session."""
@@ -157,9 +155,27 @@ class LinkedInClient(AdPlatformClient):
         }
 
     def _req(self, method: str, url: str, **kwargs) -> requests.Response:
-        """Make a request; auto-refresh and retry once on 401."""
+        """Make a request; auto-refresh and retry once on 401.
+
+        Concurrency model: under the session_lock, snapshot the Authorization
+        header (a string copy — releases instantly). Then make the HTTP call
+        UNLOCKED with that pinned header passed via the per-request `headers=`
+        kwarg. This eliminates the race against `_refresh_and_retry` mutating
+        `_session.headers["Authorization"]` mid-request, WITHOUT serializing
+        the actual network call (an earlier Phase 3.4 implementation held the
+        lock during transit and deadlocked the entire LinkedIn arm whenever
+        a single request stalled — see GMR-0020 run 2026-05-13 post-mortem).
+
+        A 60-second timeout is set on every request as a hard ceiling; without
+        it, a stalled DSC POST (e.g. MDP-gated 403 returning slowly) would
+        hang the calling worker indefinitely.
+        """
         with self._session_lock:
-            resp = self._session.request(method, url, **kwargs)
+            pinned_auth = self._session.headers.get("Authorization", f"Bearer {self._token}")
+        user_headers = kwargs.pop("headers", None) or {}
+        merged_headers = {**user_headers, "Authorization": pinned_auth}
+        kwargs.setdefault("timeout", 60)
+        resp = self._session.request(method, url, headers=merged_headers, **kwargs)
         if resp.status_code == 401 and config.LINKEDIN_REFRESH_TOKEN and config.LINKEDIN_CLIENT_ID:
             log.warning("LinkedIn 401 — attempting token refresh")
             resp = self._refresh_and_retry(method, url, **kwargs)
