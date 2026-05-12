@@ -399,7 +399,62 @@ def run_once(args: argparse.Namespace) -> int:
 
     # Normal poll path
     summaries = client.fetch_ramp_list() or []
-    submitted = [r for r in summaries if (r.status or "").lower() == "submitted"]
+    # Smart Ramp API quirk (2026-05-12): the list endpoint omits the `status`
+    # field, so `_parse_ramp` defaults to "draft" for every summary. Detail
+    # endpoint (`fetch_ramp(id)`) returns the real status. Fall back to a
+    # detail check for any list item whose status looks like a default;
+    # promote to `submitted` only if the detail endpoint confirms it.
+    #
+    # Recency guard: only promote ramps with submittedAt within the last
+    # RAMP_RECENCY_GUARD_DAYS days. Without this, a fresh poller deploy
+    # would auto-process every old `submitted` ramp the GitHub Actions
+    # cache doesn't yet know about (spend + spurious DRAFT campaigns).
+    # Older legitimate ramps can still be force-processed via --ramp-id.
+    from datetime import datetime, timezone, timedelta
+    recency_days = int(os.environ.get("RAMP_RECENCY_GUARD_DAYS", "7"))
+    now_utc = datetime.now(timezone.utc)
+    submitted: list[RampRecord] = []
+    promoted_count = 0
+    aged_out_count = 0
+    for r in summaries:
+        if (r.status or "").lower() == "submitted":
+            submitted.append(r)
+            continue
+        # Status missing or unexpected on list → verify via detail.
+        detail = client.fetch_ramp(r.id)
+        if not detail or detail.status.lower() != "submitted":
+            continue
+        # Recency guard.
+        sub_at = detail.submitted_at or ""
+        try:
+            sub_dt = datetime.fromisoformat(sub_at.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            log.warning(
+                "Ramp %s has unparseable submittedAt=%r; promoting anyway",
+                detail.id, sub_at,
+            )
+            submitted.append(detail)
+            promoted_count += 1
+            continue
+        age_days = (now_utc - sub_dt).days
+        if age_days > recency_days:
+            log.info(
+                "Ramp %s aged out of recency guard (submittedAt=%s, age=%dd > %dd) "
+                "— skipping. Use --ramp-id to force-process.",
+                detail.id, sub_at[:10], age_days, recency_days,
+            )
+            aged_out_count += 1
+            continue
+        submitted.append(detail)
+        promoted_count += 1
+    if promoted_count:
+        log.info(
+            "Promoted %d ramp(s) from list-default 'draft' to detail-confirmed "
+            "'submitted' (Smart Ramp list-endpoint status workaround)",
+            promoted_count,
+        )
+    if aged_out_count:
+        log.info("Aged-out (skipped by recency guard): %d ramp(s)", aged_out_count)
     log.info("Fetched %d ramps; %d submitted", len(summaries), len(submitted))
 
     for summary in submitted:
