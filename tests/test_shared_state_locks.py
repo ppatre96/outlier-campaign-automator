@@ -204,24 +204,32 @@ def test_linkedin_refresh_serialized_across_threads(monkeypatch):
 # ─── Phase 3.4 locks — LinkedIn session, UrnResolver, gdrive, Figma ────────
 
 
-def test_linkedin_session_lock_serializes_request():
-    """The session_lock (added in Phase 3.4) must serialize the underlying
-    requests.Session.request() call so concurrent reads can't fire with a
-    stale Authorization header during a refresh."""
+def test_linkedin_req_pins_auth_header_without_serializing_http():
+    """Phase 3.4 (post-deadlock-fix): `_req` must pin Authorization under
+    the session_lock but RELEASE the lock before the HTTP call. Concurrent
+    requests must run in parallel (no global serialization that could
+    deadlock the pipeline when one LinkedIn call stalls), AND each request
+    must carry the pinned Authorization header it captured at entry.
+    """
     from src import linkedin_api
     import threading as _t
 
     client = linkedin_api.LinkedInClient(token="TOKEN")
     in_flight = 0
     max_in_flight = 0
+    captured_auth: list[str] = []
     counter_lock = _t.Lock()
+    proceed = _t.Event()
 
     def fake_request(method, url, **kw):
         nonlocal in_flight, max_in_flight
+        captured_auth.append(kw.get("headers", {}).get("Authorization", ""))
         with counter_lock:
             in_flight += 1
             max_in_flight = max(max_in_flight, in_flight)
-        time.sleep(0.02)
+        # Block until all 8 workers have entered — if the lock is held during
+        # the HTTP call, max_in_flight stays at 1 and the test hangs/fails.
+        proceed.wait(timeout=2.0)
         with counter_lock:
             in_flight -= 1
         resp = MagicMock()
@@ -237,12 +245,41 @@ def test_linkedin_session_lock_serializes_request():
         client._req("GET", "http://example.com")
     threads = [_t.Thread(target=worker) for _ in range(8)]
     for t in threads: t.start()
+    # Give all threads a moment to reach fake_request, then release them.
+    time.sleep(0.1)
+    proceed.set()
     for t in threads: t.join()
 
-    assert max_in_flight == 1, (
-        f"LinkedInClient._req did not serialize session.request() — "
-        f"max_in_flight={max_in_flight} (expected 1)"
+    assert max_in_flight >= 2, (
+        f"LinkedInClient._req appears to be serializing HTTP calls — "
+        f"max_in_flight={max_in_flight} (expected ≥2). This is the "
+        f"deadlock regression that took down the GMR-0020 run."
     )
+    assert all(a == "Bearer TOKEN" for a in captured_auth), (
+        f"Auth header was not pinned correctly per request; saw {set(captured_auth)}"
+    )
+
+
+def test_linkedin_req_sets_default_timeout():
+    """Every LinkedIn API call must carry a timeout — without one, a stalled
+    DSC POST (MDP-gated, slow 403) hangs the worker indefinitely.
+    """
+    from src import linkedin_api
+
+    client = linkedin_api.LinkedInClient(token="TOKEN")
+    seen_kwargs = {}
+
+    def fake_request(method, url, **kw):
+        seen_kwargs.update(kw)
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.ok = True
+        return resp
+
+    client._session.request = fake_request
+    client._req("GET", "http://example.com")
+    assert "timeout" in seen_kwargs, "LinkedIn request fired without a timeout"
+    assert seen_kwargs["timeout"] >= 5, f"timeout too small: {seen_kwargs['timeout']}"
 
 
 def test_urn_resolver_cache_lock_prevents_duplicate_loads():
