@@ -12,15 +12,16 @@ See `WORKFLOW.md` for full pipeline walkthrough and `AGENT-PIPELINE.md` for sub-
 
 ## Performance Tuning (Phase 3.x parallelism)
 
-Three pools control concurrency in the static-ad pipeline. All default to 4; set to 1 to fall back to fully sequential behavior.
+Four pools control concurrency. `IMAGE_GEN_CONCURRENCY`/`COPY_GEN_CONCURRENCY` default to 4; `RAMP_CONCURRENCY` defaults to 1 (opt-in). Set any to 1 to fall back to fully sequential behavior.
 
 | Doppler key | Default | What it parallelizes | Measured win |
 |---|---|---|---|
 | `IMAGE_GEN_CONCURRENCY` | `4` | Gemini image-gen across `(cohort × geo × angle)` tasks in `_process_static_campaigns` | **2.67x** live |
 | `COPY_GEN_CONCURRENCY` | `IMAGE_GEN_CONCURRENCY` | Anthropic copy-gen via `build_copy_variants` across `(cohort × geo)` combos | **2.50x** live |
 | _(implicit, no knob)_ | `2` | `_process_inmail_campaigns` + `_process_static_campaigns` run as parallel arms in `_process_row_both_modes` | **1.47x–2x** live |
+| `RAMP_CONCURRENCY` | `1` | Pending-rows loop in `run_launch` — multiple cohorts (and full Stage 1+2+C+creative+campaign-create) run in parallel | **TBD** (2x expected at workers=2) |
 
-Combined per-ramp wall-clock on a typical 9-cell ramp: **~50 min → ~13 min** of LLM/image work (~4x).
+Combined per-ramp wall-clock on a typical 9-cell ramp: **~50 min → ~13 min** of LLM/image work (~4x). `RAMP_CONCURRENCY` is the next-tier knob (multiplies on top of the above by parallelizing across cohorts of the same ramp).
 
 Bench harnesses to re-measure against live APIs (each ~$0.30–$1 in credits):
 
@@ -29,12 +30,17 @@ DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib doppler run --project outlier-campa
     venv/bin/python scripts/bench_image_gen_concurrency.py    # image gen
     venv/bin/python scripts/bench_copy_gen_concurrency.py     # copy gen
     venv/bin/python scripts/bench_arms_parallelism.py         # InMail + Static arm overlap
+    venv/bin/python scripts/bench_ramp_parallelism.py         # ramp/cohort-loop fan-out
 ```
 
-Shared-state locks added alongside Phase 3.3 (no config — transparent):
+Shared-state locks (no config — transparent):
 - `src/campaign_registry.py::_registry_lock` (RLock) — atomic load → mutate → save across concurrent writers
-- `src/sheets.py::SheetsClient._write_lock` — serializes gspread `update_li_campaign_id` / `write_creative` / `write_registry_row`
+- `src/sheets.py::SheetsClient._write_lock` (RLock) — serializes ALL gspread access (reads + writes) since gspread is not thread-safe
 - `src/linkedin_api.py::LinkedInClient._refresh_lock` — serializes OAuth token refresh + session header update
+- `src/linkedin_api.py::LinkedInClient._session_lock` — serializes `requests.Session.request()` so concurrent reads can't fire with a stale Authorization header
+- `src/linkedin_urn.py::UrnResolver._cache_lock` — double-checked guard on the URN fuzzy-match cache populate path
+- `src/gdrive.py::_folder_cache_lock` — guards the module-level folder-id cache against duplicate folder creation
+- `src/figma_creative.py::FigmaCreativeClient._session_lock` — serializes `requests.Session.get()` on the Figma client
 - `src/claude_client.py::get_client` — double-checked `threading.Lock` around lazy Anthropic SDK singleton
 
 ## Current External Blockers (2026-05-11)

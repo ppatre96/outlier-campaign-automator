@@ -135,6 +135,14 @@ IMAGE_GEN_CONCURRENCY       = int(os.getenv("IMAGE_GEN_CONCURRENCY", 4))
 # single env flip controls both pools; can be tuned independently if
 # Anthropic RPM/TPM limits surface separately from Gemini limits.
 COPY_GEN_CONCURRENCY        = int(os.getenv("COPY_GEN_CONCURRENCY", IMAGE_GEN_CONCURRENCY))
+# Phase 3.4 — ramp/cohort concurrency. Each iteration of the launch loop runs
+# a full Stage 1+2+C+creative-gen+campaign-create pipeline for one cohort.
+# Running multiple cohorts in parallel collapses the per-ramp wall-clock from
+# the dominant cost (Snowflake fetch + LLM ICP + URN resolution + audience
+# counts), each of which is IO-bound. Defaults to 1 (sequential) so a merge
+# doesn't silently change behavior; bump in Doppler `prd` once verified.
+# Practical cap is ~3 — beyond that LinkedIn/Snowflake rate limits dominate.
+RAMP_CONCURRENCY            = int(os.getenv("RAMP_CONCURRENCY", 1))
 AUDIENCE_SIZE_MIN           = int(os.getenv("AUDIENCE_SIZE_MIN", 50_000))
 MIN_UNIQUE_AUDIENCE_PCT     = float(os.getenv("MIN_UNIQUE_AUDIENCE_PCT", 80.0))
 URN_FUZZY_MATCH_THRESHOLD   = float(os.getenv("URN_FUZZY_MATCH_THRESHOLD", 0.85))

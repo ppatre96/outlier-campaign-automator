@@ -47,9 +47,15 @@ class UrnResolver(TargetingResolver):
     name = "linkedin"
 
     def __init__(self, sheets_client):
+        import threading
         self._sheets = sheets_client
         # { tab_name: [(name_lower, urn), ...] }
         self._cache: dict[str, list[tuple[str, str]]] = {}
+        # Phase 3.4 — guard against two ramp-parallel threads both missing
+        # the cache for the same tab, both fetching from gspread, then
+        # racing to write. Without this, one thread's load is discarded
+        # and (more importantly) the underlying sheets call is duplicated.
+        self._cache_lock = threading.Lock()
 
     def resolve_cohort(
         self,
@@ -69,29 +75,37 @@ class UrnResolver(TargetingResolver):
         return self.resolve_cohort_rules(rules)
 
     def _load_tab(self, tab_name: str) -> list[tuple[str, str]]:
+        # Fast path: cache hit. Reads of a fully-populated dict slot are
+        # safe in CPython under the GIL — only the load+populate path needs
+        # the lock to avoid duplicate work.
         if tab_name in self._cache:
             return self._cache[tab_name]
-        try:
-            rows = self._sheets.read_urn_tab(tab_name)
-            # Each row is a dict; expect keys 'name' and 'urn' (case-insensitive)
-            entries = []
-            for row in rows:
-                urn = str(row.get("urn") or row.get("URN") or "").strip()
-                # Name column varies per tab (e.g. 'Skills', 'Job Titles', 'Country').
-                # Pick the first column that isn't the URN column or a timestamp.
-                _skip = {"urn", "fetched at", "fetched_at"}
-                name_key = next(
-                    (k for k in row.keys() if k.lower() not in _skip), None
-                )
-                name = str(row.get(name_key, "")).strip() if name_key else ""
-                if name and urn:
-                    entries.append((name.lower(), urn))
-            self._cache[tab_name] = entries
-            log.info("Loaded %d URNs from tab '%s'", len(entries), tab_name)
-        except Exception as exc:
-            log.warning("Could not load URN tab '%s': %s", tab_name, exc)
-            self._cache[tab_name] = []
-        return self._cache[tab_name]
+        with self._cache_lock:
+            # Double-checked: another thread may have populated while we
+            # waited on the lock.
+            if tab_name in self._cache:
+                return self._cache[tab_name]
+            try:
+                rows = self._sheets.read_urn_tab(tab_name)
+                # Each row is a dict; expect keys 'name' and 'urn' (case-insensitive)
+                entries = []
+                for row in rows:
+                    urn = str(row.get("urn") or row.get("URN") or "").strip()
+                    # Name column varies per tab (e.g. 'Skills', 'Job Titles', 'Country').
+                    # Pick the first column that isn't the URN column or a timestamp.
+                    _skip = {"urn", "fetched at", "fetched_at"}
+                    name_key = next(
+                        (k for k in row.keys() if k.lower() not in _skip), None
+                    )
+                    name = str(row.get(name_key, "")).strip() if name_key else ""
+                    if name and urn:
+                        entries.append((name.lower(), urn))
+                self._cache[tab_name] = entries
+                log.info("Loaded %d URNs from tab '%s'", len(entries), tab_name)
+            except Exception as exc:
+                log.warning("Could not load URN tab '%s': %s", tab_name, exc)
+                self._cache[tab_name] = []
+            return self._cache[tab_name]
 
     def resolve(self, facet_key: str, value: str) -> str | None:
         """

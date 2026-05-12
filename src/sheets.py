@@ -183,8 +183,11 @@ class SheetsClient:
 
     def read_config(self) -> dict[str, str]:
         """Read the Config tab: returns {key: value} mapping."""
-        ws = self._triggers.worksheet(config.CONFIG_TAB)
-        rows = ws.get_all_values()
+        # Phase 3.4 — gspread is not thread-safe; serialize reads against writes
+        # under the same lock to prevent interleaved HTTP responses.
+        with self._write_lock:
+            ws = self._triggers.worksheet(config.CONFIG_TAB)
+            rows = ws.get_all_values()
         result = {}
         for row in rows[1:]:  # skip header
             if len(row) >= 2 and row[0]:
@@ -195,8 +198,9 @@ class SheetsClient:
 
     def read_pending_rows(self) -> list[dict]:
         """Return all rows where column C (TG Creation Status) == 'PENDING'."""
-        ws = self._triggers.worksheet(config.TRIGGERS_TAB)
-        all_rows = ws.get_all_values()
+        with self._write_lock:
+            ws = self._triggers.worksheet(config.TRIGGERS_TAB)
+            all_rows = ws.get_all_values()
         if not all_rows:
             return []
 
@@ -229,8 +233,9 @@ class SheetsClient:
         LinkedIn campaign creation failed or is still pending (li_status in Failed/Pending).
         These rows already have stg_id, stg_name, targeting_criteria filled in.
         """
-        ws = self._triggers.worksheet(config.TRIGGERS_TAB)
-        all_rows = ws.get_all_values()
+        with self._write_lock:
+            ws = self._triggers.worksheet(config.TRIGGERS_TAB)
+            all_rows = ws.get_all_values()
         if not all_rows:
             return []
 
@@ -438,8 +443,11 @@ class SheetsClient:
 
     def read_urn_tab(self, tab_name: str) -> list[dict]:
         """Return all rows from a URN mapping tab as list of {name, urn} dicts."""
-        ws = self._urn_sheet.worksheet(tab_name)
-        rows = ws.get_all_records()
+        # Called lazily from UrnResolver._load_tab; with ramp parallelism this
+        # can fire from multiple threads racing on the gspread URN spreadsheet.
+        with self._write_lock:
+            ws = self._urn_sheet.worksheet(tab_name)
+            rows = ws.get_all_records()
         return rows
 
 
