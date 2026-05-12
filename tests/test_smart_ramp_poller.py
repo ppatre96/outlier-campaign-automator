@@ -195,6 +195,110 @@ def test_test_requester_filtered(tmp_path, monkeypatch):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Smart Ramp API list-endpoint status workaround (2026-05-12)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _build_ramp_with_status(ramp_id: str, status: str, submitted_at: str):
+    """Variant of _build_ramp that lets us set status + submittedAt explicitly."""
+    from src.smart_ramp_client import RampRecord
+    return RampRecord(
+        id=ramp_id, project_id="p", project_name="N",
+        requester_name="Real Person", summary="x",
+        submitted_at=submitted_at, updated_at=submitted_at,
+        status=status, linear_issue_id=None, linear_url=None,
+        cohorts=[],
+    )
+
+
+def test_list_endpoint_draft_status_promoted_via_detail_check(tmp_path, monkeypatch):
+    """Smart Ramp list endpoint omits `status`, defaulting to 'draft'. Poller must
+    fall back to detail endpoint and promote to submitted if detail confirms.
+    """
+    from datetime import datetime, timezone, timedelta
+    srp = _load_module()
+    monkeypatch.setattr(srp, "STATE_PATH", tmp_path / "processed_ramps.json")
+    monkeypatch.setattr(srp, "LOCK_PATH", tmp_path / "smart_ramp_poller.lock")
+    monkeypatch.setenv("RAMP_RECENCY_GUARD_DAYS", "7")
+
+    today = datetime.now(timezone.utc)
+    recent_at = (today - timedelta(days=1)).isoformat().replace("+00:00", "Z")
+
+    # List response: ramp shows up as "draft" (Smart Ramp API bug)
+    list_view = _build_ramp_with_status("GMR-0020", status="draft", submitted_at=recent_at)
+    # Detail response: same ramp returns true status="submitted"
+    detail_view = _build_ramp_with_status("GMR-0020", status="submitted", submitted_at=recent_at)
+
+    fake_client = MagicMock()
+    fake_client.fetch_ramp_list.return_value = [list_view]
+    fake_client.fetch_ramp.return_value = detail_view
+    monkeypatch.setattr(srp, "SmartRampClient", lambda: fake_client)
+
+    process_calls = []
+
+    def fake_process(record, action, state, dry_run):
+        process_calls.append(record.id)
+        state["ramps"][record.id] = {
+            "version": 1, "last_signature": srp.compute_signature(record),
+        }
+        return {"ok": True, "result": {}, "err_class": None, "tb": None, "version": 1}
+
+    monkeypatch.setattr(srp, "process_ramp", fake_process)
+
+    args = srp._parse_args([])
+    rc = srp.run_once(args)
+    assert rc == 0
+    assert "GMR-0020" in process_calls, "draft-but-actually-submitted ramp must be promoted"
+    # fetch_ramp was called once during promotion and again inside the main loop's "full" fetch
+    assert fake_client.fetch_ramp.call_count >= 1
+
+
+def test_recency_guard_skips_old_promoted_ramps(tmp_path, monkeypatch):
+    """Recency guard: only promote list-default-draft ramps if submittedAt is
+    within RAMP_RECENCY_GUARD_DAYS days. Older ramps must be skipped so deploying
+    the fix doesn't auto-process backlogged 'submitted' ramps en masse.
+    """
+    from datetime import datetime, timezone, timedelta
+    srp = _load_module()
+    monkeypatch.setattr(srp, "STATE_PATH", tmp_path / "processed_ramps.json")
+    monkeypatch.setattr(srp, "LOCK_PATH", tmp_path / "smart_ramp_poller.lock")
+    monkeypatch.setenv("RAMP_RECENCY_GUARD_DAYS", "7")
+
+    today = datetime.now(timezone.utc)
+    recent_at = (today - timedelta(days=2)).isoformat().replace("+00:00", "Z")
+    old_at = (today - timedelta(days=30)).isoformat().replace("+00:00", "Z")
+
+    recent_list = _build_ramp_with_status("GMR-0020", status="draft", submitted_at=recent_at)
+    old_list    = _build_ramp_with_status("GMR-0004", status="draft", submitted_at=old_at)
+    recent_detail = _build_ramp_with_status("GMR-0020", status="submitted", submitted_at=recent_at)
+    old_detail    = _build_ramp_with_status("GMR-0004", status="submitted", submitted_at=old_at)
+
+    fake_client = MagicMock()
+    fake_client.fetch_ramp_list.return_value = [recent_list, old_list]
+    fake_client.fetch_ramp.side_effect = lambda rid: {
+        "GMR-0020": recent_detail, "GMR-0004": old_detail,
+    }[rid]
+    monkeypatch.setattr(srp, "SmartRampClient", lambda: fake_client)
+
+    process_calls = []
+
+    def fake_process(record, action, state, dry_run):
+        process_calls.append(record.id)
+        state["ramps"][record.id] = {
+            "version": 1, "last_signature": srp.compute_signature(record),
+        }
+        return {"ok": True, "result": {}, "err_class": None, "tb": None, "version": 1}
+
+    monkeypatch.setattr(srp, "process_ramp", fake_process)
+
+    args = srp._parse_args([])
+    rc = srp.run_once(args)
+    assert rc == 0
+    assert "GMR-0020" in process_calls, "recent ramp must process"
+    assert "GMR-0004" not in process_calls, "old ramp must be aged-out and skipped"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # SR-10 test
 # ─────────────────────────────────────────────────────────────────────────────
 
