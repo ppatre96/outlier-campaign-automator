@@ -193,10 +193,16 @@ def test_extra_platform_arm_attaches_3_ads_per_group(png):
     assert op_names.count("create_campaign") == 1
     assert op_names.count("upload_image") == 3
     assert op_names.count("create_image_ad") == 3
-    # 3 registry rows (one per angle), all sharing the same platform_campaign_id.
-    pcids = {c.kwargs["platform_campaign_id"] for c in mock_log.call_args_list}
+    # 3 ad-level registry rows (one per angle), all sharing the same
+    # platform_campaign_id. The arm ALSO logs one campaign_type="parent"
+    # row for the platform-level group container — exclude it from the
+    # ad-row count.
+    ad_calls = [c for c in mock_log.call_args_list
+                if c.kwargs.get("campaign_type") != "parent"]
+    assert len(ad_calls) == 3
+    pcids = {c.kwargs["platform_campaign_id"] for c in ad_calls}
     assert len(pcids) == 1
-    pcrids = {c.kwargs["platform_creative_id"] for c in mock_log.call_args_list}
+    pcrids = {c.kwargs["platform_creative_id"] for c in ad_calls}
     assert len(pcrids) == 3   # creative ids differ per angle
 
 

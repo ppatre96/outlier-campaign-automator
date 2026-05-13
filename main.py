@@ -1344,6 +1344,7 @@ def _process_inmail_campaigns(
                         creative_urn=creative_urn,
                         inmail_subject=variant.subject,
                         inmail_body=variant.body,
+                        campaign_name=campaign_name,
                     )
                 except Exception as _exc:
                     log.warning("Registry log failed (non-fatal): %s", _exc)
@@ -2593,6 +2594,7 @@ def _process_static_campaigns(
                     photo_subject=variant.get("photo_subject", ""),
                     creative_image_path=drive_url or (str(png_path) if png_path else ""),
                     gemini_prompt=qc_report.get("gemini_prompt", ""),
+                    campaign_name=campaign_name,
                 )
             except Exception as _exc:
                 log.warning("Registry log failed (non-fatal): %s", _exc)
@@ -2762,6 +2764,7 @@ def _process_extra_platform_arm(
             platform=platform,
             platform_campaign_id=str(group_id),
             platform_creative_id="",
+            campaign_name=group_name,
         )
         log.info(
             "_process_extra_platform_arm[%s]: parent group %s logged to registry (campaign_type=parent)",
@@ -2916,6 +2919,7 @@ def _process_extra_platform_arm(
                     platform=platform,
                     platform_campaign_id=sub_id,
                     platform_creative_id=ad_result.creative_id or "",
+                    campaign_name=campaign_name,
                 )
             except Exception as exc:
                 log.warning(
