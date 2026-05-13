@@ -150,7 +150,13 @@ class BrandVoiceValidator:
             },
             "PATTERN-05": {
                 "name": "No Superlatives",
-                "severity": ViolationSeverity.MUST,
+                # Downgraded MUST → SHOULD (2026-05-13). Following the same
+                # precedent as PATTERN-01 (Active Voice), hard-rejecting any
+                # superlative blocked the GMR-0020 InMail angle C with a
+                # single occurrence of "the most" — aborting the entire arm
+                # for one phrase. SHOULD lets the copy ship while still
+                # flagging for human review and future-prompt tightening.
+                "severity": ViolationSeverity.SHOULD,
                 "check_fn": self._check_superlatives,
             },
             "PATTERN-06": {
