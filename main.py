@@ -1326,7 +1326,12 @@ def _process_inmail_campaigns(
                 base_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
                 try:
                     _reg_log_inmail(
-                        smart_ramp_id=flow_id or "",
+                        # smart_ramp_id is the human-readable GMR ramp id (e.g. "GMR-0020"),
+                        # NOT the signup flow_id — that goes in `flow_id` for back-compat
+                        # readers. Fix: pre-2026-05-13 this caller passed `flow_id` here,
+                        # which made the Sheet's "Smart Ramp Id" column unfilterable by
+                        # the actual ramp identifier.
+                        smart_ramp_id=ramp_id or flow_id or "",
                         cohort_id=str(base_id),
                         cohort_signature=cohort.name,
                         geo_cluster=geo_group.cluster,
