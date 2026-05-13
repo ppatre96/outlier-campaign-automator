@@ -247,7 +247,8 @@ def build_inmail_variants(
 
             log.info("InMail angle %s generated for '%s'", angle_key, cohort.name)
         except Exception as exc:
-            log.warning("InMail angle %s failed for '%s': %s", angle_key, cohort.name, exc)
+            log.warning("InMail angle %s failed for '%s': %s (%s)", angle_key, cohort.name,
+                        exc, type(exc).__name__, exc_info=True)
             variant = InMailVariant(
                 angle=angle_key,
                 angle_label=angle_cfg["label"],

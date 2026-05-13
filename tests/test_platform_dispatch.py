@@ -26,7 +26,7 @@ class _FakePlatformClient(AdPlatformClient):
         self._counter += 1
         return f"{prefix}-{self._counter}"
 
-    def create_campaign_group(self, name: str) -> str:
+    def create_campaign_group(self, name: str, *, geos: list[str] | None = None) -> str:
         self.calls.append(("create_campaign_group", {"name": name}))
         return self._next_id("group")
 

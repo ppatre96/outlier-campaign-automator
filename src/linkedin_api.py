@@ -243,10 +243,13 @@ class LinkedInClient(AdPlatformClient):
             return name
         return f"{self.AGENT_NAME_PREFIX}{name}"
 
-    def create_campaign_group(self, name: str) -> str:
+    def create_campaign_group(self, name: str, *, geos: list[str] | None = None) -> str:
         """
         Create a sponsored content campaign group.
         Returns the campaign group URN. Name auto-prefixed with "agent_".
+
+        `geos` is accepted for interface parity with the Meta arm (which needs
+        the country list at campaign level for SAC); LinkedIn ignores it.
         """
         name = self._prefixed(name)
         # Always create as DRAFT — user-configured default so nothing launches

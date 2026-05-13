@@ -144,12 +144,15 @@ class MetaClient(AdPlatformClient):
 
     # ── Campaign (one per cohort×geo) ────────────────────────────────────────
 
-    def create_campaign_group(self, name: str) -> str:
+    def create_campaign_group(self, name: str, *, geos: list[str] | None = None) -> str:
         """Create a Meta Campaign (Meta's top-level entity, equivalent to a
         LinkedIn campaign group). Returns the numeric campaign ID as a string.
 
         Status is PAUSED. Special ad category honors `config.SPECIAL_AD_CATEGORY`
-        (defaults to "EMPLOYMENT" for safety).
+        (defaults to "EMPLOYMENT" for safety). When `geos` is provided AND
+        SAC is set, Meta requires the country list at the campaign level via
+        `special_ad_category_country` — otherwise child ad-set creation 400s
+        on geo mismatch.
         """
         self._ensure_init()
         from facebook_business.adobjects.adaccount import AdAccount
@@ -158,6 +161,10 @@ class MetaClient(AdPlatformClient):
         name = self._prefixed(name)
         category = (config.SPECIAL_AD_CATEGORY or "NONE").upper()
         special = [category] if category and category != "NONE" else []
+        # SAC requires the country list on the parent campaign; child ad sets
+        # then target a SUBSET of these geos. Without this Meta returns:
+        #   "Special Ad Audience requires special_ad_category_country to be set"
+        sac_countries = sorted({g.upper() for g in (geos or []) if g})
 
         params = {
             Campaign.Field.name:                    name,
@@ -166,6 +173,15 @@ class MetaClient(AdPlatformClient):
             Campaign.Field.special_ad_categories:   special,
             Campaign.Field.buying_type:             "AUCTION",
         }
+        if special and sac_countries:
+            # facebook-business SDK exposes this field as
+            # Campaign.Field.special_ad_category_country in v18+; fall back to
+            # the raw string key on older SDKs.
+            sac_field = getattr(
+                Campaign.Field, "special_ad_category_country",
+                "special_ad_category_country",
+            )
+            params[sac_field] = sac_countries
         try:
             account = AdAccount(self._ad_account_id)
             campaign = account.create_campaign(params=params)
@@ -173,7 +189,10 @@ class MetaClient(AdPlatformClient):
             log.error("Meta create_campaign_group failed for %r: %s", name, exc)
             raise
         campaign_id = str(campaign["id"])
-        log.info("Meta campaign created %s (name=%s, special=%s)", campaign_id, name, special or "none")
+        log.info(
+            "Meta campaign created %s (name=%s, special=%s, sac_countries=%s)",
+            campaign_id, name, special or "none", sac_countries or "—",
+        )
         return campaign_id
 
     # ── Ad Set (one per cohort×geo×angle) ────────────────────────────────────

@@ -2288,8 +2288,9 @@ def _process_static_campaigns(
                 geo_icp_hint=geo_group.icp_hint,
             )
         except Exception as exc:
-            log.warning("Static copy generation failed for '%s' / '%s': %s",
-                        cohort.name, job["geo_label"], exc)
+            log.warning("Static copy generation failed for '%s' / '%s': %s (%s)",
+                        cohort.name, job["geo_label"], exc, type(exc).__name__,
+                        exc_info=True)
             return []
 
     variants_by_idx: dict[int, list[dict]] = {}
@@ -2735,8 +2736,17 @@ def _process_extra_platform_arm(
     # One platform-level container ("Campaign" on Meta/Google) per ramp run.
     # Cohort × geo × angle become Ad Sets / Ad Groups under it.
     group_name = f"Outlier {flow_id} {location} {platform.title()}".strip()
+    # Union of all targeted geos across child ad-set specs — Meta needs this at
+    # the campaign level for special_ad_category_country under EMPLOYMENT SAC,
+    # else child ad-set creation fails with a geo-mismatch 400.
+    union_geos: list[str] = sorted({
+        g.upper()
+        for spec in campaign_specs
+        for g in (spec.get("group_geos") or [])
+        if g
+    })
     try:
-        group_id = client.create_campaign_group(group_name)
+        group_id = client.create_campaign_group(group_name, geos=union_geos)
     except Exception as exc:
         log.error(
             "_process_extra_platform_arm[%s]: create_campaign_group failed (%s) — skipping arm",

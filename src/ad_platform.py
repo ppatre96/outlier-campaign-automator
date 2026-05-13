@@ -236,13 +236,18 @@ class AdPlatformClient(ABC):
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     @abstractmethod
-    def create_campaign_group(self, name: str) -> str:
+    def create_campaign_group(self, name: str, *, geos: list[str] | None = None) -> str:
         """Create a logical campaign container.
 
         On LinkedIn this is a real CampaignGroup. On Meta and Google there's
         no native group — implementations create a top-level Campaign and
         return its identifier so subsequent create_campaign() calls slot
         Ad Sets / Ad Groups under it.
+
+        `geos` is the union of all ISO country codes the child ad sets will
+        target. Meta needs this at the campaign level for
+        `special_ad_category_country` under EMPLOYMENT/HOUSING/CREDIT SAC;
+        LinkedIn and Google ignore it.
         """
 
     @abstractmethod
