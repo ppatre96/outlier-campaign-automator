@@ -60,6 +60,30 @@ LINKEDIN_CLIENT_SECRET = os.getenv("LINKEDIN_CLIENT_SECRET", "")
 # Set to "0" to disable auto-attach.
 LINKEDIN_CONVERSION_ID = int(os.getenv("LINKEDIN_CONVERSION_ID", "19801700"))
 
+# Landing-page URL per Smart Ramp `matched_domain`. The marketing team
+# maintains custom LPs under outlier.ai/experts/<slug>; this map matches the
+# cohort's domain to its LP so the destination URL on every ad lands on the
+# right page. Smart Ramp's `campaign_state.utm_<channel>.base_url` takes
+# precedence when filled in. Override via env LP_URL_BY_DOMAIN_JSON (JSON
+# string) to extend without code changes — useful for new ramps with custom
+# LPs the team hasn't yet captured in Smart Ramp.
+import json as _json
+try:
+    _lp_env = os.getenv("LP_URL_BY_DOMAIN_JSON", "")
+    LP_URL_BY_DOMAIN = _json.loads(_lp_env) if _lp_env else {}
+except Exception:
+    LP_URL_BY_DOMAIN = {}
+LP_URL_BY_DOMAIN = {
+    # GMR-0020 (provided 2026-05-13 by Pranav)
+    "Finance & Quantitative Analysis": "https://outlier.ai/experts/qfinance",
+    "Machine Learning":                 "https://outlier.ai/experts/ml",
+    "Computer Science & AI":            "https://outlier.ai/experts/cs",
+    # Earlier-session references (kept for back-compat; verify when running these ramps):
+    "Clinical Medicine":               "https://outlier.ai/experts/cardiology-ctrl",
+    "Law":                              "https://outlier.ai/experts/law-sgp",
+    **LP_URL_BY_DOMAIN,  # env override last so it wins
+}
+
 # Default exclusion targeting applied to EVERY LinkedIn campaign the pipeline
 # creates. Sourced from the canonical "exclusions reference" campaign curated
 # by the marketing team (https://www.linkedin.com/campaignmanager/accounts/
