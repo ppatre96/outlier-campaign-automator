@@ -1257,91 +1257,99 @@ def _process_inmail_campaigns(
                     log.warning("No InMail variant for cohort '%s' angle %s — skipping", cohort.name, angle_label)
                     continue
 
-            # Validate InMail copy against brand voice
-            full_copy = f"{variant.subject}\n\n{variant.body}"
-            report = brand_voice_validator.validate_copy(full_copy)
+                # Validate InMail copy against brand voice
+                full_copy = f"{variant.subject}\n\n{variant.body}"
+                report = brand_voice_validator.validate_copy(full_copy)
 
-            if not report.is_compliant:
-                log.warning(f"InMail angle {angle_label}: {len(report.violations)} brand voice violations")
-                log.warning(f"  Must fix: {len(report.must_violations)}")
-                log.warning(f"  Should fix: {len(report.should_violations)}")
+                if not report.is_compliant:
+                    log.warning(f"InMail angle {angle_label}: {len(report.violations)} brand voice violations")
+                    log.warning(f"  Must fix: {len(report.must_violations)}")
+                    log.warning(f"  Should fix: {len(report.should_violations)}")
 
-                if report.must_violations:
-                    log.error(f"InMail angle {angle_label} has MUST-FIX violations — blocking submission")
-                    for v_item in report.must_violations[:3]:
-                        log.error(f"    {v_item.rule_name}: {v_item.found_text!r} → {v_item.suggestion}")
-                    raise RuntimeError(f"Brand voice violation in InMail angle {angle_label}: {report.must_violations[0].rule_name}")
+                    if report.must_violations:
+                        log.error(f"InMail angle {angle_label} has MUST-FIX violations — blocking submission")
+                        for v_item in report.must_violations[:3]:
+                            log.error(f"    {v_item.rule_name}: {v_item.found_text!r} → {v_item.suggestion}")
+                        raise RuntimeError(f"Brand voice violation in InMail angle {angle_label}: {report.must_violations[0].rule_name}")
+                    else:
+                        log.warning(f"InMail angle {angle_label} has SHOULD-FIX violations (allowed):")
+                        for v_item in report.should_violations[:2]:
+                            log.warning(f"    {v_item.rule_name}: {v_item.found_text!r}")
                 else:
-                    log.warning(f"InMail angle {angle_label} has SHOULD-FIX violations (allowed):")
-                    for v_item in report.should_violations[:2]:
-                        log.warning(f"    {v_item.rule_name}: {v_item.found_text!r}")
-            else:
-                log.info(f"InMail angle {angle_label} passes brand voice check (confidence: {report.confidence_score:.0%})")
+                    log.info(f"InMail angle {angle_label} passes brand voice check (confidence: {report.confidence_score:.0%})")
 
-            # Per-cohort override layer
-            cohort_add_urns    = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_add", []) or [])
-            cohort_remove_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_remove", []) or [])
-            cohort_exclude_urns = _subtract_urn_dicts(
-                _merge_urn_dicts(shared_exclude_urns, cohort_add_urns),
-                cohort_remove_urns,
-            )
+                # Include facet URNs: resolve once per cohort (cheap idempotent op),
+                # then apply geo overrides for this geo_group's geos.
+                # Bug-fix 2026-05-13: was missing entirely — caused NameError on
+                # every InMail campaign create and aborted the whole InMail arm.
+                facet_urns = urn_res.resolve_cohort_rules(cohort.rules)
+                if group_geos:
+                    facet_urns = _apply_geo_overrides(facet_urns, group_geos, urn_res)
 
-            geo_suffix = f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
-            campaign_name = f"{cohort._stg_name}{geo_suffix} {angle_label}"
-
-            campaign_urn = li_client.create_inmail_campaign(
-                name=campaign_name,
-                campaign_group_urn=group_urn,
-                facet_urns=facet_urns,
-                exclude_facet_urns=cohort_exclude_urns,
-            )
-            campaign_id = campaign_urn.rsplit(":", 1)[-1]
-            sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
-            log.info("Created InMail campaign %s angle=%s geo=%s rate=%s",
-                     campaign_urn, angle_label, geo_group.cluster_label, geo_group.advertised_rate)
-
-            creative_urn = li_client.create_inmail_ad(
-                campaign_urn=campaign_urn,
-                sender_urn=inmail_sender,
-                subject=variant.subject,
-                body=variant.body,
-                cta_label=variant.cta_label,
-                destination_url=destination_url_override,
-            )
-            sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
-
-            # Log to campaign registry
-            base_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
-            try:
-                _reg_log_inmail(
-                    smart_ramp_id=flow_id or "",
-                    cohort_id=str(base_id),
-                    cohort_signature=cohort.name,
-                    geo_cluster=geo_group.cluster,
-                    geo_cluster_label=geo_group.cluster_label,
-                    geos=group_geos,
-                    angle=angle_label,
-                    campaign_type="inmail",
-                    advertised_rate=geo_group.advertised_rate,
-                    linkedin_campaign_urn=campaign_urn,
-                    creative_urn=creative_urn,
-                    inmail_subject=variant.subject,
-                    inmail_body=variant.body,
+                # Per-cohort override layer
+                cohort_add_urns    = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_add", []) or [])
+                cohort_remove_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_remove", []) or [])
+                cohort_exclude_urns = _subtract_urn_dicts(
+                    _merge_urn_dicts(shared_exclude_urns, cohort_add_urns),
+                    cohort_remove_urns,
                 )
-            except Exception as _exc:
-                log.warning("Registry log failed (non-fatal): %s", _exc)
 
-            validation_metadata = {
-                "is_compliant": report.is_compliant,
-                "must_violations": len(report.must_violations),
-                "should_violations": len(report.should_violations),
-                "confidence_score": report.confidence_score,
-            }
-            log.info(f"Creative validation: {json.dumps(validation_metadata)}")
-            log.info(
-                "InMail creative %s — cohort '%s' angle %s geo=%s subject: %s",
-                creative_urn, cohort.name, angle_label, geo_group.cluster_label, variant.subject,
-            )
+                geo_suffix = f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
+                campaign_name = f"{cohort._stg_name}{geo_suffix} {angle_label}"
+
+                campaign_urn = li_client.create_inmail_campaign(
+                    name=campaign_name,
+                    campaign_group_urn=group_urn,
+                    facet_urns=facet_urns,
+                    exclude_facet_urns=cohort_exclude_urns,
+                )
+                campaign_id = campaign_urn.rsplit(":", 1)[-1]
+                sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
+                log.info("Created InMail campaign %s angle=%s geo=%s rate=%s",
+                         campaign_urn, angle_label, geo_group.cluster_label, geo_group.advertised_rate)
+
+                creative_urn = li_client.create_inmail_ad(
+                    campaign_urn=campaign_urn,
+                    sender_urn=inmail_sender,
+                    subject=variant.subject,
+                    body=variant.body,
+                    cta_label=variant.cta_label,
+                    destination_url=destination_url_override,
+                )
+                sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
+
+                # Log to campaign registry
+                base_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
+                try:
+                    _reg_log_inmail(
+                        smart_ramp_id=flow_id or "",
+                        cohort_id=str(base_id),
+                        cohort_signature=cohort.name,
+                        geo_cluster=geo_group.cluster,
+                        geo_cluster_label=geo_group.cluster_label,
+                        geos=group_geos,
+                        angle=angle_label,
+                        campaign_type="inmail",
+                        advertised_rate=geo_group.advertised_rate,
+                        linkedin_campaign_urn=campaign_urn,
+                        creative_urn=creative_urn,
+                        inmail_subject=variant.subject,
+                        inmail_body=variant.body,
+                    )
+                except Exception as _exc:
+                    log.warning("Registry log failed (non-fatal): %s", _exc)
+
+                validation_metadata = {
+                    "is_compliant": report.is_compliant,
+                    "must_violations": len(report.must_violations),
+                    "should_violations": len(report.should_violations),
+                    "confidence_score": report.confidence_score,
+                }
+                log.info(f"Creative validation: {json.dumps(validation_metadata)}")
+                log.info(
+                    "InMail creative %s — cohort '%s' angle %s geo=%s subject: %s",
+                    creative_urn, cohort.name, angle_label, geo_group.cluster_label, variant.subject,
+                )
 
 
 def _retry_li_campaign(
@@ -2725,6 +2733,36 @@ def _process_extra_platform_arm(
         )
         return out
     out["campaign_groups"].append(group_id)
+
+    # Log the platform-level campaign-group/parent immediately. This row gets
+    # written to the registry even when downstream ad-set creation fails (e.g.
+    # Meta Special Ad Category geo mismatch, Google permission-denied on a
+    # specific campaign), so the parent_id is always traceable post-mortem.
+    try:
+        from src.campaign_registry import log_campaign as _reg_log_parent
+        _reg_log_parent(
+            smart_ramp_id=ramp_id or flow_id or "",
+            cohort_id=cohort_id_override or "",
+            cohort_signature=f"{platform}_root",
+            geo_cluster="",
+            geo_cluster_label="",
+            geos=[],
+            angle="",
+            campaign_type="parent",
+            advertised_rate="",
+            platform=platform,
+            platform_campaign_id=str(group_id),
+            platform_creative_id="",
+        )
+        log.info(
+            "_process_extra_platform_arm[%s]: parent group %s logged to registry (campaign_type=parent)",
+            platform, group_id,
+        )
+    except Exception as _exc:
+        log.warning(
+            "_process_extra_platform_arm[%s]: registry log for parent group failed (non-fatal): %s",
+            platform, _exc,
+        )
 
     # ── Group specs by (cohort × geo_group) so each becomes ONE Meta Ad Set
     # (or Google Ad Group), with multiple ads attached (one per angle).
