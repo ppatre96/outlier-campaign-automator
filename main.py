@@ -2987,7 +2987,24 @@ def _process_row_both_modes(
 
     Per-arm isolation: each arm wrapped in try/except so one arm's crash never
     aborts the other. Per-cohort isolation lives inside each arm.
+
+    OUTLIER_ARMS env override (2026-05-13): comma-separated subset of
+    {"inmail","static"}. Lets a manual rerun process only a specific arm
+    without rebuilding Static (e.g. when fixing an InMail bug and the prior
+    Static campaigns are still valid DRAFTs). Empty/unset → use the `modes`
+    arg as-is.
     """
+    import os as _os
+    _arms_env = (_os.environ.get("OUTLIER_ARMS") or "").strip()
+    if _arms_env:
+        _override = tuple(a.strip().lower() for a in _arms_env.split(",") if a.strip())
+        _override = tuple(a for a in _override if a in ("inmail", "static"))
+        if _override:
+            log.info(
+                "_process_row_both_modes: OUTLIER_ARMS env override active — modes=%s (default was %s)",
+                _override, modes,
+            )
+            modes = _override
     flow_id = row.get("flow_id", "")
     location = row.get("location", "")
     config_name = row.get("config_name") or flow_id
