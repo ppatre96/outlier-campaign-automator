@@ -89,8 +89,20 @@ class MetaInterestResolver(TargetingResolver):
         exclude_pairs: list[tuple[str, str]] | None = None,
     ) -> dict[str, Any]:
         rules: list[tuple] = list(getattr(cohort, "rules", None) or [])
+        category = (config.SPECIAL_AD_CATEGORY or "NONE").upper()
+        # Defensive: SAC EMPLOYMENT (etc.) requires non-empty geo_locations at
+        # the ad-set level. An empty country list silently passes our code but
+        # Meta returns a 400 on create — and the error message points at
+        # "targeting validation" without naming the field. Raise here so the
+        # caller's per-(cohort × geo) try/except logs a specific reason.
+        countries = [g.upper() for g in (geos or []) if g]
+        if category in {"EMPLOYMENT", "HOUSING", "CREDIT"} and not countries:
+            raise ValueError(
+                f"Meta SAC={category} requires non-empty geo_locations.countries; "
+                f"got empty geos for cohort '{getattr(cohort, 'name', '?')}'"
+            )
         out: dict[str, Any] = {
-            "geo_locations": {"countries": list(geos or [])},
+            "geo_locations": {"countries": countries},
         }
 
         # Demographics: education from degree features.
@@ -121,11 +133,22 @@ class MetaInterestResolver(TargetingResolver):
                 # add false positives from Meta's fuzzy lookup.
                 break
 
-        if interests:
+        # Under EMPLOYMENT SAC, Meta strips occupation-narrow interest facets
+        # (job titles, specific skills) at validation time — `flexible_spec`
+        # silently disappears, so we either submit broader interests or drop
+        # the block entirely and let geo+education carry the targeting.
+        # Empirically the safer path is to drop occupational interests under
+        # EMPLOYMENT and rely on geo + education_statuses + the rules-derived
+        # demographics. Keep age/gender skipped under SAC (Meta enforces).
+        if interests and category != "EMPLOYMENT":
             out["flexible_spec"] = [{"interests": interests}]
+        elif interests:
+            log.info(
+                "Meta SAC=EMPLOYMENT: dropping %d occupational interests "
+                "(would be stripped by Meta); using geo+education targeting only",
+                len(interests),
+            )
 
-        # Default age range — gated by SPECIAL_AD_CATEGORY rules.
-        category = (config.SPECIAL_AD_CATEGORY or "NONE").upper()
         if category != "EMPLOYMENT":
             out["age_min"] = 21
             out["age_max"] = 65

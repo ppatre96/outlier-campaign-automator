@@ -105,11 +105,15 @@ class GoogleAdsClient(AdPlatformClient):
 
     # ── Campaign (one per cohort×geo) ────────────────────────────────────────
 
-    def create_campaign_group(self, name: str) -> str:
+    def create_campaign_group(self, name: str, *, geos: list[str] | None = None) -> str:
         """Create a Google Ads Campaign (Display channel, PAUSED, MANUAL_CPC).
 
         Returns the Google Ads campaign resource name (e.g.
         `customers/1234567890/campaigns/9876543210`).
+
+        `geos` is accepted for interface parity with the Meta arm (which sets
+        special_ad_category_country at this level). Google Ads scopes geo at
+        the criterion level, not the campaign level, so it's ignored here.
         """
         client = self._ensure_client()
         name = self._prefixed(name)

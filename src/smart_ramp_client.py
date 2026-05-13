@@ -18,6 +18,14 @@ class CohortSpec:
     matched_locales: Optional[list[str]]
     target_activations: Optional[int]
     job_post_id: Optional[str]
+    # Fields below feed the campaign-naming spec at
+    # https://genai-smart-ramp-v2.vercel.app/ramps/<id>/campaigns
+    # Each is sourced from a different slot in the raw Smart Ramp JSON; all
+    # are optional because legacy ramps don't carry the metadata.
+    job_post_pod: Optional[str] = None              # "specialist"|"generalist"|"coders"|"languages"
+    matched_domain: Optional[str] = None            # e.g. "Finance & Quantitative Analysis"
+    job_post_language_code: Optional[str] = None    # e.g. "en-US"
+    campaign_state: Optional[dict] = None           # formData.cohorts[].campaign_state — full nested dict
 
 
 @dataclass
@@ -145,4 +153,8 @@ class SmartRampClient:
             matched_locales=raw.get("matched_locales"),
             target_activations=raw.get("target_activations"),
             job_post_id=raw.get("job_post_id"),
+            job_post_pod=raw.get("job_post_pod"),
+            matched_domain=raw.get("matched_domain"),
+            job_post_language_code=raw.get("job_post_language_code"),
+            campaign_state=raw.get("campaign_state"),
         )

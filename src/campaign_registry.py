@@ -87,6 +87,8 @@ COLUMNS = [
     # ── Ad platform identity ──────────────────────────────────────────────────
     "channel",                  # display alias for platform — "LinkedIn" | "Meta" | "Google"
     "platform",                 # internal lower-case key — "linkedin" | "meta" | "google"
+    "campaign_name",            # human-readable campaign name (matches platform UI exactly)
+    "campaign_link",            # direct deep-link to the campaign in the platform's UI
     "platform_campaign_id",     # platform-native id (URN / numeric / resource name)
     "platform_creative_id",     # platform-native creative or ad id
     # ── LinkedIn URNs (legacy — duplicates platform_* for back-compat) ────────
@@ -130,6 +132,8 @@ class CampaignEntry:
     advertised_rate:        str = ""
     channel:                str = "LinkedIn"   # mirrors platform, title-cased for the Sheet view
     platform:               str = "linkedin"
+    campaign_name:          str = ""    # human-readable campaign name (matches platform UI exactly)
+    campaign_link:          str = ""    # deep-link to the campaign in the platform's UI
     platform_campaign_id:   str = ""
     platform_creative_id:   str = ""
     linkedin_campaign_urn:  str = ""    # legacy alias of platform_campaign_id when platform=linkedin
@@ -162,6 +166,39 @@ _CHANNEL_LABEL = {"linkedin": "LinkedIn", "meta": "Meta", "google": "Google"}
 
 def _channel_label(platform: str) -> str:
     return _CHANNEL_LABEL.get((platform or "").lower(), (platform or "").title())
+
+
+def _derive_campaign_link(platform: str, campaign_id: str) -> str:
+    """Build the platform's UI deep-link from `platform_campaign_id`.
+
+    LinkedIn: strips the URN prefix (`urn:li:sponsoredCampaign:` /
+    `urn:li:sponsoredCampaignGroup:`) to the numeric id; campaign-group ids
+    fall through the same campaigns/{id}/details URL — the Campaign Manager
+    UI redirects to the correct entity type. Meta strips the `act_` prefix
+    from META_AD_ACCOUNT_ID. Google needs no account id in the URL.
+    """
+    if not campaign_id:
+        return ""
+    p = (platform or "").lower()
+    try:
+        import config as _cfg
+    except Exception:
+        return ""
+    if p == "linkedin":
+        cid = str(campaign_id).rsplit(":", 1)[-1]
+        return (
+            f"https://www.linkedin.com/campaignmanager/accounts/"
+            f"{_cfg.LINKEDIN_AD_ACCOUNT_ID}/campaigns/{cid}/details"
+        )
+    if p == "meta":
+        meta_no_prefix = (_cfg.META_AD_ACCOUNT_ID or "").replace("act_", "")
+        return (
+            f"https://business.facebook.com/adsmanager/manage/campaigns"
+            f"?act={meta_no_prefix}&selected_campaign_ids={campaign_id}"
+        )
+    if p == "google":
+        return f"https://ads.google.com/aw/campaigns?campaignId={campaign_id}"
+    return ""
 
 
 def _load() -> list[dict]:
@@ -261,6 +298,7 @@ def log_campaign(
     platform: str = "linkedin",
     platform_campaign_id: str = "",
     platform_creative_id: str = "",
+    campaign_name: str = "",
 ) -> None:
     """Append one campaign row to the registry. Safe to call from any platform arm.
 
@@ -289,6 +327,8 @@ def log_campaign(
         advertised_rate=advertised_rate,
         channel=_channel_label(platform),
         platform=platform,
+        campaign_name=campaign_name,
+        campaign_link=_derive_campaign_link(platform, pcid),
         platform_campaign_id=pcid,
         platform_creative_id=pcrid,
         # Legacy aliases — kept populated only for LinkedIn rows so old

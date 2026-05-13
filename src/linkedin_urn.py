@@ -196,15 +196,44 @@ class UrnResolver(TargetingResolver):
         return out
 
     def resolve_default_excludes(self) -> dict[str, list[str]]:
-        """Resolve `config.DEFAULT_EXCLUDE_FACETS` once. Cached for reuse."""
+        """Resolve baseline exclusions applied to EVERY LinkedIn campaign.
+
+        Two sources merged:
+          1. `config.DEFAULT_EXCLUDE_FACETS` — (facet, label) pairs that
+             resolve via the URN sheet (fuzzy match).
+          2. `config.DEFAULT_EXCLUDE_URNS_RAW` — `{facet_api_name: [urn]}`
+             direct URN injection for facets the URN sheet doesn't cover
+             (employers, audienceMatchingSegments, dynamicSegments, sub-
+             country geos). See config.py for the canonical list.
+
+        Cached on first call.
+        """
         if not hasattr(self, "_default_exclude_cache"):
-            self._default_exclude_cache = self.resolve_facet_pairs(
+            resolved_pairs = self.resolve_facet_pairs(
                 list(getattr(config, "DEFAULT_EXCLUDE_FACETS", []))
             )
+            raw_urns = dict(getattr(config, "DEFAULT_EXCLUDE_URNS_RAW", {}) or {})
+            # Merge: for each facet present in BOTH dicts, concat URN lists
+            # (de-duplicated). Raw URNs win on overlap since they're
+            # hand-curated.
+            merged: dict[str, list[str]] = {k: list(v) for k, v in resolved_pairs.items()}
+            for facet, urns in raw_urns.items():
+                existing = merged.get(facet, [])
+                # Preserve order: existing first, then raw — drop duplicates.
+                seen = set(existing)
+                for u in urns:
+                    if u not in seen:
+                        existing.append(u)
+                        seen.add(u)
+                merged[facet] = existing
+            self._default_exclude_cache = merged
             log.info(
-                "Resolved %d default exclude facet(s): %s",
-                sum(len(v) for v in self._default_exclude_cache.values()),
-                {k: len(v) for k, v in self._default_exclude_cache.items()},
+                "Resolved %d default exclude facet(s): %s "
+                "(pairs=%d, raw_urns=%d)",
+                sum(len(v) for v in merged.values()),
+                {k: len(v) for k, v in merged.items()},
+                sum(len(v) for v in resolved_pairs.values()),
+                sum(len(v) for v in raw_urns.values()),
             )
         return self._default_exclude_cache
 

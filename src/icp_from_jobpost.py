@@ -172,7 +172,7 @@ def derive_icp_from_job_post(html_text: str) -> dict[str, Any]:
             max_tokens=1024,
         )
     except Exception as exc:
-        log.warning("Claude ICP extraction failed: %s", exc)
+        log.warning("Claude ICP extraction failed: %s (%s)", exc, type(exc).__name__, exc_info=True)
         return dict(EMPTY_ICP, raw_excerpt=cleaned[:500])
 
     try:

@@ -243,10 +243,13 @@ class LinkedInClient(AdPlatformClient):
             return name
         return f"{self.AGENT_NAME_PREFIX}{name}"
 
-    def create_campaign_group(self, name: str) -> str:
+    def create_campaign_group(self, name: str, *, geos: list[str] | None = None) -> str:
         """
         Create a sponsored content campaign group.
         Returns the campaign group URN. Name auto-prefixed with "agent_".
+
+        `geos` is accepted for interface parity with the Meta arm (which needs
+        the country list at campaign level for SAC); LinkedIn ignores it.
         """
         name = self._prefixed(name)
         # Always create as DRAFT — user-configured default so nothing launches
@@ -934,6 +937,13 @@ _FACET_SHORT_TO_URN = {
     "schools":          "urn:li:adTargetingFacet:schools",
     "employers":        "urn:li:adTargetingFacet:employers",
     "followedCompanies":"urn:li:adTargetingFacet:followedCompanies",
+    # Matched-audience and dynamic-audience segments — used by
+    # config.DEFAULT_EXCLUDE_URNS_RAW to suppress historical contributor
+    # lists and recent-signup audiences. These facets aren't fuzzy-resolved
+    # via the URN sheet (no human-readable label space), so they only show
+    # up as direct URN injection.
+    "audienceMatchingSegments": "urn:li:adTargetingFacet:audienceMatchingSegments",
+    "dynamicSegments":  "urn:li:adTargetingFacet:dynamicSegments",
 }
 
 
