@@ -39,6 +39,21 @@ LINKEDIN_CAMPAIGN_MANAGER_URL = (
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _build_mention_prefix() -> str:
+    """Render `<@U1> <@U2> <@U3>` from config.SLACK_CHANNEL_MENTION_IDS.
+
+    Returns an empty string when no IDs are configured (e.g., during tests
+    that monkey-patch the list to []). Pranav's DM target is excluded — DMs
+    don't need self-pings; only the channel post needs the operator pings.
+    Slack auto-resolves the same mentions in DMs too, so the same body
+    works across all 3 targets without per-target customization.
+    """
+    ids = list(getattr(config, "SLACK_CHANNEL_MENTION_IDS", []) or [])
+    if not ids:
+        return ""
+    return " ".join(f"<@{uid}>" for uid in ids)
+
+
 def build_success_message(
     ramp_id: str,
     project_name: str,
@@ -46,6 +61,7 @@ def build_success_message(
     per_cohort: list[dict],
     version: int = 1,
     extra_platform_campaigns: dict | None = None,
+    manual_handoff_urls: dict | None = None,
 ) -> str:
     """Build the success-path Slack body.
 
@@ -57,6 +73,12 @@ def build_success_message(
     Each entry is a top-level Ad Set (Meta) or Ad Group (Google) created
     during the run. Counts are surfaced in the summary; full lists in the
     Triggers sheet → Campaign Registry tab.
+
+    `manual_handoff_urls` is `{"meta": "drive_url", "google": "drive_url"}`
+    pointing to the JSON manifest the Meta/Google arm writes to Drive when
+    platform-side ad creation fails (graceful degradation). Surfaced in the
+    body so Diego (Meta) and Bryan (Google) can pick up the creatives + copy
+    and build the campaign manually.
     """
     if version > 1:
         header = f"*Smart Ramp processed (v{version}): {ramp_id}* — {project_name}"
@@ -64,10 +86,18 @@ def build_success_message(
         header = f"*Smart Ramp processed: {ramp_id}* — {project_name}"
 
     extra_platform_campaigns = extra_platform_campaigns or {}
+    manual_handoff_urls = manual_handoff_urls or {}
     meta_count   = len(extra_platform_campaigns.get("meta") or [])
     google_count = len(extra_platform_campaigns.get("google") or [])
 
-    lines = [
+    mention_prefix = _build_mention_prefix()
+    lines = []
+    if mention_prefix:
+        # First line is the operator-ping prefix so the message is impossible
+        # to miss in the channel. Each ramp summary pings Diego (Meta) +
+        # Bryan (Google) + Tuan (oversight).
+        lines.append(mention_prefix)
+    lines += [
         header,
         f"Requester: {requester_name}",
         f"Cohorts: {len(per_cohort)}",
@@ -102,6 +132,18 @@ def build_success_message(
             lines.append(f"  • {label}: {len(ids)} ad set(s)/group(s) — first: `{ids[0]}`")
         lines.append("")
 
+    # Manual-handoff manifests for arms where platform-side creation failed
+    # (e.g., Meta SAC, Google permission denied). PNGs + cohort/copy details
+    # are still in Drive — Diego/Bryan can build the campaign by hand from
+    # the manifest at the URL below.
+    handoff_for_render = {p: u for p, u in (manual_handoff_urls or {}).items() if u}
+    if handoff_for_render:
+        lines.append("*Manual handoff — creatives ready in Drive*")
+        for plat, url in handoff_for_render.items():
+            label = {"meta": "Meta (Diego)", "google": "Google Ads (Bryan)"}.get(plat, plat.title())
+            lines.append(f"  • {label}: {url}")
+        lines.append("")
+
     lines.append("Review and activate in LinkedIn Campaign Manager:")
     lines.append(LINKEDIN_CAMPAIGN_MANAGER_URL)
     lines.append("Full per-creative breakdown in the Triggers sheet → Campaign Registry tab.")
@@ -130,7 +172,11 @@ def build_escalation_message(
                 first_tb_line = ln.strip()[:300]
                 break
 
-    lines = [
+    mention_prefix = _build_mention_prefix()
+    lines = []
+    if mention_prefix:
+        lines.append(mention_prefix)
+    lines += [
         f"*Smart Ramp processing failed {config.SMART_RAMP_FAILURE_THRESHOLD} times: {ramp_id}* — {project_name}",
         f"Requester: {requester_name}",
         "",
@@ -284,6 +330,7 @@ def notify_success(ramp_record, result: dict, version: int = 1) -> dict:
         per_cohort=result.get("per_cohort") or [],
         version=version,
         extra_platform_campaigns=result.get("extra_platform_campaigns") or {},
+        manual_handoff_urls=result.get("manual_handoff_urls") or {},
     )
     return _send_to_all_targets(text)
 

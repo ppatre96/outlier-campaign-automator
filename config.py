@@ -248,6 +248,12 @@ SMART_RAMP_FAILURE_THRESHOLD     = int(os.getenv("SMART_RAMP_FAILURE_THRESHOLD",
 SMART_RAMP_TEST_REQUESTER_PATTERN = os.getenv("SMART_RAMP_TEST_REQUESTER_PATTERN", r"\btest\b")
 
 SLACK_DIEGO_USER_ID         = os.getenv("SLACK_DIEGO_USER_ID", "U08AW9FCP27")
+# Tuan Hoang — Head of Growth Marketing (escalation contact / oversight).
+SLACK_TUAN_USER_ID          = os.getenv("SLACK_TUAN_USER_ID", "U08PDA0T85U")
+# Bryan Ponce — Google Ads operator counterpart (matches Diego on Meta).
+# Not found via Slack user search 2026-05-13 — fill in via env when his
+# Slack ID is known.
+SLACK_BRYAN_USER_ID         = os.getenv("SLACK_BRYAN_USER_ID", "")
 SLACK_RAMP_NOTIFY_CHANNEL   = os.getenv("SLACK_RAMP_NOTIFY_CHANNEL", "C0B0NBB986L")
 # Three notification targets per success/escalation message: Pranav DM + Diego DM + shared channel.
 # Each tuple is (kind, id); kind ∈ {"user", "channel"}. Notifier iterates this list.
@@ -255,6 +261,14 @@ SLACK_RAMP_NOTIFY_TARGETS   = [
     ("user", SLACK_REPORT_USER),
     ("user", SLACK_DIEGO_USER_ID),
     ("channel", SLACK_RAMP_NOTIFY_CHANNEL),
+]
+
+# Channel-post mentions: Diego (Meta), Bryan (Google), Tuan (oversight).
+# Empty string entries are skipped so a missing Bryan ID doesn't render a
+# literal "<@>" placeholder in the message.
+SLACK_CHANNEL_MENTION_IDS = [
+    uid for uid in [SLACK_DIEGO_USER_ID, SLACK_BRYAN_USER_ID, SLACK_TUAN_USER_ID]
+    if uid
 ]
 
 # Slack reaction handler configuration (Phase 2.5 feedback loop)

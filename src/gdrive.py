@@ -182,6 +182,60 @@ def upload_creative_in_hierarchy(
     return f.get("webViewLink", "")
 
 
+# ── Text/JSON manifest upload ────────────────────────────────────────────────
+
+
+def upload_text_in_hierarchy(
+    text: str,
+    ramp_id: str,
+    channel: str,
+    filename: str,
+    mimetype: str = "application/json",
+) -> str:
+    """Upload a text payload (JSON/CSV manifest, etc.) into
+    <root>/<ramp_id>/<channel>/<filename>. Used by the Meta/Google graceful-
+    degradation path to leave a manual-handoff manifest for human ops when
+    the platform-side ad creation fails.
+
+    Returns the file's webViewLink, empty string on disabled/error.
+    """
+    if not getattr(config, "GDRIVE_ENABLED", False):
+        log.warning("GDRIVE_ENABLED=false — skipping Drive upload for %s", filename)
+        return ""
+
+    import io
+    from googleapiclient.http import MediaIoBaseUpload
+
+    svc = _service()
+    target_folder = _ensure_path([ramp_id, channel], svc=svc)
+
+    metadata = {"name": filename, "parents": [target_folder]}
+    media = MediaIoBaseUpload(
+        io.BytesIO(text.encode("utf-8")),
+        mimetype=mimetype, resumable=False,
+    )
+    f = svc.files().create(
+        body=metadata, media_body=media,
+        fields="id,webViewLink", supportsAllDrives=True,
+    ).execute()
+
+    try:
+        svc.permissions().create(
+            fileId=f["id"],
+            body={"type": "anyone", "role": "reader"},
+            supportsAllDrives=True,
+        ).execute()
+    except Exception as exc:
+        if "publishOutNotPermitted" not in str(exc):
+            log.warning("Drive permission grant failed (non-fatal): %s", exc)
+
+    log.info(
+        "Drive: uploaded manifest %s → %s/%s/%s (%s)",
+        filename, ramp_id, channel, filename, f["id"],
+    )
+    return f.get("webViewLink", "")
+
+
 # ── Back-compat wrapper used by existing callers ─────────────────────────────
 
 

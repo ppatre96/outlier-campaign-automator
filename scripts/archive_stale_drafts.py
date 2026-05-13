@@ -80,11 +80,28 @@ CAMPAIGNS_TO_ARCHIVE: list[str] = [
 ]
 
 
+def _future_start_ms() -> int:
+    """LinkedIn rejects DRAFT→ARCHIVED transitions when `runSchedule.start` is
+    in the past (DATE_TOO_EARLY validator). PATCH the start to ~1 hour in the
+    future as part of the same partial-update call."""
+    import time
+    return int(time.time() * 1000) + 60 * 60 * 1000  # now + 1h, ms
+
+
 def _archive_one(client: LinkedInClient, entity_type: str, entity_id: str, dry_run: bool) -> tuple[str, bool, str]:
-    """Returns (entity_id, success, message)."""
+    """Returns (entity_id, success, message).
+
+    LinkedIn rules surfaced 2026-05-13:
+    - DRAFT groups: must bump runSchedule.start to future before ARCHIVED.
+    - DRAFT campaigns: must bump runSchedule.start AND parent group must
+      already be non-DRAFT (so archive groups first).
+    """
     path = "adCampaignGroups" if entity_type == "group" else "adCampaigns"
     url = client._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/{path}/{entity_id}")
-    payload = {"patch": {"$set": {"status": "ARCHIVED"}}}
+    payload = {"patch": {"$set": {
+        "status": "ARCHIVED",
+        "runSchedule": {"start": _future_start_ms()},
+    }}}
     headers = {"X-RestLi-Method": "PARTIAL_UPDATE", "Content-Type": "application/json"}
 
     if dry_run:
@@ -94,7 +111,7 @@ def _archive_one(client: LinkedInClient, entity_type: str, entity_id: str, dry_r
         resp = client._req("POST", url, json=payload, headers=headers)
         if resp.status_code in (200, 204):
             return entity_id, True, f"archived {entity_type} {entity_id}"
-        return entity_id, False, f"HTTP {resp.status_code}: {resp.text[:200]}"
+        return entity_id, False, f"HTTP {resp.status_code}: {resp.text[:400]}"
     except Exception as exc:
         return entity_id, False, f"exception: {type(exc).__name__}: {exc}"
 

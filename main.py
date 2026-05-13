@@ -2775,10 +2775,112 @@ def _process_extra_platform_arm(
         "campaigns_by_cohort": {},
         "creative_paths": {},
         "campaign_groups": [],
+        # Graceful-degradation: even when the parent campaign-group create
+        # 4xxs (Meta SAC, Google PERMISSION_DENIED), we still want Diego
+        # (Meta) / Bryan (Google) to have the PNGs + cohort/copy details to
+        # build the campaign by hand. `manual_handoff_url` is the Drive link
+        # to a JSON manifest with everything they need.
+        "manual_handoff_url": "",
     }
     if not campaign_specs:
         return out
 
+    # ── Phase 1: Always preserve creatives + cohort/copy to Drive ───────────
+    # Runs BEFORE the platform-side campaign create, so even if the parent
+    # group create fails (Meta SAC geo mismatch, Google permission denied),
+    # the artifacts a human needs to build the campaign manually are in
+    # Drive at <ramp_id>/<platform>/_manual_handoff.json + the per-spec PNGs.
+    drive_urls_by_spec: dict[str, str] = {}
+    handoff_entries: list[dict] = []
+    for spec in campaign_specs:
+        cohort_e = spec.get("cohort")
+        geo_group_e = spec.get("geo_group")
+        angle_label_e = spec.get("angle_label", "A")
+        angle_idx_e = spec.get("angle_idx", 0)
+        png_path_e = spec.get("png_path")
+        variants_e = spec.get("variants") or []
+        variant_e = variants_e[angle_idx_e] if angle_idx_e < len(variants_e) else {}
+        group_geos_e = spec.get("group_geos") or []
+
+        base_id_e = cohort_id_override or getattr(cohort_e, "id", None) or getattr(cohort_e, "_stg_id", "")
+        cluster_suffix = getattr(geo_group_e, "campaign_suffix", "") or "geo"
+        spec_key = f"{base_id_e}_{cluster_suffix}_{angle_label_e}"
+
+        drive_url_e = ""
+        if config.GDRIVE_ENABLED and png_path_e and Path(str(png_path_e)).exists():
+            try:
+                drive_url_e = _save_creative_to_drive(
+                    png_path=png_path_e,
+                    ramp_id=ramp_id or "manual",
+                    unique_id=spec_key,
+                    channel=platform,
+                    angle=angle_label_e,
+                    cohort_geo=_cohort_geo_label(cohort_e, geo_group_e),
+                )
+            except Exception as _exc:
+                log.warning(
+                    "_process_extra_platform_arm[%s]: Drive PNG upload failed for %s: %s",
+                    platform, spec_key, _exc,
+                )
+        drive_urls_by_spec[spec_key] = drive_url_e
+
+        platform_copy_e = adapt_copy_for_platform(variant_e, platform) if variant_e else {}
+        handoff_entries.append({
+            "cohort_name":      getattr(cohort_e, "name", ""),
+            "cohort_stg_id":    getattr(cohort_e, "_stg_id", ""),
+            "cohort_stg_name":  getattr(cohort_e, "_stg_name", ""),
+            "geo_cluster":      getattr(geo_group_e, "cluster", ""),
+            "geo_cluster_label": getattr(geo_group_e, "cluster_label", ""),
+            "geos":             list(group_geos_e),
+            "advertised_rate":  getattr(geo_group_e, "advertised_rate", ""),
+            "angle":            angle_label_e,
+            "image_drive_url":  drive_url_e,
+            "headline":         variant_e.get("headline", "") if variant_e else "",
+            "subheadline":      variant_e.get("subheadline", "") if variant_e else "",
+            "photo_subject":    variant_e.get("photo_subject", "") if variant_e else "",
+            "platform_copy":    platform_copy_e,
+            "destination_url":  destination_url_override or "",
+            "rules":            list(getattr(cohort_e, "rules", []) or []),
+        })
+
+    manual_handoff_url = ""
+    if handoff_entries:
+        import json as _json
+        from datetime import datetime as _dt, timezone as _tz
+        manifest = {
+            "ramp_id":      ramp_id or "",
+            "platform":     platform,
+            "generated_at": _dt.now(_tz.utc).isoformat(),
+            "purpose": (
+                f"Manual-creation handoff for {platform.title()}. If the "
+                f"agent failed to create the {platform.title()} campaign, "
+                "use these entries to build it manually in the platform UI. "
+                "Each entry has cohort + geo targeting, copy variant, and "
+                "the rendered creative image."
+            ),
+            "entries_count": len(handoff_entries),
+            "entries":       handoff_entries,
+        }
+        try:
+            from src.gdrive import upload_text_in_hierarchy
+            manual_handoff_url = upload_text_in_hierarchy(
+                text=_json.dumps(manifest, indent=2, default=str),
+                ramp_id=ramp_id or "manual",
+                channel=platform,
+                filename="_manual_handoff.json",
+            )
+            log.info(
+                "_process_extra_platform_arm[%s]: manual-handoff manifest written → %s",
+                platform, manual_handoff_url or "(local-only, Drive disabled)",
+            )
+        except Exception as _exc:
+            log.warning(
+                "_process_extra_platform_arm[%s]: manifest upload failed (non-fatal): %s",
+                platform, _exc,
+            )
+    out["manual_handoff_url"] = manual_handoff_url
+
+    # ── Phase 2: Best-effort platform-side campaign create ──────────────────
     # One platform-level container ("Campaign" on Meta/Google) per ramp run.
     # Cohort × geo × angle become Ad Sets / Ad Groups under it.
     group_name = f"Outlier {flow_id} {location} {platform.title()}".strip()
@@ -2795,8 +2897,9 @@ def _process_extra_platform_arm(
         group_id = client.create_campaign_group(group_name, geos=union_geos)
     except Exception as exc:
         log.error(
-            "_process_extra_platform_arm[%s]: create_campaign_group failed (%s) — skipping arm",
-            platform, exc,
+            "_process_extra_platform_arm[%s]: create_campaign_group failed (%s) — "
+            "platform-side skipped, but Phase 1 already wrote %d creatives + manifest to Drive (%s)",
+            platform, exc, len(handoff_entries), manual_handoff_url or "drive disabled",
         )
         return out
     out["campaign_groups"].append(group_id)
@@ -2917,10 +3020,12 @@ def _process_extra_platform_arm(
 
             platform_copy = adapt_copy_for_platform(variant, platform) if variant else {}
 
-            # Drive archive FIRST so the URL can land in the registry's
-            # creative_image_path column (clickable from the Triggers sheet).
-            drive_url = ""
-            if config.GDRIVE_ENABLED and png_path and Path(str(png_path)).exists():
+            # Drive URL was uploaded in Phase 1; reuse the cached URL to avoid
+            # a duplicate Drive write (idempotent at the filename level — the
+            # API would create a 2nd file with same name otherwise).
+            spec_key = f"{base_id}_{geo_group.campaign_suffix}_{angle_label}"
+            drive_url = drive_urls_by_spec.get(spec_key, "")
+            if not drive_url and config.GDRIVE_ENABLED and png_path and Path(str(png_path)).exists():
                 drive_url = _save_creative_to_drive(
                     png_path=png_path,
                     ramp_id=ramp_id or "manual",
@@ -3298,11 +3403,17 @@ def _process_row_both_modes(
     extra_groups: list[str] = []
     extra_campaigns: dict[str, list[str]] = {}
     extra_creative_paths: dict[str, str] = {}
+    manual_handoff_urls: dict[str, str] = {}
     for plat, r in extra_platform_results.items():
         extra_groups.extend(r.get("campaign_groups") or [])
         extra_campaigns[plat] = list(r.get("campaigns") or [])
         for k, v in (r.get("creative_paths") or {}).items():
             extra_creative_paths[f"{k}_{plat}"] = v
+        # Surface the Meta/Google manual-handoff Drive URL so the Slack notifier
+        # can ping Diego/Bryan when platform-side creation failed but the
+        # creatives + cohort/copy details are still preserved in Drive.
+        if r.get("manual_handoff_url"):
+            manual_handoff_urls[plat] = r["manual_handoff_url"]
 
     return {
         "ok": True,
@@ -3314,6 +3425,7 @@ def _process_row_both_modes(
         "inmail_campaigns": list(inmail_result.get("campaigns", [])),
         "static_campaigns": list(static_result.get("campaigns", [])),
         "extra_platform_campaigns": extra_campaigns,
+        "manual_handoff_urls": manual_handoff_urls,
         "creative_paths": {
             **{f"{k}_inmail": v for k, v in inmail_result.get("creative_paths", {}).items()},
             **{f"{k}_static": v for k, v in static_result.get("creative_paths", {}).items()},
