@@ -1244,97 +1244,141 @@ def _process_inmail_campaigns(
         default_exclude_urns, family_exclude_urns, data_driven_exclude_urns,
     )
 
+    # NEW structure (2026-05-13): one InMail campaign per (cohort × geo),
+    # with multiple InMail ads attached (one per angle). Previous structure
+    # was 1 campaign per (cohort × geo × angle) which produced 3× the
+    # campaign count and didn't match the LinkedIn campaign-group / campaign
+    # / creative hierarchy the marketing team is standardizing on.
     for cohort in capped_cohorts_inmail:
         for geo_group in geo_groups:
-            for angle_label in inmail_angle_keys:
-                angle_idx   = inmail_angle_keys.index(angle_label)
-                tg_cat      = classify_tg(cohort.name, cohort.rules)
-                group_geos  = geo_group.geos or raw_geos
+            tg_cat      = classify_tg(cohort.name, cohort.rules)
+            group_geos  = geo_group.geos or raw_geos
 
-                # Generate InMail copy with geo-specific rate + ICP context
-                variants = build_inmail_variants(
-                    tg_cat, cohort, claude_key,
-                    hourly_rate=geo_group.advertised_rate,
-                    geo_icp_hint=geo_group.icp_hint,
+            # Generate all InMail variants for this (cohort × geo) — one call
+            # produces variants for all angles in `inmail_angle_keys`.
+            variants = build_inmail_variants(
+                tg_cat, cohort, claude_key,
+                hourly_rate=geo_group.advertised_rate,
+                geo_icp_hint=geo_group.icp_hint,
+            )
+            if not variants:
+                log.warning(
+                    "No InMail variants for cohort '%s' geo=%s — skipping all angles",
+                    cohort.name, geo_group.cluster_label,
                 )
-                variant  = variants[angle_idx % len(variants)] if variants else None
-                if not variant:
-                    log.warning("No InMail variant for cohort '%s' angle %s — skipping", cohort.name, angle_label)
-                    continue
+                continue
 
-                # Validate InMail copy against brand voice
+            # Per-angle brand voice validation. Aggregate failures so MUST
+            # violations on one angle don't kill the whole (cohort × geo) —
+            # we drop the offending angle, keep the rest.
+            valid_pairs: list[tuple[str, object]] = []  # (angle_label, variant)
+            for angle_label in inmail_angle_keys:
+                angle_idx = inmail_angle_keys.index(angle_label)
+                variant = variants[angle_idx % len(variants)]
                 full_copy = f"{variant.subject}\n\n{variant.body}"
                 report = brand_voice_validator.validate_copy(full_copy)
-
-                if not report.is_compliant:
-                    log.warning(f"InMail angle {angle_label}: {len(report.violations)} brand voice violations")
-                    log.warning(f"  Must fix: {len(report.must_violations)}")
-                    log.warning(f"  Should fix: {len(report.should_violations)}")
-
-                    if report.must_violations:
-                        log.error(f"InMail angle {angle_label} has MUST-FIX violations — blocking submission")
-                        for v_item in report.must_violations[:3]:
-                            log.error(f"    {v_item.rule_name}: {v_item.found_text!r} → {v_item.suggestion}")
-                        raise RuntimeError(f"Brand voice violation in InMail angle {angle_label}: {report.must_violations[0].rule_name}")
-                    else:
-                        log.warning(f"InMail angle {angle_label} has SHOULD-FIX violations (allowed):")
-                        for v_item in report.should_violations[:2]:
-                            log.warning(f"    {v_item.rule_name}: {v_item.found_text!r}")
-                else:
-                    log.info(f"InMail angle {angle_label} passes brand voice check (confidence: {report.confidence_score:.0%})")
-
-                # Include facet URNs: resolve once per cohort (cheap idempotent op),
-                # then apply geo overrides for this geo_group's geos.
-                # Bug-fix 2026-05-13: was missing entirely — caused NameError on
-                # every InMail campaign create and aborted the whole InMail arm.
-                facet_urns = urn_res.resolve_cohort_rules(cohort.rules)
-                if group_geos:
-                    facet_urns = _apply_geo_overrides(facet_urns, group_geos, urn_res)
-
-                # Per-cohort override layer
-                cohort_add_urns    = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_add", []) or [])
-                cohort_remove_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_remove", []) or [])
-                cohort_exclude_urns = _subtract_urn_dicts(
-                    _merge_urn_dicts(shared_exclude_urns, cohort_add_urns),
-                    cohort_remove_urns,
-                )
-
-                # Smart Ramp v2 naming convention — see src/campaign_name.py.
-                # Fallback to the legacy `<stg_name> [<geo>] <angle>` form when
-                # naming_meta is unavailable (legacy CLI path / tests / dry-run).
-                if naming_meta is not None:
-                    from src.campaign_name import build_campaign_name
-                    campaign_name = build_campaign_name(
-                        ramp_id=ramp_id or "",
-                        submitted_at=naming_meta.get("submitted_at", ""),
-                        cohort=cohort,
-                        geo_group=geo_group,
-                        platform="linkedin",
-                        campaign_type="inmail",
-                        pod=naming_meta.get("pod"),
-                        domain=naming_meta.get("domain"),
-                        locale=naming_meta.get("locale"),
-                        included_geos=naming_meta.get("included_geos"),
-                        campaign_state=naming_meta.get("campaign_state"),
+                if report.is_compliant:
+                    log.info(
+                        "InMail angle %s passes brand voice check (confidence: %.0f%%)",
+                        angle_label, report.confidence_score * 100,
                     )
-                    # Append angle so each (cohort×geo×angle) campaign is unique
-                    # within the group — spec doesn't carry angle, but LinkedIn
-                    # rejects duplicate campaign names within a group.
-                    campaign_name = f"{campaign_name} | {angle_label}"
+                    valid_pairs.append((angle_label, variant))
+                elif report.must_violations:
+                    log.error(
+                        "InMail angle %s has MUST-FIX brand voice violations — DROPPING this angle",
+                        angle_label,
+                    )
+                    for v_item in report.must_violations[:3]:
+                        log.error(
+                            "    %s: %r → %s",
+                            v_item.rule_name, v_item.found_text, v_item.suggestion,
+                        )
                 else:
-                    geo_suffix = f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
-                    campaign_name = f"{cohort._stg_name}{geo_suffix} {angle_label}"
+                    log.warning(
+                        "InMail angle %s has SHOULD-FIX violations (allowed): %d",
+                        angle_label, len(report.should_violations),
+                    )
+                    for v_item in report.should_violations[:2]:
+                        log.warning("    %s: %r", v_item.rule_name, v_item.found_text)
+                    valid_pairs.append((angle_label, variant))
 
-                campaign_urn = li_client.create_inmail_campaign(
-                    name=campaign_name,
-                    campaign_group_urn=group_urn,
-                    facet_urns=facet_urns,
-                    exclude_facet_urns=cohort_exclude_urns,
+            if not valid_pairs:
+                log.warning(
+                    "All InMail angles failed brand voice for cohort '%s' geo=%s — skipping",
+                    cohort.name, geo_group.cluster_label,
                 )
-                campaign_id = campaign_urn.rsplit(":", 1)[-1]
-                sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
-                log.info("Created InMail campaign %s angle=%s geo=%s rate=%s",
-                         campaign_urn, angle_label, geo_group.cluster_label, geo_group.advertised_rate)
+                continue
+
+            # Targeting resolution — once per (cohort × geo).
+            facet_urns = urn_res.resolve_cohort_rules(cohort.rules)
+            if group_geos:
+                facet_urns = _apply_geo_overrides(facet_urns, group_geos, urn_res)
+            cohort_add_urns    = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_add", []) or [])
+            cohort_remove_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_remove", []) or [])
+            cohort_exclude_urns = _subtract_urn_dicts(
+                _merge_urn_dicts(shared_exclude_urns, cohort_add_urns),
+                cohort_remove_urns,
+            )
+
+            # Campaign name — Smart Ramp v2 spec, ONE name per (cohort × geo)
+            # (no angle suffix; angles are now the multi-creative dimension).
+            if naming_meta is not None:
+                from src.campaign_name import build_campaign_name
+                campaign_name = build_campaign_name(
+                    ramp_id=ramp_id or "",
+                    submitted_at=naming_meta.get("submitted_at", ""),
+                    cohort=cohort,
+                    geo_group=geo_group,
+                    platform="linkedin",
+                    campaign_type="inmail",
+                    pod=naming_meta.get("pod"),
+                    domain=naming_meta.get("domain"),
+                    locale=naming_meta.get("locale"),
+                    included_geos=naming_meta.get("included_geos"),
+                    campaign_state=naming_meta.get("campaign_state"),
+                )
+            else:
+                geo_suffix = f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
+                campaign_name = f"{cohort._stg_name}{geo_suffix} InMail"
+
+            # ONE campaign per (cohort × geo)
+            campaign_urn = li_client.create_inmail_campaign(
+                name=campaign_name,
+                campaign_group_urn=group_urn,
+                facet_urns=facet_urns,
+                exclude_facet_urns=cohort_exclude_urns,
+            )
+            campaign_id = campaign_urn.rsplit(":", 1)[-1]
+            sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
+            log.info(
+                "Created InMail campaign %s cohort=%s geo=%s rate=%s (%d angles to attach)",
+                campaign_urn, cohort.name, geo_group.cluster_label, geo_group.advertised_rate, len(valid_pairs),
+            )
+
+            # Build the UTM destination URL once per (cohort × geo). Each
+            # angle's ad shares the same target URL but gets a distinct
+            # utm_content slug so attribution can split angle performance.
+            from src.utm_builder import build_utm_url, resolve_base_lp_url
+            base_lp = resolve_base_lp_url(
+                campaign_state=(naming_meta or {}).get("campaign_state"),
+                platform="linkedin",
+                fallback=destination_url_override or config.LINKEDIN_DESTINATION,
+                matched_domain=(naming_meta or {}).get("domain"),
+            )
+
+            # Attach one InMail ad per (valid) angle to the same campaign.
+            base_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
+            for angle_label, variant in valid_pairs:
+                # Per-angle UTM URL: shared campaign_name + distinct utm_content
+                utm_url = build_utm_url(
+                    base_url=base_lp, platform="linkedin",
+                    campaign_name=campaign_name,
+                    pod=(naming_meta or {}).get("pod"),
+                    domain=(naming_meta or {}).get("domain"),
+                    locale=(naming_meta or {}).get("locale"),
+                    language=((naming_meta or {}).get("campaign_state") or {}).get("linkedin", {}).get("liAdLanguage") or "EN",
+                    utm_content=f"{cohort._stg_id}-inmail-{angle_label}",
+                ) if base_lp else (destination_url_override or "")
 
                 creative_urn = li_client.create_inmail_ad(
                     campaign_urn=campaign_urn,
@@ -1342,19 +1386,12 @@ def _process_inmail_campaigns(
                     subject=variant.subject,
                     body=variant.body,
                     cta_label=variant.cta_label,
-                    destination_url=destination_url_override,
+                    destination_url=utm_url,
                 )
                 sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
 
-                # Log to campaign registry
-                base_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
                 try:
                     _reg_log_inmail(
-                        # smart_ramp_id is the human-readable GMR ramp id (e.g. "GMR-0020"),
-                        # NOT the signup flow_id — that goes in `flow_id` for back-compat
-                        # readers. Fix: pre-2026-05-13 this caller passed `flow_id` here,
-                        # which made the Sheet's "Smart Ramp Id" column unfilterable by
-                        # the actual ramp identifier.
                         smart_ramp_id=ramp_id or flow_id or "",
                         cohort_id=str(base_id),
                         cohort_signature=cohort.name,
@@ -1373,13 +1410,6 @@ def _process_inmail_campaigns(
                 except Exception as _exc:
                     log.warning("Registry log failed (non-fatal): %s", _exc)
 
-                validation_metadata = {
-                    "is_compliant": report.is_compliant,
-                    "must_violations": len(report.must_violations),
-                    "should_violations": len(report.should_violations),
-                    "confidence_score": report.confidence_score,
-                }
-                log.info(f"Creative validation: {json.dumps(validation_metadata)}")
                 log.info(
                     "InMail creative %s — cohort '%s' angle %s geo=%s subject: %s",
                     creative_urn, cohort.name, angle_label, geo_group.cluster_label, variant.subject,
@@ -2652,6 +2682,26 @@ def _process_static_campaigns(
             headline = variant.get("headline") or f"Your {_cohort_headline(cohort)} expertise is in demand."
             subhead = variant.get("subheadline") or "Earn payment doing remote AI tasks on your schedule."
 
+            # Build the UTM destination URL per (cohort × geo × angle). Base
+            # LP resolved from Smart Ramp's campaign_state.utm_linkedin or
+            # config.LP_URL_BY_DOMAIN; falls back to LINKEDIN_DESTINATION.
+            from src.utm_builder import build_utm_url, resolve_base_lp_url
+            base_lp = resolve_base_lp_url(
+                campaign_state=(naming_meta or {}).get("campaign_state"),
+                platform="linkedin",
+                fallback=destination_url_override or config.LINKEDIN_DESTINATION,
+                matched_domain=(naming_meta or {}).get("domain"),
+            )
+            utm_url = build_utm_url(
+                base_url=base_lp, platform="linkedin",
+                campaign_name=campaign_name,
+                pod=(naming_meta or {}).get("pod"),
+                domain=(naming_meta or {}).get("domain"),
+                locale=(naming_meta or {}).get("locale"),
+                language=((naming_meta or {}).get("campaign_state") or {}).get("linkedin", {}).get("liAdLanguage") or "EN",
+                utm_content=f"{cohort._stg_id}-static-{angle_label}",
+            ) if base_lp else (destination_url_override or "")
+
             try:
                 image_urn = li_client.upload_image(png_path)
                 ad_result = li_client.create_image_ad(
@@ -2663,7 +2713,7 @@ def _process_static_campaigns(
                     ad_headline=variant.get("ad_headline", "") if variant else "",
                     ad_description=variant.get("ad_description", "") if variant else "",
                     cta_button=variant.get("cta_button", "APPLY") if variant else "APPLY",
-                    destination_url=destination_url_override,
+                    destination_url=utm_url,
                 )
             except Exception as exc:
                 log.warning("_process_static_campaigns: upload/attach raised for angle %s: %s", angle_label, exc)
@@ -3056,13 +3106,31 @@ def _process_extra_platform_arm(
                         error_message=str(exc)[:300],
                     )
                 else:
+                    # Build the platform-specific UTM destination URL.
+                    from src.utm_builder import build_utm_url, resolve_base_lp_url
+                    base_lp = resolve_base_lp_url(
+                        campaign_state=(naming_meta or {}).get("campaign_state"),
+                        platform=platform,
+                        fallback=destination_url_override or config.LINKEDIN_DESTINATION,
+                        matched_domain=(naming_meta or {}).get("domain"),
+                    )
+                    utm_url = build_utm_url(
+                        base_url=base_lp, platform=platform,
+                        campaign_name=campaign_name,
+                        pod=(naming_meta or {}).get("pod"),
+                        domain=(naming_meta or {}).get("domain"),
+                        locale=(naming_meta or {}).get("locale"),
+                        language="EN",
+                        utm_content=f"{cohort._stg_id}-{platform}-{angle_label}",
+                    ) if base_lp else (destination_url_override or "")
+
                     if platform == "google":
                         ad_result = client.create_image_ad(
                             campaign_id=sub_id,
                             image_id=image_id,
                             headline=(platform_copy.get("headlines") or [""])[0],
                             description=(platform_copy.get("descriptions") or [""])[0],
-                            destination_url=destination_url_override,
+                            destination_url=utm_url,
                             headlines=platform_copy.get("headlines") or [],
                             long_headline=platform_copy.get("long_headline") or "",
                             descriptions=platform_copy.get("descriptions") or [],
@@ -3075,7 +3143,7 @@ def _process_extra_platform_arm(
                             description=platform_copy.get("description", ""),
                             primary_text=platform_copy.get("primary_text"),
                             cta=platform_copy.get("cta"),
-                            destination_url=destination_url_override,
+                            destination_url=utm_url,
                         )
 
             # Registry: one row per (cohort × geo × angle), shared

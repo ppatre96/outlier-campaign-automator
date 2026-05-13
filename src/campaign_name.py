@@ -62,8 +62,14 @@ _CHANNEL_LABEL = {"linkedin": "LinkedIn", "meta": "Meta", "google": "Google"}
 _FORMAT_LABEL_FROM_CAMPAIGN_TYPE = {"static": "Single Image", "inmail": "Inmail"}
 
 
-def _safe(value: Any, default: str = "") -> str:
-    """Coerce to a pipe-safe string (no internal " | " sequences)."""
+_EMPTY = "—"
+
+
+def _safe(value: Any, default: str = _EMPTY) -> str:
+    """Coerce to a pipe-safe string (no internal " | " sequences). Empty
+    values render as "—" (em-dash) per the marketing team's convention in
+    Slack examples (Bryan's GMR-0016 utm_campaign uses "—" for unused
+    segments)."""
     s = str(value or "").strip()
     # Replace embedded pipes — they'd break downstream parsers.
     return s.replace(" | ", " / ").replace("|", "/") or default
@@ -165,7 +171,7 @@ def build_campaign_name(
     seg_geo_tier = _grouping_label(li_state.get("groupingType"))
 
     # Segment 8 — LI facets (comma-joined string from Smart Ramp, e.g. "PHDs, MBAs")
-    seg_facets = _safe(li_state.get("liTargetingFacet"), "")
+    seg_facets = _safe(li_state.get("liTargetingFacet"))
 
     # Segment 9 — language code for ad copy (e.g. EN)
     seg_language = _safe(li_state.get("liAdLanguage"), seg_locale.split("-")[0].upper())
