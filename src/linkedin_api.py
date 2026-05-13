@@ -937,6 +937,13 @@ _FACET_SHORT_TO_URN = {
     "schools":          "urn:li:adTargetingFacet:schools",
     "employers":        "urn:li:adTargetingFacet:employers",
     "followedCompanies":"urn:li:adTargetingFacet:followedCompanies",
+    # Matched-audience and dynamic-audience segments — used by
+    # config.DEFAULT_EXCLUDE_URNS_RAW to suppress historical contributor
+    # lists and recent-signup audiences. These facets aren't fuzzy-resolved
+    # via the URN sheet (no human-readable label space), so they only show
+    # up as direct URN injection.
+    "audienceMatchingSegments": "urn:li:adTargetingFacet:audienceMatchingSegments",
+    "dynamicSegments":  "urn:li:adTargetingFacet:dynamicSegments",
 }
 
 

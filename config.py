@@ -60,6 +60,64 @@ LINKEDIN_CLIENT_SECRET = os.getenv("LINKEDIN_CLIENT_SECRET", "")
 # Set to "0" to disable auto-attach.
 LINKEDIN_CONVERSION_ID = int(os.getenv("LINKEDIN_CONVERSION_ID", "19801700"))
 
+# Default exclusion targeting applied to EVERY LinkedIn campaign the pipeline
+# creates. Sourced from the canonical "exclusions reference" campaign curated
+# by the marketing team (https://www.linkedin.com/campaignmanager/accounts/
+# 510956407/campaigns/368397536/details — exclude block as of 2026-05-13).
+#
+# Layered on top of family / data-driven / cohort-specific excludes (see
+# main.py:_process_static_campaigns + _process_inmail_campaigns).
+#
+# Direct URN injection (no fuzzy resolution): these facets have no
+# human-readable label space in the URN sheet, so we hard-code the URNs.
+# Maintainers: refresh by re-running scripts/inspect_li_exclusions.py against
+# campaign 368397536 when the reference campaign's exclude block changes.
+DEFAULT_EXCLUDE_URNS_RAW: dict[str, list[str]] = {
+    # Geo: California + NYC Metro (Outlier doesn't recruit from these markets
+    # for ad-driven acquisition per the reference campaign's policy).
+    "profileLocations": [
+        "urn:li:geo:102095887",  # California, United States
+        "urn:li:geo:90000070",   # New York City Metropolitan Area
+    ],
+    # Employer suppression — competitors + Scale itself (no internal recruiting
+    # via the public-acquisition channel).
+    "employers": [
+        "urn:li:organization:10667",     # Meta
+        "urn:li:organization:11130470",  # OpenAI
+        "urn:li:organization:1441",      # Google
+        "urn:li:organization:1594050",   # Google DeepMind
+        "urn:li:organization:17998520",  # Scale AI
+        "urn:li:organization:74691296",  # absolute labs
+        "urn:li:organization:96151950",  # xAI
+    ],
+    # Historical contributor matched-audience suppression — past actives across
+    # Coders / Languages / Generalists / Specialists tiers (2024-10 → 2025-Q1).
+    "audienceMatchingSegments": [
+        "urn:li:adSegment:24551436",  # FY24 Q1 Exclusion — Customer & Partner
+        "urn:li:adSegment:30866616",
+        "urn:li:adSegment:30866766",
+        "urn:li:adSegment:30867466",
+        "urn:li:adSegment:30867496",
+        "urn:li:adSegment:30867606",
+        "urn:li:adSegment:30867656",
+        "urn:li:adSegment:30867776",
+        "urn:li:adSegment:30867826",
+        "urn:li:adSegment:30867866",
+        "urn:li:adSegment:30867976",
+        "urn:li:adSegment:30867986",
+        "urn:li:adSegment:30868006",
+        "urn:li:adSegment:32217856",
+        "urn:li:adSegment:32218136",
+        "urn:li:adSegment:32218226",
+        "urn:li:adSegment:32433386",
+        "urn:li:adSegment:32433426",
+    ],
+    # Recent-signup dynamic suppression (built-in LinkedIn audience).
+    "dynamicSegments": [
+        "urn:li:adSegment:61522684",  # 120 Days SignUps
+    ],
+}
+
 # ── Multi-platform expansion (Meta + Google Ads) ──────────────────────────────
 # Comma-separated list controlling which ad platforms the pipeline targets per
 # Smart Ramp run. Order is preserved (LinkedIn first by default for back-compat).

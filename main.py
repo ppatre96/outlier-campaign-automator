@@ -1162,6 +1162,7 @@ def _process_inmail_campaigns(
     cohort_id_override: str | None = None,
     cohort_description: str = "",
     unique_id: str | None = None,
+    naming_meta: dict | None = None,
 ) -> None:
     """
     InMail (Message Ad) path — no creative generation.
@@ -1298,8 +1299,31 @@ def _process_inmail_campaigns(
                     cohort_remove_urns,
                 )
 
-                geo_suffix = f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
-                campaign_name = f"{cohort._stg_name}{geo_suffix} {angle_label}"
+                # Smart Ramp v2 naming convention — see src/campaign_name.py.
+                # Fallback to the legacy `<stg_name> [<geo>] <angle>` form when
+                # naming_meta is unavailable (legacy CLI path / tests / dry-run).
+                if naming_meta is not None:
+                    from src.campaign_name import build_campaign_name
+                    campaign_name = build_campaign_name(
+                        ramp_id=ramp_id or "",
+                        submitted_at=naming_meta.get("submitted_at", ""),
+                        cohort=cohort,
+                        geo_group=geo_group,
+                        platform="linkedin",
+                        campaign_type="inmail",
+                        pod=naming_meta.get("pod"),
+                        domain=naming_meta.get("domain"),
+                        locale=naming_meta.get("locale"),
+                        included_geos=naming_meta.get("included_geos"),
+                        campaign_state=naming_meta.get("campaign_state"),
+                    )
+                    # Append angle so each (cohort×geo×angle) campaign is unique
+                    # within the group — spec doesn't carry angle, but LinkedIn
+                    # rejects duplicate campaign names within a group.
+                    campaign_name = f"{campaign_name} | {angle_label}"
+                else:
+                    geo_suffix = f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
+                    campaign_name = f"{cohort._stg_name}{geo_suffix} {angle_label}"
 
                 campaign_urn = li_client.create_inmail_campaign(
                     name=campaign_name,
@@ -2167,6 +2191,7 @@ def _process_static_campaigns(
     cohort_description: str = "",
     base_rate_usd: float = 50.0,
     unique_id: str | None = None,
+    naming_meta: dict | None = None,
 ) -> dict:
     """Static-ad arm — symmetric counterpart to _process_inmail_campaigns.
 
@@ -2518,8 +2543,28 @@ def _process_static_campaigns(
             if group_geos:
                 facet_urns = _apply_geo_overrides(facet_urns, group_geos, urn_res)
 
-            geo_suffix = f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
-            campaign_name = f"{cohort._stg_name}{geo_suffix}"
+            # Smart Ramp v2 naming convention — see src/campaign_name.py.
+            # Static path: one campaign per (cohort×geo) with 3 creatives, so
+            # no angle suffix needed. Falls back to legacy form when naming_meta
+            # is unavailable.
+            if naming_meta is not None:
+                from src.campaign_name import build_campaign_name
+                campaign_name = build_campaign_name(
+                    ramp_id=ramp_id or "",
+                    submitted_at=naming_meta.get("submitted_at", ""),
+                    cohort=cohort,
+                    geo_group=geo_group,
+                    platform="linkedin",
+                    campaign_type="static",
+                    pod=naming_meta.get("pod"),
+                    domain=naming_meta.get("domain"),
+                    locale=naming_meta.get("locale"),
+                    included_geos=naming_meta.get("included_geos"),
+                    campaign_state=naming_meta.get("campaign_state"),
+                )
+            else:
+                geo_suffix = f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
+                campaign_name = f"{cohort._stg_name}{geo_suffix}"
 
             cohort_add_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_add", []) or [])
             cohort_remove_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_remove", []) or [])
@@ -2712,6 +2757,7 @@ def _process_extra_platform_arm(
     cohort_id_override: str | None,
     destination_url_override: str | None,
     unique_id: str | None = None,
+    naming_meta: dict | None = None,
 ) -> dict:
     """Per-platform static-ad arm for non-LinkedIn platforms (Meta + Google).
 
@@ -2819,10 +2865,28 @@ def _process_extra_platform_arm(
 
         # Per (cohort × geo) isolation: failure in one combo never aborts another.
         try:
-            geo_suffix = (
-                f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
-            )
-            campaign_name = f"{cohort._stg_name}{geo_suffix}"
+            # Smart Ramp v2 naming for the ad-set (Meta) / ad-group (Google);
+            # falls back to legacy <stg_name>[geo] when naming_meta is absent.
+            if naming_meta is not None:
+                from src.campaign_name import build_campaign_name
+                campaign_name = build_campaign_name(
+                    ramp_id=ramp_id or "",
+                    submitted_at=naming_meta.get("submitted_at", ""),
+                    cohort=cohort,
+                    geo_group=geo_group,
+                    platform=platform,
+                    campaign_type="static",
+                    pod=naming_meta.get("pod"),
+                    domain=naming_meta.get("domain"),
+                    locale=naming_meta.get("locale"),
+                    included_geos=naming_meta.get("included_geos"),
+                    campaign_state=naming_meta.get("campaign_state"),
+                )
+            else:
+                geo_suffix = (
+                    f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
+                )
+                campaign_name = f"{cohort._stg_name}{geo_suffix}"
             targeting = resolver.resolve_cohort(cohort, geos=group_geos)
             sub_id = client.create_campaign(
                 name=campaign_name,
@@ -3005,6 +3069,17 @@ def _process_row_both_modes(
     figma_file: str = "",
     figma_node: str = "",
 ) -> dict:
+    # Naming metadata bundle — read once from the row dict so the arm
+    # functions can forward to src.campaign_name.build_campaign_name without
+    # parsing the row shape themselves. See _ramp_to_rows for fields.
+    naming_meta = {
+        "submitted_at":  row.get("ramp_submitted_at", "") or "",
+        "pod":           row.get("job_post_pod"),
+        "domain":        row.get("matched_domain"),
+        "locale":        row.get("job_post_language_code"),
+        "included_geos": row.get("included_geos") or [],
+        "campaign_state": row.get("campaign_state"),
+    }
     """Phase 2.6: run cohort discovery ONCE per row, then dispatch BOTH InMail
     + Static arms.
 
@@ -3096,6 +3171,7 @@ def _process_row_both_modes(
                 cohort_id_override=cohort_id_override,
                 cohort_description=resolved.smart_ramp_brief,
                 unique_id=unique_id,
+                naming_meta=naming_meta,
             )
             return r if isinstance(r, dict) else {}
         except Exception:
@@ -3126,6 +3202,7 @@ def _process_row_both_modes(
                 cohort_id_override=cohort_id_override,
                 cohort_description=resolved.smart_ramp_brief,
                 unique_id=unique_id,
+                naming_meta=naming_meta,
             )
             return r if isinstance(r, dict) else {}
         except Exception:
@@ -3196,6 +3273,7 @@ def _process_row_both_modes(
                         cohort_id_override=cohort_id_override,
                         destination_url_override=destination_url_override,
                         unique_id=unique_id,
+                        naming_meta=naming_meta,
                     )
                     extra_platform_results[platform_name] = r
                 except Exception:
@@ -3249,6 +3327,11 @@ def _ramp_to_rows(ramp) -> list[dict]:
     """Convert a RampRecord into the row-dict shape `_process_row_both_modes`
     consumes. Mirrors the logic in run_launch() lines ~120-138 — kept in one
     place so the CLI and run_launch_for_ramp don't drift.
+
+    Includes Smart Ramp v2 campaign-naming metadata (`job_post_pod`,
+    `matched_domain`, `job_post_language_code`, `campaign_state`,
+    `ramp_submitted_at`) so the leaf-campaign builders can emit names per the
+    pipe-delimited spec at /ramps/<id>/campaigns.
     """
     rows = []
     for cohort in ramp.cohorts:
@@ -3260,6 +3343,7 @@ def _ramp_to_rows(ramp) -> list[dict]:
             "figma_node": "",
             "config_name": ramp.project_name or "",
             "ramp_id": ramp.id,
+            "ramp_submitted_at": ramp.submitted_at or "",
             "cohort_id": cohort.id,
             "cohort_description": cohort.cohort_description,
             "selected_lp_url": cohort.selected_lp_url,
@@ -3268,6 +3352,11 @@ def _ramp_to_rows(ramp) -> list[dict]:
             "target_activations": cohort.target_activations,
             "linear_issue_id": ramp.linear_issue_id,
             "project_id": ramp.project_id,
+            # Smart Ramp v2 campaign-naming metadata
+            "job_post_pod": getattr(cohort, "job_post_pod", None),
+            "matched_domain": getattr(cohort, "matched_domain", None),
+            "job_post_language_code": getattr(cohort, "job_post_language_code", None),
+            "campaign_state": getattr(cohort, "campaign_state", None),
         })
     return rows
 
