@@ -1158,6 +1158,10 @@ def _process_inmail_campaigns(
     destination_url_override: str | None = None,
     included_geos: list[str] | None = None,
     base_rate_usd: float = 50.0,
+    ramp_id: str | None = None,
+    cohort_id_override: str | None = None,
+    cohort_description: str = "",
+    unique_id: str | None = None,
 ) -> None:
     """
     InMail (Message Ad) path — no creative generation.
@@ -3069,6 +3073,10 @@ def _process_row_both_modes(
                 data_driven_exclude_pairs=resolved.data_driven_exclude_pairs,
                 destination_url_override=destination_url_override,
                 included_geos=included_geos,
+                ramp_id=ramp_id,
+                cohort_id_override=cohort_id_override,
+                cohort_description=resolved.smart_ramp_brief,
+                unique_id=unique_id,
             )
             return r if isinstance(r, dict) else {}
         except Exception:
