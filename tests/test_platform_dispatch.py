@@ -73,6 +73,24 @@ class _FakeGeoGroup:
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _no_real_drive_or_anthropic(monkeypatch):
+    """Module-wide isolation: _process_extra_platform_arm makes 3 kinds of
+    real network calls if not mocked:
+      1. upload_text_in_hierarchy (Phase 1 manifest write)
+      2. _save_creative_to_drive (per-ad PNG upload)
+      3. adapt_copy_for_platform (Claude API for copy rewrite)
+
+    Flipping GDRIVE_ENABLED=False skips both Drive paths via existing guards;
+    adapt_copy_for_platform needs a direct stub."""
+    import config
+    monkeypatch.setattr(config, "GDRIVE_ENABLED", False)
+    monkeypatch.setattr("src.gdrive.upload_text_in_hierarchy",
+                        lambda **kw: "stub://drive-manifest")
+    monkeypatch.setattr("src.copy_adapter.adapt_copy_for_platform",
+                        lambda variant, platform, **kw: variant)
+
+
 @pytest.fixture
 def png(tmp_path):
     p = tmp_path / "creative.png"
