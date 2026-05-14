@@ -393,6 +393,33 @@ def build_copy_variants(
     if last_violations:
         log.warning("Proceeding with copy that still has violations after 3 attempts: %s", last_violations)
 
+    # Auto-replace any banned-terminology hits per CLAUDE.md "Don't Say / Instead, Say"
+    # table. Demoted from MUST → SHOULD 2026-05-13; rewriter is the canonical fix
+    # path so banned terms never block the campaign.
+    try:
+        from src.brand_voice_validator import BrandVoiceValidator
+        _bv = BrandVoiceValidator()
+        _COPY_FIELDS = ("headline", "subheadline", "cta", "photo_subject",
+                        "intro_text", "ad_headline", "ad_description")
+        _total_repl: list[tuple[str, str]] = []
+        for v in variants:
+            if not isinstance(v, dict):
+                continue
+            for fld in _COPY_FIELDS:
+                if fld in v and isinstance(v[fld], str) and v[fld]:
+                    new_v, repls = _bv.rewrite_banned_terms(v[fld])
+                    if repls:
+                        v[fld] = new_v
+                        _total_repl.extend(repls)
+        if _total_repl:
+            log.info(
+                "Static copy: auto-replaced %d banned term(s) for '%s': %s",
+                len(_total_repl), cohort.name,
+                [f"{a}→{b}" for a, b in _total_repl],
+            )
+    except Exception as _exc:
+        log.warning("Static copy: banned-term rewriter failed (non-fatal): %s", _exc)
+
     log.info("Generated %d copy variants for '%s'", len(variants), cohort.name)
     return variants
 

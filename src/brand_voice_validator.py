@@ -101,8 +101,12 @@ class BrandVoiceValidator:
             if in_terminology_section and line.startswith("##") and "Terminology" not in line:
                 in_terminology_section = False
 
-            # Parse table rows (format: | ID | Don't Say | Instead, Say | Context |)
-            if in_terminology_section and line.startswith("|") and "---" not in line and "TERM" not in line and "Don't" not in line:
+            # Parse table rows (format: | TERM-NN | Don't Say | Instead, Say | Context |)
+            # Skip the markdown separator row (---) and the header row (Don't Say).
+            # Earlier guard `"TERM" not in line` was a bug — it excluded every
+            # actual data row since each rule_id is "TERM-NN". The
+            # rule_id.startswith("TERM") check below is the correct filter.
+            if in_terminology_section and line.startswith("|") and "---" not in line and "Don't" not in line:
                 parts = [p.strip() for p in line.split("|")[1:-1]]
                 if len(parts) >= 3:
                     try:
@@ -161,7 +165,12 @@ class BrandVoiceValidator:
             },
             "PATTERN-06": {
                 "name": "No Vague Claims",
-                "severity": ViolationSeverity.MUST,
+                # Downgraded MUST → SHOULD (2026-05-13, Pranav). Vague claims
+                # are a stylistic suggestion, not a blocker — the copywriter
+                # already grounds output in concrete facts most of the time.
+                # Treating as SHOULD keeps the copy flowing while flagging for
+                # human review.
+                "severity": ViolationSeverity.SHOULD,
                 "check_fn": self._check_vague_claims,
             },
             "PATTERN-07": {
@@ -245,7 +254,14 @@ class BrandVoiceValidator:
         return report
 
     def _check_terminology(self, copy: str, report: BrandVoiceReport) -> None:
-        """Check for banned terminology."""
+        """Check for banned terminology.
+
+        Banned terms are flagged as SHOULD violations (not MUST) — the copy
+        should be passed through `rewrite_banned_terms()` BEFORE submission,
+        which auto-substitutes each banned term with the approved alternative.
+        See CLAUDE.md "Don't Say / Instead, Say" table for the source of
+        truth. Severity demoted MUST → SHOULD 2026-05-13 (Pranav).
+        """
         copy_lower = copy.lower()
         for rule_id, rule in self.terminology_rules.items():
             banned = rule["banned"].lower()
@@ -257,14 +273,67 @@ class BrandVoiceValidator:
                     v = Violation(
                         rule_id=rule_id,
                         rule_name=f"Banned Terminology: {rule['banned']}",
-                        severity=ViolationSeverity.MUST,
+                        severity=ViolationSeverity.SHOULD,
                         found_text=match.group(),
-                        suggestion=f"Use '{approved}' instead",
+                        suggestion=f"Auto-replaced with '{approved}' via rewrite_banned_terms()",
                         line_number=copy[:match.start()].count("\n"),
                     )
                     report.violations.append(v)
-                    report.must_violations.append(v)
-                    report.is_compliant = False
+                    report.should_violations.append(v)
+
+    def rewrite_banned_terms(self, copy: str) -> tuple[str, list[tuple[str, str]]]:
+        """Auto-replace each banned term in `copy` with its approved equivalent
+        per CLAUDE.md "Don't Say / Instead, Say" table. Case-preserving for
+        the first letter so "Required..." → "Strongly encouraged...".
+
+        Returns (rewritten_copy, replacements_made) where replacements_made
+        is a list of (found, replaced_with) tuples for logging.
+
+        Use BEFORE shipping copy to LinkedIn / Meta / Google — the validator's
+        `_check_terminology` will then flag zero violations on the rewritten
+        text and the copy never blocks on banned-vocabulary alone.
+        """
+        if not copy:
+            return copy, []
+        replacements: list[tuple[str, str]] = []
+        # Sort by banned-term length descending so multi-word phrases
+        # ("worker team", "remove from project") get matched before shorter
+        # tokens that might be substrings.
+        rules = sorted(
+            self.terminology_rules.items(),
+            key=lambda kv: -len(kv[1]["banned"]),
+        )
+        for _rule_id, rule in rules:
+            banned = rule["banned"]
+            approved = rule["approved"]
+            # "Instead, Say" sometimes has comma-separated alternatives
+            # ("Task, opportunity") — pick the first as the canonical.
+            primary = approved.split(",")[0].strip()
+            pattern = re.compile(r"\b" + re.escape(banned) + r"\b", re.IGNORECASE)
+
+            def _repl(m, _primary=primary):
+                found = m.group(0)
+                if not _primary:
+                    return _primary
+                # Case-preservation:
+                # - All-upper input ("REQUIRED") → upper output
+                # - Title-case input ("Required") → title-case output
+                # - Otherwise (lowercase) → lowercase output
+                if found.isupper() and len(found) > 1:
+                    return _primary.upper()
+                if found[0].isupper():
+                    # Title-case only the first character; leave rest as-is
+                    # so multi-word approved values like "Strongly encouraged"
+                    # keep their internal lowercase.
+                    return _primary[0].upper() + _primary[1:]
+                # Lowercase original → lowercase first letter of output
+                return _primary[0].lower() + _primary[1:]
+
+            new_copy, n = pattern.subn(_repl, copy)
+            if n > 0:
+                replacements.append((banned, primary))
+                copy = new_copy
+        return copy, replacements
 
     def _check_active_voice(self, copy: str) -> List[Violation]:
         """Flag passive voice (is/are/was/were + past participle)."""
@@ -372,7 +441,7 @@ class BrandVoiceValidator:
                 violations.append(Violation(
                     rule_id="PATTERN-06",
                     rule_name="No Vague Claims",
-                    severity=ViolationSeverity.MUST,
+                    severity=ViolationSeverity.SHOULD,
                     found_text=vague_term,
                     suggestion=f"Remove '{vague_term}' — be specific with facts",
                 ))

@@ -213,6 +213,26 @@ def build_inmail_variants(
             cta_label = parsed.get("cta_label", "See Opportunities")
             body = parsed.get("body", _fallback_body(tg_category, angle_key))
 
+            # Auto-replace any banned-terminology hits per CLAUDE.md
+            # "Don't Say / Instead, Say" table. Demoted from MUST→SHOULD
+            # 2026-05-13; rewriter is the canonical fix path so banned terms
+            # never block the campaign.
+            try:
+                from src.brand_voice_validator import BrandVoiceValidator
+                _bv = BrandVoiceValidator()
+                subject, _s_repl = _bv.rewrite_banned_terms(subject)
+                body, _b_repl = _bv.rewrite_banned_terms(body)
+                cta_label, _c_repl = _bv.rewrite_banned_terms(cta_label)
+                _all_repl = _s_repl + _b_repl + _c_repl
+                if _all_repl:
+                    log.info(
+                        "InMail angle %s: auto-replaced %d banned term(s): %s",
+                        angle_key, len(_all_repl),
+                        [f"{a}→{b}" for a, b in _all_repl],
+                    )
+            except Exception as _exc:
+                log.warning("InMail angle %s: banned-term rewriter failed (non-fatal): %s", angle_key, _exc)
+
             # Auto-fix hard limit overruns before building the variant.
             if len(subject) > 60:
                 log.warning("Subject over 60 chars (%d), rewording", len(subject))
