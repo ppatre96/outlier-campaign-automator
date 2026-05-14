@@ -18,11 +18,18 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import quote_plus
 
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
 import config
+
+# Set of campaign-group URNs we've discovered to no longer exist on LinkedIn
+# during this process run. Used by `_retry_li_campaign` to short-circuit
+# subsequent retries that reference the same dead group instead of spamming
+# LinkedIn with N copies of the same 400. Cleared per-process (no persistence).
+_DEAD_CAMPAIGN_GROUPS: set[str] = set()
 from src.sheets import SheetsClient, make_stg_id
 from src.redash_db import RedashClient
 from src.smart_ramp_client import SmartRampClient
@@ -1551,12 +1558,43 @@ def _retry_li_campaign(
             )
             return
         master_urn  = f"urn:li:sponsoredCampaignGroup:{row['master_campaign']}"
-        campaign_urn = li_client.create_campaign(
-            name=cohort._stg_name,
-            campaign_group_urn=master_urn,
-            facet_urns=facet_urns,
-            exclude_facet_urns=urn_res.resolve_default_excludes(),
-        )
+        # Skip rows pointing at a group URN we've already proven dead in this
+        # run — avoids spamming LinkedIn with N copies of the same 400 when
+        # multiple sheet rows share an archived master_campaign.
+        if master_urn in _DEAD_CAMPAIGN_GROUPS:
+            log.warning(
+                "Skipping retry for stg_id=%s — campaign group %s was already "
+                "shown to not exist earlier this run. Clear master_campaign "
+                "in the sheet to retry under a fresh group.",
+                row.get("stg_id", "?"), row["master_campaign"],
+            )
+            return
+        try:
+            campaign_urn = li_client.create_campaign(
+                name=cohort._stg_name,
+                campaign_group_urn=master_urn,
+                facet_urns=facet_urns,
+                exclude_facet_urns=urn_res.resolve_default_excludes(),
+            )
+        except requests.exceptions.HTTPError as exc:
+            resp = exc.response
+            body = (resp.text or "") if resp is not None else ""
+            if (
+                resp is not None
+                and resp.status_code == 400
+                and "FIELD_VALUE_DOES_NOT_EXIST" in body
+                and "campaignGroup" in body
+            ):
+                _DEAD_CAMPAIGN_GROUPS.add(master_urn)
+                log.error(
+                    "Retry skipped for stg_id=%s — campaign group %s no longer "
+                    "exists on LinkedIn (archived or deleted). Clear the "
+                    "master_campaign column for this row in the Triggers sheet "
+                    "so the next run creates a fresh group.",
+                    row.get("stg_id", "?"), row["master_campaign"],
+                )
+                return
+            raise
         campaign_id = campaign_urn.rsplit(":", 1)[-1]
         sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
         log.info("Retry image ad campaign %s (no creative — re-run full launch to regenerate)", campaign_urn)
