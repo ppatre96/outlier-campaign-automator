@@ -136,16 +136,25 @@ def build_success_message(
     # (e.g., Meta SAC, Google permission denied). PNGs + cohort/copy details
     # are still in Drive — Diego/Bryan can build the campaign by hand from
     # the manifest at the URL below.
+    # URL FORMATTING RULE (Pranav 2026-05-13): every URL goes on its OWN line
+    # with a blank line before AND after. Inline URLs ("Label: https://...")
+    # get merged with the next word in Slack's mobile/text renderer. Indent
+    # the URL line with 4 spaces so it visually nests under the bullet.
     handoff_for_render = {p: u for p, u in (manual_handoff_urls or {}).items() if u}
     if handoff_for_render:
         lines.append("*Manual handoff — creatives ready in Drive*")
         for plat, url in handoff_for_render.items():
             label = {"meta": "Meta (Diego)", "google": "Google Ads (Bryan)"}.get(plat, plat.title())
-            lines.append(f"  • {label}: {url}")
+            lines.append(f"  • {label}:")
+            lines.append("")
+            lines.append(f"    {url}")
+            lines.append("")
         lines.append("")
 
     lines.append("Review and activate in LinkedIn Campaign Manager:")
+    lines.append("")
     lines.append(LINKEDIN_CAMPAIGN_MANAGER_URL)
+    lines.append("")
     lines.append("Full per-creative breakdown in the Triggers sheet → Campaign Registry tab.")
     return "\n".join(lines)
 
