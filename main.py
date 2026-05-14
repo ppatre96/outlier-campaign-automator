@@ -1176,7 +1176,28 @@ def _process_inmail_campaigns(
         )
         return
 
-    group_name = f"Outlier {flow_id} {location} InMail".strip()
+    # Group-level name: Smart Ramp v2 spec without the per-leaf angle/geo
+    # detail (those live on the child campaigns). Falls back to the legacy
+    # "Outlier <flow_id> <location> InMail" pattern when naming_meta isn't
+    # provided (CLI / dry-run / tests). Format segment is "InMail Group"
+    # to distinguish from leaf "Inmail" format.
+    if naming_meta is not None:
+        from src.campaign_name import build_campaign_name as _build_grp_name
+        group_name = _build_grp_name(
+            ramp_id=ramp_id or "",
+            submitted_at=naming_meta.get("submitted_at", ""),
+            cohort=None,
+            platform="linkedin",
+            campaign_type="inmail",
+            format_override="InMail Group",
+            pod=naming_meta.get("pod"),
+            domain=naming_meta.get("domain"),
+            locale=naming_meta.get("locale"),
+            included_geos=naming_meta.get("included_geos"),
+            campaign_state=naming_meta.get("campaign_state"),
+        )
+    else:
+        group_name = f"Outlier {flow_id} {location} InMail".strip()
 
     from src.geo_tiers import group_geos_for_campaigns, GeoCampaignGroup
     from src.campaign_registry import log_campaign as _reg_log_inmail
@@ -2521,8 +2542,26 @@ def _process_static_campaigns(
             "campaign_specs":       campaign_specs,  # multi-platform arms reuse these
         }
 
-    # Create campaign group + campaigns — one per (cohort × geo_group) spec
-    group_name = f"Outlier {flow_id} {location} Static".strip()
+    # Create campaign group + campaigns — one per (cohort × geo_group) spec.
+    # Group-level name: Smart Ramp v2 spec when naming_meta is available;
+    # legacy "Outlier <flow_id> <location> Static" otherwise.
+    if naming_meta is not None:
+        from src.campaign_name import build_campaign_name as _build_grp_name
+        group_name = _build_grp_name(
+            ramp_id=ramp_id or "",
+            submitted_at=naming_meta.get("submitted_at", ""),
+            cohort=None,
+            platform="linkedin",
+            campaign_type="static",
+            format_override="Single Image Group",
+            pod=naming_meta.get("pod"),
+            domain=naming_meta.get("domain"),
+            locale=naming_meta.get("locale"),
+            included_geos=naming_meta.get("included_geos"),
+            campaign_state=naming_meta.get("campaign_state"),
+        )
+    else:
+        group_name = f"Outlier {flow_id} {location} Static".strip()
     group_urn = li_client.create_campaign_group(group_name)
     out_groups = [group_urn]
     log.debug("_process_static_campaigns: group=%s", group_urn)
@@ -2933,7 +2972,25 @@ def _process_extra_platform_arm(
     # ── Phase 2: Best-effort platform-side campaign create ──────────────────
     # One platform-level container ("Campaign" on Meta/Google) per ramp run.
     # Cohort × geo × angle become Ad Sets / Ad Groups under it.
-    group_name = f"Outlier {flow_id} {location} {platform.title()}".strip()
+    # Group-level name uses the Smart Ramp v2 spec when naming_meta is
+    # available; legacy "Outlier <flow> <loc> <Platform>" otherwise.
+    if naming_meta is not None:
+        from src.campaign_name import build_campaign_name as _build_grp_name
+        group_name = _build_grp_name(
+            ramp_id=ramp_id or "",
+            submitted_at=naming_meta.get("submitted_at", ""),
+            cohort=None,
+            platform=platform,
+            campaign_type="static",
+            format_override=f"{platform.title()} Parent",
+            pod=naming_meta.get("pod"),
+            domain=naming_meta.get("domain"),
+            locale=naming_meta.get("locale"),
+            included_geos=naming_meta.get("included_geos"),
+            campaign_state=naming_meta.get("campaign_state"),
+        )
+    else:
+        group_name = f"Outlier {flow_id} {location} {platform.title()}".strip()
     # Union of all targeted geos across child ad-set specs — Meta needs this at
     # the campaign level for special_ad_category_country under EMPLOYMENT SAC,
     # else child ad-set creation fails with a geo-mismatch 400.
