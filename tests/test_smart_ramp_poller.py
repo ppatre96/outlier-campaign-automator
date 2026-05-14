@@ -109,6 +109,15 @@ def test_edit_detection_v2(tmp_path, monkeypatch):
     srp = _load_module()
     monkeypatch.setattr(srp, "STATE_PATH", tmp_path / "processed_ramps.json")
     monkeypatch.setattr(srp, "LOCK_PATH", tmp_path / "smart_ramp_poller.lock")
+    # Stub the real pipeline — `dry_run=True` still hits Redash + LinkedIn
+    # via run_launch_for_ramp. We only want to exercise version-bump logic.
+    monkeypatch.setattr(
+        srp, "run_ramp_pipeline",
+        lambda record, dry_run=False, version=1: {
+            "ok": True, "result": {},
+            "extra_platform_campaigns": {}, "manual_handoff_urls": {},
+        },
+    )
 
     # Seed state: ramp at v1 with old signature
     r_v1 = _build_ramp(summary="v1 summary")

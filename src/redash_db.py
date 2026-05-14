@@ -544,9 +544,16 @@ class RedashClient:
         self,
         signup_flow_id: str,
         config_name: str,
+        project_id: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> pd.DataFrame:
+        if project_id:
+            log.debug(
+                "RedashClient.fetch_screenings: project_id=%s ignored — "
+                "RESUME_SQL is flow-based; tier CTEs not yet wired here",
+                project_id,
+            )
         sql = RESUME_SQL.format(
             signup_flow_id=_esc(signup_flow_id),
             config_name=_esc(config_name),
