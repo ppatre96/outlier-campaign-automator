@@ -286,31 +286,74 @@ def _post_via_webhook(text: str) -> bool:
         return False
 
 
-def _send_to_all_targets(text: str) -> dict:
+def _enqueue_via_drive(text: str, ramp_id: str = "") -> bool:
+    """Primary delivery path (2026-05-13+): drop the summary into a Drive
+    queue folder. A companion RemoteTrigger cron polls the folder every 5
+    minutes and posts each file to Slack via the Claude.ai-inherited Slack
+    MCP connector — no bot token required, and the same OAuth identity
+    Diego/Bryan/Tuan see on Pranav's hourly heartbeat trigger.
+
+    Returns True if the queue write succeeded.
+    """
+    try:
+        from src.gdrive import enqueue_slack_summary
+        targets = [
+            {"kind": kind, "id": tid}
+            for kind, tid in (getattr(config, "SLACK_RAMP_NOTIFY_TARGETS", []) or [])
+        ]
+        url = enqueue_slack_summary(
+            ramp_id=ramp_id, summary_text=text, targets=targets,
+        )
+        if url:
+            log.info("Slack delivery: queued via Drive (RemoteTrigger will post) → %s", url)
+            return True
+        log.warning("Slack delivery: Drive queue write returned empty URL")
+        return False
+    except Exception as exc:
+        log.warning(
+            "Slack delivery: Drive queue write failed (%s) — falling back to bot/webhook path",
+            exc,
+        )
+        return False
+
+
+def _send_to_all_targets(text: str, ramp_id: str = "") -> dict:
     """Send `text` to every target in config.SLACK_RAMP_NOTIFY_TARGETS.
 
-    Returns a dict {target_str: success_bool} so callers (and tests) can verify
-    EXACTLY 3 sends were attempted, with per-target outcome. The reserved key
-    `webhook_fallback` is populated only when ALL three primary targets failed
-    AND `SLACK_WEBHOOK_URL` was attempted.
+    Delivery order (2026-05-13 — bot-tokenless preferred):
+      1. Drive queue → RemoteTrigger cron posts via Claude.ai Slack MCP
+         (no bot token; works across rotations; covers Diego/Bryan/Tuan
+         mentions in the channel post)
+      2. Bot token (slack_sdk.WebClient) — kept as legacy path; opportunistic
+      3. Webhook fallback — last-resort, posts to Pranav DM only
+
+    Returns a dict {target_str: success_bool}. Reserved keys:
+      - `drive_queue`        — Drive queue write outcome (primary)
+      - `webhook_fallback`   — only populated when bot+queue both failed
     """
-    if not config.SLACK_BOT_TOKEN:
-        log.error(
-            "SLACK_BOT_TOKEN not set — attempting webhook fallback for at least Pranav DM."
-        )
-        outcomes = {f"{kind}:{tid}": False for kind, tid in config.SLACK_RAMP_NOTIFY_TARGETS}
-        outcomes["webhook_fallback"] = _post_via_webhook(text)
-        return outcomes
-
-    client = WebClient(token=config.SLACK_BOT_TOKEN)
     outcomes: dict[str, bool] = {}
-    for target in config.SLACK_RAMP_NOTIFY_TARGETS:
-        kind, tid = target
-        outcomes[f"{kind}:{tid}"] = _send_to_target(client, target, text)
 
-    # Degraded-mode fallback: if EVERY primary target failed, try the webhook
-    # so Pranav at least sees the notification while the bot token is broken.
-    if not any(outcomes.values()):
+    # 1) Drive queue — primary path
+    outcomes["drive_queue"] = _enqueue_via_drive(text, ramp_id=ramp_id)
+
+    # 2) Opportunistic bot-token send (kept for back-compat; many runs
+    # won't have a valid token, that's fine — the queue is the real path).
+    if config.SLACK_BOT_TOKEN:
+        client = WebClient(token=config.SLACK_BOT_TOKEN)
+        for target in config.SLACK_RAMP_NOTIFY_TARGETS:
+            kind, tid = target
+            outcomes[f"{kind}:{tid}"] = _send_to_target(client, target, text)
+    else:
+        for kind, tid in config.SLACK_RAMP_NOTIFY_TARGETS:
+            outcomes[f"{kind}:{tid}"] = False
+
+    # 3) Webhook fallback only if BOTH primary (drive queue) AND all bot
+    # targets failed. The webhook only reaches Pranav DM by design, so
+    # we don't want to fire it as long as the queue path succeeded.
+    bot_targets_ok = any(
+        v for k, v in outcomes.items() if k != "drive_queue"
+    )
+    if not outcomes["drive_queue"] and not bot_targets_ok:
         outcomes["webhook_fallback"] = _post_via_webhook(text)
 
     return outcomes
@@ -322,7 +365,8 @@ def _send_to_all_targets(text: str) -> dict:
 
 
 def notify_success(ramp_record, result: dict, version: int = 1) -> dict:
-    """Send the success Slack message to all 3 targets. Returns per-target outcomes."""
+    """Send the success Slack message via the Drive queue (primary) + bot/webhook
+    fallback. Returns per-target outcomes."""
     text = build_success_message(
         ramp_id=ramp_record.id,
         project_name=ramp_record.project_name or "—",
@@ -332,13 +376,14 @@ def notify_success(ramp_record, result: dict, version: int = 1) -> dict:
         extra_platform_campaigns=result.get("extra_platform_campaigns") or {},
         manual_handoff_urls=result.get("manual_handoff_urls") or {},
     )
-    return _send_to_all_targets(text)
+    return _send_to_all_targets(text, ramp_id=ramp_record.id)
 
 
 def notify_escalation(
     ramp_record, error_class: str, traceback_text: Optional[str]
 ) -> dict:
-    """Send the escalation Slack message to all 3 targets. Returns per-target outcomes."""
+    """Send the escalation Slack message via the Drive queue (primary) + bot/webhook
+    fallback. Returns per-target outcomes."""
     text = build_escalation_message(
         ramp_id=ramp_record.id,
         project_name=ramp_record.project_name or "—",
@@ -346,4 +391,4 @@ def notify_escalation(
         error_class=error_class,
         traceback_text=traceback_text,
     )
-    return _send_to_all_targets(text)
+    return _send_to_all_targets(text, ramp_id=ramp_record.id)

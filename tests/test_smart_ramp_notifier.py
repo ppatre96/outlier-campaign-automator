@@ -88,21 +88,29 @@ def _make_fake_webclient(open_fail_for_uid=None, post_fail_for_channel=None):
 
 
 def test_dm_to_pranav_diego_and_channel(monkeypatch, fake_ramp):
-    """SR-06: notify_success sends EXACTLY 3 chat_postMessage calls — Pranav, Diego, C0B0NBB986L."""
+    """SR-06: notify_success sends EXACTLY 3 chat_postMessage calls (bot-token
+    opportunistic path) — Pranav, Diego, C0B0NBB986L. After the 2026-05-13
+    rewire, the primary delivery path is the Drive queue + RemoteTrigger;
+    bot-token sends still run opportunistically when the token is valid."""
     import config
     from src import smart_ramp_notifier as N
 
     fake_client, calls = _make_fake_webclient()
     monkeypatch.setattr(N, "WebClient", lambda token=None: fake_client)
     monkeypatch.setattr(config, "SLACK_BOT_TOKEN", "xoxb-fake")
+    # Stub the Drive queue write so the test doesn't touch real Drive auth.
+    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="": True)
 
     outcomes = N.notify_success(fake_ramp, _fake_result(n_cohorts=2), version=1)
 
-    # 3 outcomes, all True
-    assert len(outcomes) == 3
-    assert all(outcomes.values()), f"all 3 targets should succeed: {outcomes}"
+    # 4 outcomes: drive_queue (primary) + 3 bot targets — all True
+    assert "drive_queue" in outcomes
+    assert outcomes["drive_queue"] is True
+    bot_outcomes = {k: v for k, v in outcomes.items() if k != "drive_queue"}
+    assert len(bot_outcomes) == 3, f"expected 3 bot targets, got {len(bot_outcomes)}"
+    assert all(bot_outcomes.values()), f"all 3 bot targets should succeed: {bot_outcomes}"
 
-    # EXACTLY 3 chat_postMessage calls
+    # EXACTLY 3 chat_postMessage calls (bot path)
     post_calls = [c for c in calls if c["method"] == "chat_postMessage"]
     assert len(post_calls) == 3, f"expected exactly 3 chat_postMessage calls, got {len(post_calls)}"
 
@@ -124,6 +132,7 @@ def test_two_step_conversations_open_for_dms(monkeypatch, fake_ramp):
 
     fake_client, calls = _make_fake_webclient()
     monkeypatch.setattr(N, "WebClient", lambda token=None: fake_client)
+    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="": True)
     monkeypatch.setattr(config, "SLACK_BOT_TOKEN", "xoxb-fake")
 
     N.notify_success(fake_ramp, _fake_result(), version=1)
@@ -234,12 +243,16 @@ def test_one_target_failure_does_not_block_others(monkeypatch, fake_ramp):
 
 
 def test_webhook_fallback_when_all_targets_fail(monkeypatch, fake_ramp):
-    """When all 3 bot-token targets fail (e.g., expired token), notifier falls
-    back to SLACK_WEBHOOK_URL so Pranav still gets the message. Diego DM and
-    C0B0NBB986L stay silent — webhook only covers one destination."""
+    """When Drive queue AND all 3 bot-token targets fail (token expired,
+    no Drive auth), notifier falls back to SLACK_WEBHOOK_URL so Pranav still
+    gets the message. Diego DM and C0B0NBB986L stay silent — webhook only
+    covers one destination."""
     import config
     from src import smart_ramp_notifier as N
     from slack_sdk.errors import SlackApiError
+
+    # Drive queue also fails
+    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="": False)
 
     # Make every bot-token call fail with token_expired
     instance = MagicMock()
