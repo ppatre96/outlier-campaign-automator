@@ -662,7 +662,15 @@ def _call_gemini_vision(prompt: str, creative_path: str, reference_path: str | N
             "temperature": 0.0,
         },
     }
-    resp = requests.post(url, json=payload, timeout=60)
+    # 120s timeout (was 60s) — large reference + creative images plus the
+    # cold-start latency on Gemini vision occasionally crossed the 60s mark
+    # on the 2026-05-14 03:55 UTC run. One transient retry on ReadTimeout
+    # before bubbling up.
+    try:
+        resp = requests.post(url, json=payload, timeout=120)
+    except requests.exceptions.ReadTimeout as exc:
+        log.warning("QC vision call timed out after 120s — retrying once: %s", exc)
+        resp = requests.post(url, json=payload, timeout=120)
     if resp.status_code != 200:
         raise RuntimeError(f"Gemini vision QC error {resp.status_code}: {resp.text[:400]}")
 
@@ -835,14 +843,6 @@ def qc_creative(
             retry_instruction="QC infrastructure error — do not ship, investigate before retrying",
         )
 
-    checks = {"Copy within limits (words/chars/lines)": True}
-    violations = []
-    retry_hints: list[str] = []
-
-    # When no reference image is available, mimicry check cannot be evaluated —
-    # auto-pass it (we can't mimic a reference we never sent to Gemini).
-    reference_unavailable = not reference_path or not Path(str(reference_path)).exists()
-
     check_map = {
         "rendered_text_in_photo":      ("No rendered text in photo",     "Gemini rendered text/letters/logos INTO the photo. Add explicit 'ZERO TEXT in image. No words, letters, logos, wordmarks, earnings figures, or caption-like shapes anywhere'."),
         "duplicate_logo":              ("No duplicate logos",            "A second Outlier logo is visible inside the photograph. Tell Gemini 'Do NOT render any Outlier logo, brand mark, or wordmark — the logo is composited post-hoc.'"),
@@ -857,6 +857,46 @@ def qc_creative(
         "text_zone_contrast":          ("Contrast adequate",             "Text zones are too bright. Tell Gemini 'Top 30%% must be mid-tone to dark background. No white walls, no blown-out windows in text zones.'"),
         "professional_quality":        ("Professional quality",          "Image lacks professional polish. Tell Gemini 'magazine-quality editorial photography, professional color grading, balanced composition, appropriate for a Fortune-500 LinkedIn campaign'."),
     }
+
+    # Detect malformed QC vision responses BEFORE we walk check_map. Gemini
+    # sometimes returns valid JSON that's missing the expected check keys
+    # entirely (empty {}, wrong-shaped wrapper, etc.). The old code treated
+    # this as "all 9 checks failed" with detail='check failed' on each —
+    # indistinguishable from a real visual reject and hiding the actual
+    # infrastructure error. Observed 8× on the 2026-05-13 GMR-0020 rerun.
+    # Threshold: at least half the expected keys must be present-as-dict
+    # before we trust the response.
+    if not isinstance(result, dict) or sum(
+        1 for k in check_map if isinstance(result.get(k), dict)
+    ) < len(check_map) // 2:
+        import json as _json
+        try:
+            raw_preview = _json.dumps(result, default=str)[:500]
+        except Exception:
+            raw_preview = repr(result)[:500]
+        log.error(
+            "QC vision returned malformed response (missing expected check keys): %s",
+            raw_preview,
+        )
+        return QCReport(
+            verdict="FAIL",
+            checks={"qc_infrastructure": False},
+            violations=[f"QC vision response malformed (missing check keys): {raw_preview[:200]}"],
+            retry_target="gemini",
+            retry_instruction=(
+                "QC vision response was malformed — Gemini returned JSON that "
+                "doesn't include the expected check keys. Retry with the same "
+                "creative; if it persists, the QC prompt may need adjustment."
+            ),
+        )
+
+    checks = {"Copy within limits (words/chars/lines)": True}
+    violations = []
+    retry_hints: list[str] = []
+
+    # When no reference image is available, mimicry check cannot be evaluated —
+    # auto-pass it (we can't mimic a reference we never sent to Gemini).
+    reference_unavailable = not reference_path or not Path(str(reference_path)).exists()
 
     def _pick_hint(key: str, default_hint: str) -> str:
         variants = _RETRY_HINT_VARIANTS.get(key)
