@@ -99,6 +99,7 @@ COLUMNS = [
     "subheadline",
     "photo_subject",
     "creative_image_path",      # local path to the rendered PNG (used to embed image in Sheets)
+    "cohort_geo",               # "<stg_id>__<geo_cluster>" — matches the Drive PNG folder name; used by reconcile_creative_paths() to backfill empty creative_image_path entries by walking Drive
     "inmail_subject",
     "inmail_body_preview",      # first 150 chars
     # ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -142,6 +143,7 @@ class CampaignEntry:
     subheadline:            str = ""
     photo_subject:          str = ""
     creative_image_path:    str = ""
+    cohort_geo:             str = ""    # "<stg_id>__<geo_cluster>" — Drive PNG folder name
     inmail_subject:         str = ""
     inmail_body_preview:    str = ""
     created_at:             str = ""
@@ -299,6 +301,7 @@ def log_campaign(
     platform_campaign_id: str = "",
     platform_creative_id: str = "",
     campaign_name: str = "",
+    cohort_geo: str = "",
 ) -> None:
     """Append one campaign row to the registry. Safe to call from any platform arm.
 
@@ -339,6 +342,7 @@ def log_campaign(
         subheadline=subheadline,
         photo_subject=photo_subject,
         creative_image_path=creative_image_path,
+        cohort_geo=cohort_geo,
         inmail_subject=inmail_subject,
         inmail_body_preview=inmail_body[:150] if inmail_body else "",
         gemini_prompt=gemini_prompt,
@@ -405,6 +409,206 @@ def update_metrics(
             log.info("Registry: metrics updated for %s", linkedin_campaign_urn)
         else:
             log.warning("Registry: campaign not found for metrics update: %s", linkedin_campaign_urn)
+
+
+def reconcile_creative_paths(
+    smart_ramp_id: str,
+    platform: str = "linkedin",
+    *,
+    legacy_positional: bool = False,
+    legacy_window_minutes: int = 60,
+) -> dict:
+    """Backfill empty `creative_image_path` entries by walking Drive.
+
+    Pipeline writes registry rows at campaign-creation time. If the PNG render
+    or Drive upload happens AFTER that (Gemini retry, async upload, slow Drive
+    sync), the registry row ends up with an empty `creative_image_path` even
+    though the PNG eventually lands in Drive at the canonical hierarchy
+    `<ramp>/<platform>/<cohort_geo>/<angle>.png`.
+
+    DEFAULT BEHAVIOR (safe — exact match only):
+      For each row with `cohort_geo` set, look up the PNG at the row's
+      `cohort_geo` + `angle` coordinates and patch the row. Rows without
+      `cohort_geo` are left alone.
+
+    OPT-IN LEGACY MODE (`legacy_positional=True`):
+      For rows without `cohort_geo` (pre-cohort_geo-column rows), best-effort
+      positional match by `(geo_cluster, angle)` ordered by `created_at`. Only
+      assigns a PNG if its Drive `createdTime` is within `legacy_window_minutes`
+      of the row's `created_at` — prevents pairing a 21:45 row to a 03:00 PNG
+      just because they share a (geo, angle).
+
+      Even with the window guard, legacy positional matching can mis-assign
+      a PNG to the wrong row when multiple Smart Ramp rows mined the same
+      (cohort × geo) pair (duplicate cohort matches with distinct campaigns).
+      Use only when you accept that ambiguity.
+
+    Returns a dict with counts of {patched, unmatched, ambiguous_legacy}.
+
+    Idempotent — running twice patches nothing new on the second pass.
+    """
+    try:
+        from src.gdrive import _service, _drive_id, _root_parent, find_or_create_folder
+    except Exception as exc:  # pragma: no cover — Drive optional in tests
+        log.warning("reconcile_creative_paths: Drive client unavailable: %s", exc)
+        return {"patched": 0, "unmatched": 0, "ambiguous_legacy": 0}
+
+    svc = _service()
+    drive_id = _drive_id()
+
+    def _list(parent_id: str) -> list[dict]:
+        kw = {
+            "q": f"'{parent_id}' in parents and trashed = false",
+            "fields": "files(id,name,mimeType,webViewLink,createdTime)",
+            "pageSize": 200,
+            "supportsAllDrives": True,
+            "includeItemsFromAllDrives": True,
+        }
+        if drive_id:
+            kw["corpora"] = "drive"
+            kw["driveId"] = drive_id
+        return svc.files().list(**kw).execute().get("files", [])
+
+    # Resolve Drive folder for this ramp+platform.
+    root = _root_parent()
+    try:
+        ramp_folder = find_or_create_folder(smart_ramp_id, root, svc=svc)
+        platform_folder = find_or_create_folder(platform, ramp_folder, svc=svc)
+    except Exception as exc:
+        log.warning(
+            "reconcile_creative_paths(%s, %s): folder lookup failed: %s",
+            smart_ramp_id, platform, exc,
+        )
+        return {"patched": 0, "unmatched": 0, "ambiguous_legacy": 0}
+
+    # Walk: `<ramp>/<platform>/<cohort_geo>/<angle>.png`. Build:
+    #   exact_by_key: {(cohort_geo, angle): drive_url}     — direct lookup
+    #   legacy_by_geo_angle: {(geo_cluster, angle): [(created_at, url), ...]}
+    #     used for positional fallback when cohort_geo is missing on the row.
+    exact_by_key: dict[tuple[str, str], str] = {}
+    legacy_by_geo_angle: dict[tuple[str, str], list[tuple[str, str]]] = {}
+
+    for sub in _list(platform_folder):
+        if sub.get("mimeType") != "application/vnd.google-apps.folder":
+            continue
+        sub_name = sub.get("name", "")
+        # cohort_geo folder convention: "<stg_id>__<geo_cluster>"
+        if "__" not in sub_name:
+            continue
+        geo_cluster = sub_name.rsplit("__", 1)[-1]
+        for f in _list(sub["id"]):
+            name = f.get("name", "")
+            if not name.lower().endswith(".png"):
+                continue
+            angle = name.rsplit(".", 1)[0].strip()
+            url = f.get("webViewLink", "")
+            if not url:
+                continue
+            exact_by_key[(sub_name, angle)] = url
+            legacy_by_geo_angle.setdefault((geo_cluster, angle), []).append(
+                (f.get("createdTime", ""), url),
+            )
+
+    # Sort the legacy positional candidates by createdTime ascending.
+    for k in legacy_by_geo_angle:
+        legacy_by_geo_angle[k].sort(key=lambda t: t[0])
+
+    patched = 0
+    unmatched = 0
+    ambiguous_legacy = 0
+
+    with _registry_lock:
+        records = _load()
+
+        # Exact match by cohort_geo (new rows written post-this-fix). This is
+        # always safe — folder name uniquely identifies the campaign row.
+        for r in records:
+            if r.get("smart_ramp_id") != smart_ramp_id:
+                continue
+            if (r.get("platform") or "linkedin") != platform:
+                continue
+            if r.get("creative_image_path"):
+                continue
+            cg = r.get("cohort_geo") or ""
+            if not cg:
+                continue  # legacy handled below (when opted in)
+            url = exact_by_key.get((cg, r.get("angle", "")))
+            if url:
+                r["creative_image_path"] = url
+                patched += 1
+            else:
+                unmatched += 1
+
+        # Legacy positional fallback — explicit opt-in only. Pairs rows to
+        # PNGs by (geo_cluster, angle) ordered by created_at, with a time-
+        # window guard to prevent pairing a 21:45 row to a 03:00 PNG that
+        # came from a different ramp run.
+        if legacy_positional:
+            from datetime import datetime as _dt, timedelta as _td
+
+            def _row_ts(r):
+                """Parse '2026-05-14 10:00 UTC' → datetime, or None."""
+                ts = r.get("created_at", "") or ""
+                try:
+                    return _dt.strptime(ts, "%Y-%m-%d %H:%M UTC")
+                except Exception:
+                    return None
+
+            def _png_ts(iso):
+                try:
+                    return _dt.strptime(iso[:19], "%Y-%m-%dT%H:%M:%S")
+                except Exception:
+                    return None
+
+            window = _td(minutes=legacy_window_minutes)
+            legacy_rows = [
+                r for r in records
+                if r.get("smart_ramp_id") == smart_ramp_id
+                and (r.get("platform") or "linkedin") == platform
+                and not r.get("creative_image_path")
+                and not r.get("cohort_geo")
+            ]
+            legacy_rows.sort(key=lambda r: r.get("created_at", ""))
+            legacy_consumed: dict[tuple[str, str], set[int]] = {}
+            for r in legacy_rows:
+                key = (r.get("geo_cluster", ""), r.get("angle", ""))
+                candidates = legacy_by_geo_angle.get(key, [])
+                row_ts = _row_ts(r)
+                consumed = legacy_consumed.setdefault(key, set())
+                chosen_idx = None
+                # Pick the EARLIEST not-yet-consumed candidate whose
+                # createdTime is within `window` of the row's created_at.
+                for i, (iso, url) in enumerate(candidates):
+                    if i in consumed:
+                        continue
+                    png_ts = _png_ts(iso)
+                    if row_ts is None or png_ts is None:
+                        chosen_idx = i
+                        break
+                    if abs(png_ts - row_ts) <= window:
+                        chosen_idx = i
+                        break
+                if chosen_idx is not None:
+                    r["creative_image_path"] = candidates[chosen_idx][1]
+                    consumed.add(chosen_idx)
+                    patched += 1
+                    if len(candidates) > 1:
+                        ambiguous_legacy += 1
+                else:
+                    unmatched += 1
+
+        if patched:
+            _save(records)
+
+    log.info(
+        "reconcile_creative_paths(%s, %s): patched=%d unmatched=%d ambiguous_legacy=%d",
+        smart_ramp_id, platform, patched, unmatched, ambiguous_legacy,
+    )
+    return {
+        "patched":          patched,
+        "unmatched":        unmatched,
+        "ambiguous_legacy": ambiguous_legacy,
+    }
 
 
 def deprecate_campaign(linkedin_campaign_urn: str, reason: str) -> None:

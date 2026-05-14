@@ -2746,6 +2746,7 @@ def _process_static_campaigns(
                     subheadline=variant.get("subheadline", ""),
                     photo_subject=variant.get("photo_subject", ""),
                     creative_image_path=drive_url or (str(png_path) if png_path else ""),
+                    cohort_geo=_cohort_geo_label(cohort, geo_group),
                     gemini_prompt=qc_report.get("gemini_prompt", ""),
                     campaign_name=campaign_name,
                 )
@@ -2858,6 +2859,23 @@ def _process_static_campaigns(
                     angle_label, ad_result.error_class, ad_result.error_message,
                 )
                 creative_paths[row_id] = ""
+
+    # Reconciliation pass: registry rows are logged at campaign-creation time,
+    # but PNG renders + Drive uploads may complete later (retries, async). Walk
+    # Drive at the canonical hierarchy and patch any rows for this ramp that
+    # ended up with an empty creative_image_path.
+    if ramp_id and config.GDRIVE_ENABLED:
+        try:
+            from src.campaign_registry import reconcile_creative_paths
+            stats = reconcile_creative_paths(ramp_id, "linkedin")
+            if stats.get("patched"):
+                log.info(
+                    "_process_static_campaigns: reconciled creative_image_path "
+                    "for %d row(s) (unmatched=%d, ambiguous_legacy=%d)",
+                    stats["patched"], stats["unmatched"], stats["ambiguous_legacy"],
+                )
+        except Exception as _exc:
+            log.warning("creative-path reconciliation failed (non-fatal): %s", _exc)
 
     return {
         "campaigns": out_campaigns,
@@ -3258,6 +3276,7 @@ def _process_extra_platform_arm(
                     subheadline=variant.get("subheadline", "") if variant else "",
                     photo_subject=variant.get("photo_subject", "") if variant else "",
                     creative_image_path=drive_url or (str(png_path) if png_path else ""),
+                    cohort_geo=_cohort_geo_label(cohort, geo_group),
                     platform=platform,
                     platform_campaign_id=sub_id,
                     platform_creative_id=ad_result.creative_id or "",
