@@ -560,6 +560,17 @@ def reconcile_creative_paths(
                 except Exception:
                     return None
 
+            # IDEMPOTENCY GUARD: collect URLs already assigned to ANY row in
+            # the registry. We must not reassign them — otherwise running
+            # reconcile twice produces duplicate URL ↔ row mappings. This
+            # makes the legacy positional path safe to re-run.
+            already_assigned: set[str] = {
+                (r.get("creative_image_path") or "")
+                for r in records
+                if r.get("creative_image_path")
+            }
+            already_assigned.discard("")
+
             window = _td(minutes=legacy_window_minutes)
             legacy_rows = [
                 r for r in records
@@ -577,9 +588,10 @@ def reconcile_creative_paths(
                 consumed = legacy_consumed.setdefault(key, set())
                 chosen_idx = None
                 # Pick the EARLIEST not-yet-consumed candidate whose
-                # createdTime is within `window` of the row's created_at.
+                # createdTime is within `window` of the row's created_at
+                # AND whose URL isn't already assigned elsewhere.
                 for i, (iso, url) in enumerate(candidates):
-                    if i in consumed:
+                    if i in consumed or url in already_assigned:
                         continue
                     png_ts = _png_ts(iso)
                     if row_ts is None or png_ts is None:
@@ -589,8 +601,10 @@ def reconcile_creative_paths(
                         chosen_idx = i
                         break
                 if chosen_idx is not None:
-                    r["creative_image_path"] = candidates[chosen_idx][1]
+                    chosen_url = candidates[chosen_idx][1]
+                    r["creative_image_path"] = chosen_url
                     consumed.add(chosen_idx)
+                    already_assigned.add(chosen_url)
                     patched += 1
                     if len(candidates) > 1:
                         ambiguous_legacy += 1
