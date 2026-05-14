@@ -185,6 +185,134 @@ def upload_creative_in_hierarchy(
 # ── Slack notification queue (bot-tokenless delivery via RemoteTrigger) ──────
 
 
+def _summary_signature(summary_text: str) -> str:
+    """Short stable signature for dedup: first 12 hex chars of sha256(text)."""
+    import hashlib
+    return hashlib.sha256((summary_text or "").encode("utf-8")).hexdigest()[:12]
+
+
+def _find_in_queue(svc, ramp_id: str, sig: str) -> dict | None:
+    """Return {id,name,webViewLink,parent} of any file in pending/ or sent/
+    whose filename starts with `<ramp_id>_<sig>_`. Used for (ramp, content)
+    idempotency on enqueue — same content => skip a second write."""
+    pending_id = _ensure_path(["_slack_queue", "pending"], svc=svc)
+    sent_id    = _ensure_path(["_slack_queue", "sent"], svc=svc)
+    drive_id = _drive_id()
+    safe_prefix = f"{ramp_id or 'unknown'}_{sig}_".replace("'", r"\'")
+    q = (
+        f"name contains '{safe_prefix}' "
+        f"and ('{pending_id}' in parents or '{sent_id}' in parents) "
+        f"and trashed = false"
+    )
+    list_kwargs = {
+        "q": q,
+        "fields": "files(id,name,webViewLink,parents)",
+        "pageSize": 5,
+        "supportsAllDrives": True,
+        "includeItemsFromAllDrives": True,
+    }
+    if drive_id:
+        list_kwargs["corpora"] = "drive"
+        list_kwargs["driveId"] = drive_id
+    resp = svc.files().list(**list_kwargs).execute()
+    files = resp.get("files", [])
+    if not files:
+        return None
+    f = files[0]
+    parents = f.get("parents") or []
+    parent_folder = (
+        "sent" if sent_id in parents else
+        "pending" if pending_id in parents else
+        "unknown"
+    )
+    return {
+        "id":          f["id"],
+        "name":        f.get("name", ""),
+        "webViewLink": f.get("webViewLink", ""),
+        "parent":      parent_folder,
+    }
+
+
+def _cleanup_pending_with_sent_twin(svc) -> int:
+    """Delete pending/ files older than 1h that have a same-name twin in sent/.
+
+    The Drive MCP exposed to the RemoteTrigger has no move/delete tool, so
+    the trigger marks delivery by copying the pending file into sent/. This
+    leaves the pending/ original around. We can delete it from the pipeline
+    side (service account has full Drive scope, MCP doesn't).
+
+    Returns the number of files deleted. Best-effort — never raises.
+    """
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+    deleted = 0
+    try:
+        pending_id = _ensure_path(["_slack_queue", "pending"], svc=svc)
+        sent_id    = _ensure_path(["_slack_queue", "sent"], svc=svc)
+        drive_id   = _drive_id()
+        cutoff = (_dt.now(_tz.utc) - _td(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        list_kwargs = {
+            "q": (
+                f"'{pending_id}' in parents and trashed = false "
+                f"and modifiedTime < '{cutoff}'"
+            ),
+            "fields": "files(id,name)",
+            "pageSize": 100,
+            "supportsAllDrives": True,
+            "includeItemsFromAllDrives": True,
+        }
+        if drive_id:
+            list_kwargs["corpora"] = "drive"
+            list_kwargs["driveId"] = drive_id
+        old_pending = svc.files().list(**list_kwargs).execute().get("files", [])
+
+        for f in old_pending:
+            name = f.get("name", "")
+            if not name:
+                continue
+            safe_name = name.replace("'", r"\'")
+            twin_q = (
+                f"name = '{safe_name}' and '{sent_id}' in parents "
+                f"and trashed = false"
+            )
+            twin_kwargs = {
+                "q": twin_q,
+                "fields": "files(id)",
+                "pageSize": 1,
+                "supportsAllDrives": True,
+                "includeItemsFromAllDrives": True,
+            }
+            if drive_id:
+                twin_kwargs["corpora"] = "drive"
+                twin_kwargs["driveId"] = drive_id
+            twins = svc.files().list(**twin_kwargs).execute().get("files", [])
+            if not twins:
+                continue
+            try:
+                # Service account has canTrash=True but canDelete=False on
+                # this Shared Drive — use trash (move-to-trash), which excludes
+                # the file from our `trashed = false` queries. Functionally
+                # equivalent for the queue's purposes.
+                svc.files().update(
+                    fileId=f["id"], body={"trashed": True},
+                    supportsAllDrives=True, fields="id",
+                ).execute()
+                deleted += 1
+                log.info(
+                    "Slack queue: trashed pending file %s (twin in sent/: %s)",
+                    f["id"], twins[0]["id"],
+                )
+            except Exception as exc:
+                log.warning(
+                    "Slack queue: failed to trash pending file %s: %s",
+                    f["id"], exc,
+                )
+    except Exception as exc:
+        log.warning("Slack queue: pending cleanup pass failed: %s", exc)
+    return deleted
+
+
 def enqueue_slack_summary(
     *,
     ramp_id: str,
@@ -192,14 +320,20 @@ def enqueue_slack_summary(
     targets: list[dict],
 ) -> str:
     """Drop a Slack-summary payload into Drive at
-    <root>/_slack_queue/pending/<ramp_id>_<timestamp>.json so a separate
+    <root>/_slack_queue/pending/<ramp_id>_<sig>_<timestamp>.json so a separate
     RemoteTrigger cron can read and post it via the Claude.ai-inherited
     Slack MCP connector (no bot token required).
+
+    Idempotency: if a file with the same `(ramp_id, sig)` already exists in
+    pending/ or sent/, this function logs and returns the existing file's
+    URL without writing a duplicate. `sig` is the first 12 hex chars of
+    sha256(summary_text), so identical bodies dedup automatically.
 
     Schema of the queued file:
         {
           "ramp_id":      "GMR-0020",
           "queued_at":    ISO 8601 UTC,
+          "signature":    "<12 hex chars of sha256(summary_text)>",
           "summary_text": "...full markdown body...",
           "targets":      [
             {"kind": "user",    "id": "U095J930UEL"},
@@ -208,11 +342,12 @@ def enqueue_slack_summary(
           ]
         }
 
-    Returns the Drive webViewLink of the queued file.
+    Returns the Drive webViewLink of the queued (or pre-existing) file.
 
-    The companion RemoteTrigger processes everything under
-    `_slack_queue/pending/` and moves each handled file to
-    `_slack_queue/sent/` to make re-delivery idempotent.
+    The companion RemoteTrigger reads pending/, posts to Slack, and copies
+    each handled file into sent/ as the "delivered" marker (the Drive MCP
+    can't move/delete). The pipeline opportunistically deletes pending/
+    files older than 1h that have a sent/ twin.
     """
     import json as _json
     from datetime import datetime as _dt, timezone as _tz
@@ -221,12 +356,24 @@ def enqueue_slack_summary(
         log.warning("GDRIVE_ENABLED=false — Slack queue write skipped for %s", ramp_id)
         return ""
 
+    svc = _service()
+    sig = _summary_signature(summary_text)
+    existing = _find_in_queue(svc, ramp_id, sig)
+    if existing:
+        log.info(
+            "Slack queue: dedup hit — ramp=%s sig=%s already in %s/ (file=%s, name=%s); skipping enqueue",
+            ramp_id, sig, existing["parent"], existing["id"], existing["name"],
+        )
+        _cleanup_pending_with_sent_twin(svc)
+        return existing.get("webViewLink") or ""
+
     now_iso = _dt.now(_tz.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
-    filename = f"{ramp_id or 'unknown'}_{now_iso}.json"
+    filename = f"{ramp_id or 'unknown'}_{sig}_{now_iso}.json"
     body = _json.dumps(
         {
             "ramp_id":      ramp_id or "",
             "queued_at":    now_iso,
+            "signature":    sig,
             "summary_text": summary_text or "",
             "targets":      list(targets or []),
         },
@@ -236,7 +383,6 @@ def enqueue_slack_summary(
     import io
     from googleapiclient.http import MediaIoBaseUpload
 
-    svc = _service()
     target_folder = _ensure_path(["_slack_queue", "pending"], svc=svc)
     metadata = {"name": filename, "parents": [target_folder]}
     media = MediaIoBaseUpload(
@@ -260,9 +406,10 @@ def enqueue_slack_summary(
 
     url = f.get("webViewLink", "")
     log.info(
-        "Slack queue: enqueued summary for ramp=%s → %s/%s (file=%s)",
-        ramp_id, "_slack_queue/pending", filename, f["id"],
+        "Slack queue: enqueued summary for ramp=%s sig=%s → %s/%s (file=%s)",
+        ramp_id, sig, "_slack_queue/pending", filename, f["id"],
     )
+    _cleanup_pending_with_sent_twin(svc)
     return url
 
 

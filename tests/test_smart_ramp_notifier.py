@@ -224,6 +224,7 @@ def test_one_target_failure_does_not_block_others(monkeypatch, fake_ramp):
     fake_client, calls = _make_fake_webclient(open_fail_for_uid="U08AW9FCP27")
     monkeypatch.setattr(N, "WebClient", lambda token=None: fake_client)
     monkeypatch.setattr(config, "SLACK_BOT_TOKEN", "xoxb-fake")
+    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="": True)
 
     outcomes = N.notify_success(fake_ramp, _fake_result(), version=1)
 
@@ -304,6 +305,7 @@ def test_webhook_fallback_skipped_when_any_target_succeeds(monkeypatch, fake_ram
     monkeypatch.setattr(N, "WebClient", lambda token=None: fake_client)
     monkeypatch.setattr(config, "SLACK_BOT_TOKEN", "xoxb-fake")
     monkeypatch.setattr(config, "SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/T/B/X")
+    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="": True)
 
     webhook_calls = []
     monkeypatch.setattr(N.requests, "post",
