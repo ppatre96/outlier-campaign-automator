@@ -182,6 +182,90 @@ def upload_creative_in_hierarchy(
     return f.get("webViewLink", "")
 
 
+# ── Slack notification queue (bot-tokenless delivery via RemoteTrigger) ──────
+
+
+def enqueue_slack_summary(
+    *,
+    ramp_id: str,
+    summary_text: str,
+    targets: list[dict],
+) -> str:
+    """Drop a Slack-summary payload into Drive at
+    <root>/_slack_queue/pending/<ramp_id>_<timestamp>.json so a separate
+    RemoteTrigger cron can read and post it via the Claude.ai-inherited
+    Slack MCP connector (no bot token required).
+
+    Schema of the queued file:
+        {
+          "ramp_id":      "GMR-0020",
+          "queued_at":    ISO 8601 UTC,
+          "summary_text": "...full markdown body...",
+          "targets":      [
+            {"kind": "user",    "id": "U095J930UEL"},
+            {"kind": "channel", "id": "C0B0NBB986L"},
+            ...
+          ]
+        }
+
+    Returns the Drive webViewLink of the queued file.
+
+    The companion RemoteTrigger processes everything under
+    `_slack_queue/pending/` and moves each handled file to
+    `_slack_queue/sent/` to make re-delivery idempotent.
+    """
+    import json as _json
+    from datetime import datetime as _dt, timezone as _tz
+
+    if not getattr(config, "GDRIVE_ENABLED", False):
+        log.warning("GDRIVE_ENABLED=false — Slack queue write skipped for %s", ramp_id)
+        return ""
+
+    now_iso = _dt.now(_tz.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+    filename = f"{ramp_id or 'unknown'}_{now_iso}.json"
+    body = _json.dumps(
+        {
+            "ramp_id":      ramp_id or "",
+            "queued_at":    now_iso,
+            "summary_text": summary_text or "",
+            "targets":      list(targets or []),
+        },
+        indent=2, ensure_ascii=False,
+    )
+
+    import io
+    from googleapiclient.http import MediaIoBaseUpload
+
+    svc = _service()
+    target_folder = _ensure_path(["_slack_queue", "pending"], svc=svc)
+    metadata = {"name": filename, "parents": [target_folder]}
+    media = MediaIoBaseUpload(
+        io.BytesIO(body.encode("utf-8")),
+        mimetype="application/json", resumable=False,
+    )
+    f = svc.files().create(
+        body=metadata, media_body=media,
+        fields="id,webViewLink", supportsAllDrives=True,
+    ).execute()
+
+    try:
+        svc.permissions().create(
+            fileId=f["id"],
+            body={"type": "anyone", "role": "reader"},
+            supportsAllDrives=True,
+        ).execute()
+    except Exception as exc:
+        if "publishOutNotPermitted" not in str(exc):
+            log.warning("Drive permission grant failed (non-fatal): %s", exc)
+
+    url = f.get("webViewLink", "")
+    log.info(
+        "Slack queue: enqueued summary for ramp=%s → %s/%s (file=%s)",
+        ramp_id, "_slack_queue/pending", filename, f["id"],
+    )
+    return url
+
+
 # ── Text/JSON manifest upload ────────────────────────────────────────────────
 
 
