@@ -157,14 +157,19 @@ COMPOSITION (frame the subject so there is clear background space for a text ove
   and a short subheadline can be composited next to the subject without overlap.
 - The empty half should show natural background (bookshelves, plants, walls, soft \
   ambient light) with mid-tone to dark colour values so white text reads against it.
-- Subject's face is naturally framed mid-height — body/torso visible below shoulders. \
-  The exact head Y position is not critical because text placement is computed \
-  dynamically based on detected subject location.
+- CRITICAL HAIR/HEAD PLACEMENT: the TOP of the subject's head/hair (including flyaways) \
+  must sit AT OR BELOW the 35% line from the top of the frame. The full upper 35% of \
+  the canvas must be PURE BACKGROUND — zero hair, zero head, zero shoulders, zero \
+  forehead. A headline overlay is composited into the top 8-30% region; if any subject \
+  pixel intrudes there the ad is rejected. Frame the portrait LOWER than a typical \
+  headshot — body/torso visible from waist up, head naturally sitting mid-low in the \
+  frame. Do NOT place the head near the top edge.
 
 BACKGROUND:
-- Top 30% of the frame MUST be mid-tone to dark (warm wood shelves, plant foliage, \
-  shadowed walls). No bright white walls or blown-out windows in this zone — white \
-  headline text will overlay it and needs contrast to read.
+- Top 35% of the frame MUST be (a) pure background with NO subject pixels and (b) \
+  mid-tone to dark (warm wood shelves, plant foliage, shadowed walls). No bright \
+  white walls or blown-out windows in this zone — white headline text will overlay \
+  it and needs contrast to read.
 - Bottom third must also be mid-tone/darker for white subheadline text readability.
 - Setting: lush home interior — bookshelves, potted plants, wall art, warm natural \
   window light. 85mm prime lens, shallow depth of field. {expression}. Shot on film, \
@@ -725,10 +730,16 @@ def compose_ad(
     # Coordinates are relative to bg_resized (photo_w × photo_h). Fallback to a
     # fixed 30% bottom if vision call fails.
     bbox = detect_subject_bbox(bg_resized)
+    GAP_PX = int(size * 0.04)   # 4% target gap between text bottom and hair top
+    TOP_MARGIN_PX = int(size * 0.02)   # 2% margin from canvas top (was 8%)
     if bbox:
         hair_top_canvas_y = photo_y + int(bbox["hair_top_y"])
-        hl_bottom = hair_top_canvas_y - int(size * 0.04)  # 4% gap above hair
-        hl_bottom = max(photo_y + int(size * 0.08), hl_bottom)  # floor
+        hl_bottom = hair_top_canvas_y - GAP_PX
+        # Old floor was 8% — too high. When hair_top sits at 5-12% from top
+        # (Gemini sometimes places it that high), the 8% floor forced the
+        # headline's bottom BELOW the hair top → overlap. New floor: 2%.
+        # Headline can crawl right up to the top edge if necessary.
+        hl_bottom = max(photo_y + TOP_MARGIN_PX, hl_bottom)
     else:
         hl_bottom = int(size * 0.30)
 
@@ -744,6 +755,18 @@ def compose_ad(
 
     LINE_SPACING = 12
     hl_height    = hl_size * len(hl_lines) + LINE_SPACING * (len(hl_lines) - 1)
+
+    # Shrink the headline font when the available zone (top edge → hl_bottom)
+    # is too small to fit the text without overflowing. Without this, the
+    # headline overflows DOWNWARD past hl_bottom and overlaps the subject's
+    # hair even when bbox detection placed hl_bottom correctly.
+    available_height = hl_bottom - (photo_y + TOP_MARGIN_PX)
+    while hl_height > available_height and hl_size > hl_min:
+        hl_size -= int(size * 0.003)
+        hl_font  = _load_font(hl_size, bold=True)
+        hl_lines = _wrap_text(headline, hl_font, max_text_w)
+        hl_height = hl_size * len(hl_lines) + LINE_SPACING * (len(hl_lines) - 1)
+
     hl_top       = max(photo_y + int(photo_h * 0.01), hl_bottom - hl_height)
     _draw_text_left(
         draw, hl_lines, hl_font, hl_top,
