@@ -1170,6 +1170,7 @@ def _process_inmail_campaigns(
     cohort_description: str = "",
     unique_id: str | None = None,
     naming_meta: dict | None = None,
+    seen_keys: set | None = None,
 ) -> None:
     """
     InMail (Message Ad) path — no creative generation.
@@ -1279,6 +1280,21 @@ def _process_inmail_campaigns(
     # / creative hierarchy the marketing team is standardizing on.
     for cohort in capped_cohorts_inmail:
         for geo_group in geo_groups:
+            # Cross-row dedup (run_launch_for_ramp path only): if a prior row
+            # in the same ramp already produced an InMail campaign for this
+            # (cohort × geo_cluster), skip — see _cohort_geo_dedup_key for the
+            # motivation. Default seen_keys=None (legacy _process_row CLI
+            # caller) → check is a no-op and behavior is unchanged.
+            if seen_keys is not None:
+                _dedup_key = _cohort_geo_dedup_key(cohort.name, geo_group.cluster)
+                if _dedup_key in seen_keys:
+                    log.info(
+                        "_process_inmail_campaigns: skipping (cohort=%r geo=%r) — "
+                        "already produced by an earlier row in this ramp (cohort_id=%s)",
+                        cohort.name, geo_group.cluster, cohort_id_override or "?",
+                    )
+                    continue
+                seen_keys.add(_dedup_key)
             tg_cat      = classify_tg(cohort.name, cohort.rules)
             group_geos  = geo_group.geos or raw_geos
 
@@ -1797,6 +1813,25 @@ def _cohort_to_targeting_json(cohort) -> tuple[str, str]:
     return primary_facet, json.dumps(criteria)
 
 
+def _cohort_geo_dedup_key(cohort_name: str, geo_cluster: str) -> tuple[str, str]:
+    """Normalized (cohort × geo_cluster) key for cross-row dedup inside one ramp.
+
+    A ramp with N cohort rows that share project_id pulls identical Snowflake
+    data into Stage A (see _resolve_cohorts), so multiple rows commonly mine the
+    same cohort name. Combined with overlapping included_geos, this produced
+    duplicate LinkedIn campaigns (e.g. "Finance × Anglo / south_asian" 3×).
+
+    run_launch_for_ramp seeds one set per arm (InMail and Static dedup
+    independently — both should produce one campaign per unique tuple) and
+    passes them into the arm functions. First row to hit a tuple wins; later
+    rows skip with a structured log line.
+
+    Normalization: case-insensitive + stripped to absorb cosmetic differences.
+    Returns a 2-tuple to keep the key hashable and cheap to print.
+    """
+    return ((cohort_name or "").strip().lower(), (geo_cluster or "").strip().lower())
+
+
 def _apply_geo_overrides(
     facet_urns: dict[str, list[str]],
     included_geos: list[str],
@@ -2281,6 +2316,7 @@ def _process_static_campaigns(
     base_rate_usd: float = 50.0,
     unique_id: str | None = None,
     naming_meta: dict | None = None,
+    seen_keys: set | None = None,
 ) -> dict:
     """Static-ad arm — symmetric counterpart to _process_inmail_campaigns.
 
@@ -2361,9 +2397,26 @@ def _process_static_campaigns(
     # geo-inner). This order is the contract downstream consumers (the angle
     # fan-out in A3, the grouping at line ~2378, and _process_extra_platform_arm)
     # rely on, so it must not be re-shuffled by A2's parallel completion order.
+    #
+    # Cross-row dedup (run_launch_for_ramp path only): skip a (cohort ×
+    # geo_cluster) tuple if a prior row in this ramp already enqueued it for
+    # Static. See _cohort_geo_dedup_key. Skipping HERE (pre-copy-job) saves the
+    # downstream Anthropic copy-gen, Gemini image-gen, QC, Drive upload, and
+    # LinkedIn campaign creation for the duplicate. Legacy _process_row CLI
+    # caller passes seen_keys=None → no-op.
     copy_jobs: list[dict] = []
     for cohort in capped_cohorts:
         for geo_group in geo_groups:
+            if seen_keys is not None:
+                _dedup_key = _cohort_geo_dedup_key(cohort.name, geo_group.cluster)
+                if _dedup_key in seen_keys:
+                    log.info(
+                        "_process_static_campaigns: skipping (cohort=%r geo=%r) — "
+                        "already produced by an earlier row in this ramp (cohort_id=%s)",
+                        cohort.name, geo_group.cluster, cohort_id_override or "?",
+                    )
+                    continue
+                seen_keys.add(_dedup_key)
             geo_label  = geo_group.cluster_label
             group_geos = geo_group.geos or raw_geos
             log.info(
@@ -3355,6 +3408,8 @@ def _process_row_both_modes(
     mj_token: str = "",
     figma_file: str = "",
     figma_node: str = "",
+    seen_inmail_keys: set | None = None,
+    seen_static_keys: set | None = None,
 ) -> dict:
     # Naming metadata bundle — read once from the row dict so the arm
     # functions can forward to src.campaign_name.build_campaign_name without
@@ -3459,6 +3514,7 @@ def _process_row_both_modes(
                 cohort_description=resolved.smart_ramp_brief,
                 unique_id=unique_id,
                 naming_meta=naming_meta,
+                seen_keys=seen_inmail_keys,
             )
             return r if isinstance(r, dict) else {}
         except Exception:
@@ -3490,6 +3546,7 @@ def _process_row_both_modes(
                 cohort_description=resolved.smart_ramp_brief,
                 unique_id=unique_id,
                 naming_meta=naming_meta,
+                seen_keys=seen_static_keys,
             )
             return r if isinstance(r, dict) else {}
         except Exception:
@@ -3725,6 +3782,14 @@ def run_launch_for_ramp(
         "per_cohort": [],
     }
 
+    # Cross-row (cohort × geo_cluster) dedup state, scoped to this single ramp.
+    # Two independent sets so the InMail and Static arms — which run
+    # concurrently on the same row inside _process_row_both_modes — don't race
+    # each other into skipping the other arm's first-claim. First row in
+    # _ramp_to_rows order wins; later rows skip with a structured log line.
+    seen_inmail_keys: set = set()
+    seen_static_keys: set = set()
+
     for row in _ramp_to_rows(ramp):
         try:
             outcome = _process_row_both_modes(
@@ -3742,6 +3807,8 @@ def run_launch_for_ramp(
                 mj_token=mj_token,
                 figma_file=row.get("figma_file", ""),
                 figma_node=row.get("figma_node", ""),
+                seen_inmail_keys=seen_inmail_keys,
+                seen_static_keys=seen_static_keys,
             )
             aggregated["campaign_groups"].extend(outcome.get("campaign_groups", []) or [])
             aggregated["inmail_campaigns"].extend(outcome.get("inmail_campaigns", []) or [])
