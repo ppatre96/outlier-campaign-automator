@@ -1032,14 +1032,42 @@ def generate_imagen_creative_with_qc(
     for attempt in range(max_retries + 1):
         log.info("Creative generation attempt %d/%d (angle=%s)",
                  attempt + 1, max_retries + 1, variant.get("angle", "?"))
-        path = generate_imagen_creative(
-            variant=variant,
-            photo_subject=photo_subject,
-            prompt_suffix=prompt_suffix,
-            attach_reference_image=attach_ref,
-            feedback_image_paths=feedback_image_paths,
-            **kwargs,
-        )
+        # Catch image-gen failures (most commonly "Gemini returned no image
+        # part" when the model chats back instead of generating) and treat
+        # them like a QC failure — try the next attempt with the same
+        # prompt rotation. Without this catch, a single bad Gemini response
+        # propagates out of the retry loop and the campaign ends up with
+        # no PNG at all. Observed 6× on the 2026-05-13 GMR-0020 rerun.
+        try:
+            path = generate_imagen_creative(
+                variant=variant,
+                photo_subject=photo_subject,
+                prompt_suffix=prompt_suffix,
+                attach_reference_image=attach_ref,
+                feedback_image_paths=feedback_image_paths,
+                **kwargs,
+            )
+        except Exception as gen_exc:
+            log.warning(
+                "Creative generation attempt %d/%d failed (%s): %s — will retry",
+                attempt + 1, max_retries + 1, type(gen_exc).__name__, gen_exc,
+            )
+            last_report = {
+                "verdict":          "FAIL",
+                "checks":           {"image_generation": False},
+                "violations":       [f"image_generation: {type(gen_exc).__name__}: {str(gen_exc)[:200]}"],
+                "retry_target":     "gemini",
+                "retry_instruction": "Previous attempt failed at image-gen time, not at QC. Retry with same prompt.",
+                "attempts":         attempt + 1,
+            }
+            # Treat as best-so-far only if nothing better exists yet — gives
+            # the cap-exhaust path a sensible last-resort report. We assign a
+            # finite count so the trailing log.warning's %d formatter doesn't
+            # OverflowError on float('inf') when EVERY attempt raises.
+            if best_violations == float("inf"):
+                best_violations = 99
+                best_report = last_report
+            continue
 
         try:
             report = qc_creative(
