@@ -181,6 +181,68 @@ class LinkedInClient(AdPlatformClient):
             resp = self._refresh_and_retry(method, url, **kwargs)
         return resp
 
+    # ── Targeting catalog: live typeahead ──────────────────────────────────────
+
+    def typeahead_facet(
+        self,
+        facet_api_name: str,
+        query: str,
+        locale: tuple[str, str] = ("en", "US"),
+        limit: int = 10,
+    ) -> list[dict[str, str]]:
+        """Live typeahead against LinkedIn's ad-targeting catalog.
+
+        Returns up to `limit` matches as [{name, urn}, ...] ranked by LinkedIn's
+        typeahead score. Used as a fallback by UrnResolver when the cached URN
+        sheet doesn't include a newer/less-common facet value (e.g. "UX Engineer"
+        — Campaign Manager's UI finds it instantly, but our cached snapshot
+        didn't have an exact entry so fuzzy match either misfired or skipped to
+        a skill-fallback that overcounted by 100x). Returns [] on error.
+
+        Endpoint: GET /rest/adTargetingEntities?q=typeahead
+          - q=typeahead (NOT typeaheadV2; that's the v2 finder name)
+          - queryVersion=QUERY_USES_URNS so response has `urn` + `name` fields
+          - locale as RAW Rest.li tuple `(language:en,country:US)` — no URL
+            encoding (LinkedIn rejects encoded form here, unlike audienceCounts)
+
+        facet_api_name: short name like "titles", "skills" — prepended with
+                        `urn:li:adTargetingFacet:` to form the facet URN.
+        """
+        facet_urn = f"urn:li:adTargetingFacet:{facet_api_name}"
+        encoded_facet = facet_urn.replace(":", "%3A")
+        encoded_query = requests.utils.quote(query)
+        lang, country = locale
+        # Locale is a RAW Rest.li tuple; do NOT percent-encode the colons
+        # or parens. The `&` and `,` inside the value are fine because there
+        # are no nested params (verified against /rest/adTargetingEntities
+        # 202506: encoded variants return PARAM_INVALID).
+        locale_param = f"(language:{lang},country:{country})"
+        url = (
+            f"{self._url('adTargetingEntities')}"
+            f"?q=typeahead"
+            f"&facet={encoded_facet}"
+            f"&query={encoded_query}"
+            f"&queryVersion=QUERY_USES_URNS"
+            f"&locale={locale_param}"
+        )
+        try:
+            resp = self._req("GET", url)
+            if not resp.ok:
+                log.warning(
+                    "typeahead %s='%s' failed %d: %s",
+                    facet_api_name, query, resp.status_code, resp.text[:200],
+                )
+                return []
+            elements = resp.json().get("elements", [])
+            return [
+                {"name": el.get("name", ""), "urn": el.get("urn", "")}
+                for el in elements[:limit]
+                if el.get("urn")
+            ]
+        except Exception as exc:
+            log.warning("typeahead %s='%s' exception: %s", facet_api_name, query, exc)
+            return []
+
     # ── Stage C: Audience Counts ───────────────────────────────────────────────
 
     def get_audience_count(

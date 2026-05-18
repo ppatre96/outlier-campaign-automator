@@ -46,9 +46,17 @@ class UrnResolver(TargetingResolver):
 
     name = "linkedin"
 
-    def __init__(self, sheets_client):
+    def __init__(self, sheets_client, linkedin_client=None):
         import threading
         self._sheets = sheets_client
+        # Optional LinkedInClient — when provided, UrnResolver falls back to
+        # live LinkedIn typeahead on cache miss instead of returning None.
+        # This self-heals the cached URN sheet for newer titles/skills that
+        # weren't in the snapshot (e.g. "UX Engineer" — Tuan's UI showed 260K
+        # but our resolver returned None and the batch scripts dropped to a
+        # skill-fallback that overcounted by 100x). Backward-compatible: all
+        # existing UrnResolver(sheets) callers keep their previous behaviour.
+        self._linkedin = linkedin_client
         # { tab_name: [(name_lower, urn), ...] }
         self._cache: dict[str, list[tuple[str, str]]] = {}
         # Phase 3.4 — guard against two ramp-parallel threads both missing
@@ -109,37 +117,64 @@ class UrnResolver(TargetingResolver):
 
     def resolve(self, facet_key: str, value: str) -> str | None:
         """
-        Fuzzy-match `value` against the appropriate URN sheet tab.
-        Returns the URN string if score >= threshold, else None.
+        Fuzzy-match `value` against the cached URN sheet tab; on cache miss,
+        fall back to LinkedIn's live typeahead endpoint (if a linkedin_client
+        was passed to __init__). Returns the URN string or None.
         """
         tab_name = FACET_TAB_MAP.get(facet_key)
         if not tab_name:
             log.debug("No tab mapping for facet '%s'", facet_key)
             return None
 
+        # Fast path: cached fuzzy match.
         entries = self._load_tab(tab_name)
-        if not entries:
+        if entries:
+            names = [e[0] for e in entries]
+            result = process.extractOne(value.lower(), names, scorer=fuzz.WRatio)
+            if result is not None:
+                best_name, score, idx = result
+                threshold = int(config.URN_FUZZY_MATCH_THRESHOLD * 100)
+                if score >= threshold:
+                    urn = entries[idx][1]
+                    log.debug("Resolved '%s' → '%s' (cache, score=%d)", value, urn, score)
+                    return urn
+
+        # Slow path: typeahead. Requires a LinkedInClient.
+        if self._linkedin is None:
+            log.debug("No URN match for '%s' (cache miss, no typeahead client)", value)
+            return None
+        api_name = FACET_API_NAME.get(facet_key)
+        if not api_name:
             return None
 
-        names = [e[0] for e in entries]
-        result = process.extractOne(
-            value.lower(),
-            names,
-            scorer=fuzz.WRatio,
-        )
+        candidates = self._linkedin.typeahead_facet(api_name, value, limit=10)
+        if not candidates:
+            log.debug("No URN match for '%s' (typeahead returned 0)", value)
+            return None
+
+        cand_names = [c["name"].lower() for c in candidates]
+        result = process.extractOne(value.lower(), cand_names, scorer=fuzz.WRatio)
         if result is None:
             return None
-
         best_name, score, idx = result
-        threshold = int(config.URN_FUZZY_MATCH_THRESHOLD * 100)
-        if score >= threshold:
-            urn = entries[idx][1]
-            log.debug("Resolved '%s' → '%s' (score=%d)", value, urn, score)
-            return urn
-
-        log.debug("No URN match for '%s' (best='%s', score=%d < %d)",
-                  value, best_name, score, threshold)
-        return None
+        # Typeahead candidates are already ranked by LinkedIn's relevance, so
+        # a slightly lower fuzzy threshold is fine here (we trust LinkedIn's
+        # match more than a noisy cached sheet).
+        if score < int(config.URN_FUZZY_MATCH_THRESHOLD * 100) - 10:
+            log.debug(
+                "Typeahead miss for '%s' (best='%s' score=%d below relaxed threshold)",
+                value, best_name, score,
+            )
+            return None
+        urn = candidates[idx]["urn"]
+        # Self-heal: append to in-memory cache so the next resolve() in this
+        # session hits the fast path. (Not persisted to the Google Sheet —
+        # if needed, a separate warm-cache script can write these back.)
+        with self._cache_lock:
+            if tab_name in self._cache:
+                self._cache[tab_name].append((candidates[idx]["name"].lower(), urn))
+        log.info("Resolved '%s' → '%s' (typeahead, score=%d)", value, urn, score)
+        return urn
 
     def resolve_cohort_rules(self, rules: list[tuple]) -> dict[str, list[str]]:
         """

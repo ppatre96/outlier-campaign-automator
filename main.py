@@ -95,7 +95,7 @@ def run_launch(dry_run: bool = False, flow_id: str | None = None, project_id: st
         sys.exit(1)
 
     li_client = LinkedInClient(li_token)
-    urn_res   = UrnResolver(sheets)
+    urn_res   = UrnResolver(sheets, linkedin_client=li_client)
     snowflake = RedashClient()
 
     # Initialize brand voice validator
@@ -3790,7 +3790,7 @@ def run_launch_for_ramp(
             "per_cohort": [],
         }
     li_client = LinkedInClient(li_token)
-    urn_res = UrnResolver(sheets)
+    urn_res = UrnResolver(sheets, linkedin_client=li_client)
     snowflake = RedashClient()
     claude_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY", "")
     mj_token = sheet_cfg.get("MIDJOURNEY_API_TOKEN") or os.getenv("MIDJOURNEY_API_TOKEN", "")

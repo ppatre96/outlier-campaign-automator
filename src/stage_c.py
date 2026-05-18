@@ -146,10 +146,10 @@ if __name__ == "__main__":
 
     import os
     sheets   = SheetsClient()
-    resolver = UrnResolver(sheets)
     # Read token from os.environ directly — config was imported before load_dotenv() ran
     token = os.environ.get("LINKEDIN_ACCESS_TOKEN") or os.environ.get("LINKEDIN_TOKEN", "")
     li    = LinkedInClient(token=token)
+    resolver = UrnResolver(sheets, linkedin_client=li)
 
     # Step 1: resolve URNs
     facet_urns = resolver.resolve_cohort_rules(sample_cohort.rules)

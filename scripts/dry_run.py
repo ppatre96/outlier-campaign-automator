@@ -96,7 +96,7 @@ def _try_stage_c(cohorts_b, li_token: str) -> list:
 
         sheets    = SheetsClient()
         li_client = LinkedInClient(li_token)
-        urn_res   = UrnResolver(sheets)
+        urn_res   = UrnResolver(sheets, linkedin_client=li_client)
         return stage_c(cohorts_b, urn_res, li_client)
     except Exception as exc:
         log.warning("Stage C unavailable (%s) — will use Stage B top cohorts", exc)

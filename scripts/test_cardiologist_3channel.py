@@ -81,7 +81,7 @@ def main_run() -> int:
         return 1
     li_client = LinkedInClient(token=config.LINKEDIN_TOKEN)
     sheets    = SheetsClient()
-    urn_res   = UrnResolver(sheets)
+    urn_res   = UrnResolver(sheets, linkedin_client=li_client)
 
     log.info("=== STEP 1: LinkedIn arm (produces PNG + 1 campaign) ===")
     li_result = main._process_static_campaigns(
