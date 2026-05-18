@@ -375,7 +375,28 @@ class GoogleAdsClient(AdPlatformClient):
 
             ad = aga.ad
             ad.name = self._prefixed(f"rda_{Path(image_id).name}")
-            ad.final_urls.append(destination_url or config.LINKEDIN_DESTINATION)
+
+            # Per Google Ads API spec, `final_urls` stores only the destination
+            # URL (no tracking params), and tracking params go in
+            # `final_url_suffix`. If we pass a URL with `?utm_...` in
+            # final_urls, Google strips the query string during storage and
+            # the UTM tracking is lost. Split here so:
+            #   final_urls         = ['https://outlier.ai/experts/qfinance']
+            #   final_url_suffix   = 'utm_source=Google&utm_medium=paid&...'
+            # This matches the canonical Google Ads pattern and keeps both
+            # the policy-validated destination AND the marketing team's UTM
+            # tracking intact.
+            from urllib.parse import urlsplit, urlunsplit
+            _final = destination_url or config.LINKEDIN_DESTINATION
+            _parts = urlsplit(_final)
+            _base = urlunsplit((_parts.scheme, _parts.netloc, _parts.path, "", ""))
+            ad.final_urls.append(_base)
+            if _parts.query:
+                ad.final_url_suffix = _parts.query
+            log.info(
+                "Google create_image_ad URL: final_urls=%r final_url_suffix=%r",
+                _base, _parts.query[:200] if _parts.query else "",
+            )
 
             rda = ad.responsive_display_ad
             rda.business_name = "Outlier"

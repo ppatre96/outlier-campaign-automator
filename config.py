@@ -37,7 +37,14 @@ LINKEDIN_API_BASE      = "https://api.linkedin.com/rest"
 LINKEDIN_VERSION       = "202510"
 LINKEDIN_AD_ACCOUNT_ID = os.getenv("LINKEDIN_AD_ACCOUNT_ID", "510956407")
 LINKEDIN_ORG_ID           = os.getenv("LINKEDIN_ORG_ID", "")
-LINKEDIN_DESTINATION      = os.getenv("LINKEDIN_DESTINATION_URL", "https://app.outlier.ai/en/contributors/projects")
+# NB (2026-05-18): the previous default `app.outlier.ai/en/contributors/projects`
+# returns HTTP 404 → Google policy reviews flag every ad with
+# `DESTINATION_NOT_WORKING` when this fallback is used. `outlier.ai/` returns
+# HTTP 200 and works for every channel (LinkedIn doesn't crawl-validate, Meta
+# requires public, Google requires public). LP_URL_BY_DOMAIN should still take
+# precedence per cohort — this is only the catch-all when matched_domain isn't
+# in the map.
+LINKEDIN_DESTINATION      = os.getenv("LINKEDIN_DESTINATION_URL", "https://outlier.ai/")
 LINKEDIN_INMAIL_SENDER_URN = os.getenv("LINKEDIN_INMAIL_SENDER_URN", "")
 # Public profile URN of the LinkedIn member who authorized the OAuth token.
 # Required to create image ad creatives (DSC posts via w_member_social scope).

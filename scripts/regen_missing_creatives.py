@@ -45,6 +45,9 @@ from src.figma_creative import rewrite_variant_copy  # noqa: E402
 from src.gemini_creative import generate_imagen_creative_with_qc  # noqa: E402
 from src.google_ads_api import GoogleAdsClient  # noqa: E402
 from src.gdrive import upload_creative_in_hierarchy  # noqa: E402
+from src.smart_ramp_client import SmartRampClient  # noqa: E402
+from src.utm_builder import build_utm_url, resolve_base_lp_url  # noqa: E402
+import main as M  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("regen_missing_creatives")
@@ -135,17 +138,46 @@ def main() -> int:
     ad_groups = _discover_ad_groups(sdk, customer_id, args.parents)
     log.info("Discovered %d ad group(s) under parents", len(ad_groups))
 
-    # Collect missing entries (no image_drive_url) that also have a matching
-    # ad group. Dedup by (cohort_stg_id, geo_cluster_label, angle) — manifests
-    # can contain the same (cohort × geo × angle) more than once when Phase-1
-    # was called multiple times (e.g., from replay runs); regenerating + attaching
-    # twice would create duplicate ads under the same ad group.
-    missing_entries: list[tuple[dict, str, dict]] = []  # (entry, ad_group_rn, manifest)
+    # Fetch the Smart Ramp record so we can look up the right matched_domain
+    # per cohort. The manifest stores cohort_stg_name (which contains the
+    # domain) but the canonical source is the ramp's CohortSpec.matched_domain.
+    # We index by cohort_stg_id → matched_domain. STG ids aren't stored on the
+    # ramp directly; instead we map by cohort_description prefix match against
+    # the manifest's cohort_stg_name (which embeds the description).
+    ramp = SmartRampClient().fetch_ramp(args.ramp_id)
+    rows = M._ramp_to_rows(ramp) if ramp else []
+    # Build a name → row lookup keyed by the first 40 chars of cohort_description
+    desc_to_row: dict[str, dict] = {}
+    for row in rows:
+        cd = (row.get("cohort_description") or "").strip()
+        if cd:
+            desc_to_row[cd[:40]] = row
+    log.info("Built ramp-row lookup: %d rows", len(desc_to_row))
+
+    # Collect missing entries. Each entry tags along with its origin ramp
+    # row so we can use the right matched_domain when building the URL.
+    # Heuristic: manifest_index 0 → first ramp row that produced specs,
+    # last manifest → last ramp row (mirrors the row-matching in
+    # replay_extra_arms.py).
+    missing_entries: list[tuple[dict, str, dict, dict]] = []  # (entry, ad_group_rn, manifest, row)
     seen: set[tuple[str, str, str]] = set()
-    for manifest in manifests:
+    for mi, manifest in enumerate(manifests):
+        # Map manifest → ramp row. mi=0 → rows[0]; last mi → rows[-1]; middle → rows[mi].
+        if rows:
+            if mi == 0:
+                matched_row = rows[0]
+            elif mi == len(manifests) - 1:
+                matched_row = rows[-1]
+            else:
+                matched_row = rows[mi] if mi < len(rows) else rows[-1]
+        else:
+            matched_row = {}
+        log.info("Manifest %d/%d (%s) -> ramp row matched_domain=%r",
+                 mi+1, len(manifests), manifest.get("__file_id", "?"),
+                 matched_row.get("matched_domain"))
         for entry in manifest.get("entries", []):
             if entry.get("image_drive_url"):
-                continue  # already has a PNG
+                continue
             stg = entry.get("cohort_stg_id", "")
             cluster_label = entry.get("geo_cluster_label", "")
             angle = entry.get("angle", "A")
@@ -158,23 +190,24 @@ def main() -> int:
                             stg, cluster_label, angle)
                 continue
             seen.add(key)
-            missing_entries.append((entry, ad_group_rn, manifest))
+            missing_entries.append((entry, ad_group_rn, manifest, matched_row))
 
     log.info("Found %d missing entries with matching ad groups", len(missing_entries))
     if not missing_entries:
         return 0
 
     if args.dry_run:
-        for entry, rn, _ in missing_entries:
-            log.info("[dry-run] Would regen + attach: cohort=%s geo=%s angle=%s -> %s",
+        for entry, rn, _, row in missing_entries:
+            md = row.get("matched_domain")
+            log.info("[dry-run] Would regen + attach: cohort=%s geo=%s angle=%s -> %s (domain=%r)",
                      entry.get("cohort_name"), entry.get("geo_cluster_label"),
-                     entry.get("angle"), rn)
+                     entry.get("angle"), rn, md)
         return 0
 
     successes: list[str] = []
     failures: list[tuple[str, str]] = []
 
-    for entry, ad_group_rn, manifest in missing_entries:
+    for entry, ad_group_rn, manifest, matched_row in missing_entries:
         stg = entry.get("cohort_stg_id", "")
         cohort_name = entry.get("cohort_name", "")
         cluster_label = entry.get("geo_cluster_label", "")
@@ -228,6 +261,29 @@ def main() -> int:
             log.warning("Drive upload failed (non-fatal): %s", exc)
             drive_url = ""
 
+        # Build the proper destination URL via resolve_base_lp_url +
+        # build_utm_url — matching what main.py's _process_extra_platform_arm
+        # does. Without this, we'd send the auth-walled fallback
+        # (LINKEDIN_DESTINATION → app.outlier.ai/contributors/projects) which
+        # Google's policy review correctly rejects as DESTINATION_NOT_WORKING.
+        base_lp = resolve_base_lp_url(
+            campaign_state=matched_row.get("campaign_state"),
+            platform="google",
+            fallback=matched_row.get("selected_lp_url") or config.LINKEDIN_DESTINATION,
+            matched_domain=matched_row.get("matched_domain"),
+        )
+        utm_url = build_utm_url(
+            base_url=base_lp,
+            platform="google",
+            campaign_name=f"Scale-{args.ramp_id}",  # short campaign tag — full v2 name not needed for UTM
+            pod=matched_row.get("job_post_pod"),
+            domain=matched_row.get("matched_domain"),
+            locale=matched_row.get("job_post_language_code"),
+            language="EN",
+            utm_content=f"{stg}-google-{angle}",
+        ) if base_lp else (matched_row.get("selected_lp_url") or "")
+        log.info("URL resolved: base_lp=%s utm_url=%s", base_lp, utm_url[:120])
+
         # Now attach as Google ad under the existing ad group.
         try:
             platform_copy = adapt_copy_for_platform(variant, "google")
@@ -237,7 +293,7 @@ def main() -> int:
                 image_id=image_id,
                 headline=(platform_copy.get("headlines") or [""])[0],
                 description=(platform_copy.get("descriptions") or [""])[0],
-                destination_url=entry.get("destination_url") or config.LINKEDIN_DESTINATION,
+                destination_url=utm_url or config.LINKEDIN_DESTINATION,
                 headlines=platform_copy.get("headlines") or [],
                 long_headline=platform_copy.get("long_headline") or "",
                 descriptions=platform_copy.get("descriptions") or [],
