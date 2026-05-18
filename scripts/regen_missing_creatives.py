@@ -302,6 +302,36 @@ def main() -> int:
             if getattr(result, "status", "") == "ok":
                 log.info("Ad attached: %s -> %s", label, ad_group_rn)
                 successes.append(label)
+                # Log to Campaign Registry sheet for parity with main pipeline.
+                # Without this, the regen'd ads exist on Google Ads but never
+                # show up in the registry, leaving Bryan/Diego with a stale view.
+                try:
+                    from src.campaign_registry import log_campaign as _reg_log
+                    _reg_log(
+                        smart_ramp_id=args.ramp_id,
+                        cohort_id=matched_row.get("cohort_id") or stg,
+                        cohort_signature=cohort_name,
+                        geo_cluster=entry.get("geo_cluster", ""),
+                        geo_cluster_label=cluster_label,
+                        geos=entry.get("geos") or [],
+                        angle=angle,
+                        campaign_type="static",
+                        advertised_rate=entry.get("advertised_rate", ""),
+                        headline=entry.get("headline", ""),
+                        subheadline=entry.get("subheadline", ""),
+                        photo_subject=entry.get("photo_subject", ""),
+                        creative_image_path=drive_url or "",
+                        cohort_geo=cohort_geo_label,
+                        channel="LinkedIn",  # registry uses this as a per-row tag; will be overwritten below
+                        platform="google",
+                        campaign_name=ad_group_rn.split("/")[-1],
+                        campaign_link=f"https://ads.google.com/aw/adgroupad?campaignId={ad_group_rn.split('/')[-3]}",
+                        platform_campaign_id=ad_group_rn,
+                        platform_creative_id=getattr(result, "creative_id", "") or "",
+                        gemini_prompt=(qc_report or {}).get("gemini_prompt", "") if qc_report else "",
+                    )
+                except Exception as _exc:
+                    log.warning("Registry log failed for %s (non-fatal): %s", label, _exc)
             else:
                 err = getattr(result, "error_message", "non-ok")
                 failures.append((label, f"ad attach: {err}"))
