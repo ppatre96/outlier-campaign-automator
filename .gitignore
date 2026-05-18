@@ -33,3 +33,17 @@ Thumbs.db
 # Claude Code worktrees — never commit these
 .claude/worktrees/
 !assets/*.png
+
+# Per-process data caches — regenerated each run
+data/*_cache.json
+
+# Raw daily snapshots — the post-processed sentiment_callouts.json is the
+# committed artifact; the per-day raw fetches under sentiment_raw/ are not.
+data/sentiment_raw/
+
+# Daily auto-logs from scheduled jobs (smart_ramp_poller, weekly_feedback_loop,
+# manual_runs/). The earlier `dry_runs/` + top-level `dryrun_*.log` files are
+# historical references for the prior architecture and stay tracked.
+logs/smart_ramp_poller/
+logs/weekly_feedback_loop/
+logs/manual_runs/
