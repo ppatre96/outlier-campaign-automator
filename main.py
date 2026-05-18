@@ -3312,15 +3312,6 @@ def _process_extra_platform_arm(
                         language="EN",
                         utm_content=f"{cohort._stg_id}-{platform}-{angle_label}",
                     ) if base_lp else (destination_url_override or "")
-                    # 2026-05-18 instrumentation: trace why Google ads end up
-                    # with the fallback URL instead of LP_URL_BY_DOMAIN result.
-                    log.info(
-                        "_process_extra_platform_arm[%s] URL trace: "
-                        "naming_meta.domain=%r matched_domain=%r → base_lp=%r → "
-                        "utm_url=%r (passed as destination_url)",
-                        platform, (naming_meta or {}).get("domain"),
-                        (naming_meta or {}).get("domain"), base_lp, utm_url[:200],
-                    )
 
                     if platform == "google":
                         ad_result = client.create_image_ad(

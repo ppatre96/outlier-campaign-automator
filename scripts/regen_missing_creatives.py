@@ -322,10 +322,8 @@ def main() -> int:
                         photo_subject=entry.get("photo_subject", ""),
                         creative_image_path=drive_url or "",
                         cohort_geo=cohort_geo_label,
-                        channel="LinkedIn",  # registry uses this as a per-row tag; will be overwritten below
                         platform="google",
                         campaign_name=ad_group_rn.split("/")[-1],
-                        campaign_link=f"https://ads.google.com/aw/adgroupad?campaignId={ad_group_rn.split('/')[-3]}",
                         platform_campaign_id=ad_group_rn,
                         platform_creative_id=getattr(result, "creative_id", "") or "",
                         gemini_prompt=(qc_report or {}).get("gemini_prompt", "") if qc_report else "",

@@ -393,10 +393,6 @@ class GoogleAdsClient(AdPlatformClient):
             ad.final_urls.append(_base)
             if _parts.query:
                 ad.final_url_suffix = _parts.query
-            log.info(
-                "Google create_image_ad URL: final_urls=%r final_url_suffix=%r",
-                _base, _parts.query[:200] if _parts.query else "",
-            )
 
             rda = ad.responsive_display_ad
             rda.business_name = "Outlier"
