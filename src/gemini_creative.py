@@ -1193,4 +1193,8 @@ def generate_imagen_creative_with_qc(
         max_retries + 1, best_violations, len(last_report.get("violations", [])),
     )
     best_report["gemini_prompt"] = _base_prompt
+    # 2026-05-18: surface actual retry count to the report so main.py's
+    # "Static QC FAIL ... after %d attempts" log reflects reality (was always
+    # printing 1 because `attempts` was never set on the cap-exhaust path).
+    best_report["attempts"] = max_retries + 1
     return best_path, best_report

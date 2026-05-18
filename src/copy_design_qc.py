@@ -684,10 +684,21 @@ def _call_gemini_vision(prompt: str, creative_path: str, reference_path: str | N
     # Strip markdown fences if present
     raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw).strip()
     try:
-        return json.loads(raw)
+        parsed = json.loads(raw)
     except json.JSONDecodeError as e:
         log.error("Gemini QC returned non-JSON: %s\n%s", e, raw[:500])
         raise
+    # 2026-05-18: Gemini Vision occasionally wraps the dict in a 1-element
+    # list — `[{...}]` instead of `{...}`. Empirically this accounted for 11
+    # of 13 QC failures on the 2026-05-16 GMR-0020 rerun (the malformed-JSON
+    # detector at qc_creative() bailed because `not isinstance(result, dict)`
+    # short-circuited the threshold check). Unwrap silently here so the
+    # downstream code never sees the array. List of N>1 is unexpected and
+    # passes through untouched — qc_creative will catch it.
+    if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
+        log.info("QC vision returned 1-element list — unwrapping to inner dict")
+        parsed = parsed[0]
+    return parsed
 
 
 # Alternate phrasings for retry-suffix hints. When the same QC check fails on
