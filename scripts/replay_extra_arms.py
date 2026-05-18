@@ -238,6 +238,13 @@ def main() -> int:
                               "with generated_at >= cutoff are replayed. Critical when a "
                               "ramp has been re-run multiple times — without this, stale "
                               "manifests from earlier runs would also produce campaigns."))
+    parser.add_argument("--until", default="",
+                        help=("ISO-8601 upper bound (e.g. 2026-05-18T00:00:00Z). Only "
+                              "manifests with generated_at < cutoff are replayed. Use "
+                              "this to exclude manifests written by THIS script's prior "
+                              "Phase-1 runs (each replay invocation writes new manifests "
+                              "to Drive that subsequent invocations would otherwise pick "
+                              "up, causing duplicate parent-campaign attempts)."))
     parser.add_argument("--dry-run", action="store_true",
                         help="Read manifests + download PNGs but don't call platform APIs")
     args = parser.parse_args()
@@ -282,6 +289,16 @@ def main() -> int:
             log.info(
                 "Filtered to %d manifest(s) with generated_at >= %s (dropped %d stale)",
                 len(manifests), args.since, before - len(manifests),
+            )
+        if args.until:
+            before = len(manifests)
+            manifests = [
+                m for m in manifests
+                if (m.get("generated_at") or "") < args.until
+            ]
+            log.info(
+                "Filtered to %d manifest(s) with generated_at < %s (dropped %d too-recent)",
+                len(manifests), args.until, before - len(manifests),
             )
         if not manifests:
             continue

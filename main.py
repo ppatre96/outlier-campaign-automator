@@ -3206,6 +3206,29 @@ def _process_extra_platform_arm(
                     f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
                 )
                 campaign_name = f"{cohort._stg_name}{geo_suffix}"
+            # Google enforces ad_group_name uniqueness within a parent
+            # campaign. The Smart Ramp v2 spec (build_campaign_name) has no
+            # per-cohort or per-geo segment that distinguishes within one
+            # row — "main country" is shared across all geo clusters AND
+            # the cohort signature is omitted entirely. With 3 cohorts × 3
+            # geos = 9 combos, the spec produces just 1 unique name → the
+            # first ad group lands and the other 8 fail DUPLICATE_ADGROUP_NAME.
+            # Append cohort._stg_id + geo_group.cluster_label as a 13th/14th
+            # segment ONLY for Google; LinkedIn + Meta tolerate duplicates so
+            # we leave their canonical names untouched.
+            if platform == "google":
+                stg_suffix = getattr(cohort, "_stg_id", "") or ""
+                geo_suffix = (
+                    getattr(geo_group, "cluster_label", "")
+                    if geo_group is not None
+                    and getattr(geo_group, "cluster", "") != "global_mix"
+                    else ""
+                )
+                # Both segments together guarantee uniqueness across (cohort
+                # × geo_group) under a single parent campaign.
+                extras = " | ".join(s for s in (stg_suffix, geo_suffix) if s)
+                if extras:
+                    campaign_name = f"{campaign_name} | {extras}"
             targeting = resolver.resolve_cohort(cohort, geos=group_geos)
             sub_id = client.create_campaign(
                 name=campaign_name,
