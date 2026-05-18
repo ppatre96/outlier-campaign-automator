@@ -289,6 +289,43 @@ class GoogleAdsClient(AdPlatformClient):
         log.info("Google image asset uploaded %s → %s", path.name, resource)
         return resource
 
+    def upload_image_landscape(self, square_image_path: str | Path,
+                               width: int = 1200, height: int = 628) -> str:
+        """Generate a 1.91:1 landscape variant from a 1:1 source and upload.
+
+        Google RDA requires BOTH `marketing_images` (1.91:1) AND
+        `square_marketing_images` (1:1). The Outlier pipeline only produces
+        1:1 sources (Gemini's default). To satisfy `marketing_images`
+        without compromising the composed text + subject (which a center-crop
+        would chop), we **pillarbox**: scale the square to fit the 628px
+        height, paint centered on a 1200×628 white canvas. All original
+        content is preserved; white side-bars are unobtrusive in Google's
+        display placements.
+
+        Returns the uploaded asset resource_name.
+        """
+        from PIL import Image
+        src_path = Path(square_image_path)
+        with Image.open(src_path) as src:
+            src = src.convert("RGB")
+            scale = height / src.height
+            scaled_w = max(1, int(src.width * scale))
+            scaled = src.resize((scaled_w, height), Image.LANCZOS)
+            canvas = Image.new("RGB", (width, height), "white")
+            offset_x = max(0, (width - scaled_w) // 2)
+            # If the scaled width exceeds canvas width (source was already
+            # wider than 1.91:1), crop the scaled image horizontally instead.
+            if scaled_w > width:
+                left = (scaled_w - width) // 2
+                scaled = scaled.crop((left, 0, left + width, height))
+                offset_x = 0
+            canvas.paste(scaled, (offset_x, 0))
+            landscape_path = src_path.with_name(
+                f"{src_path.stem}_landscape{width}x{height}.png"
+            )
+            canvas.save(landscape_path, "PNG", optimize=True)
+        return self.upload_image(landscape_path)
+
     # ── Responsive Display Ad ────────────────────────────────────────────────
 
     def create_image_ad(
@@ -306,18 +343,26 @@ class GoogleAdsClient(AdPlatformClient):
         headlines: Optional[list[str]] = None,
         long_headline: Optional[str] = None,
         descriptions: Optional[list[str]] = None,
+        # Aspect-ratio support (added 2026-05-18): Google RDA requires BOTH
+        # 1.91:1 (marketing_images) AND 1:1 (square_marketing_images). When
+        # `local_png_path` is provided, the function auto-generates a 1.91:1
+        # pillarboxed variant and uploads both. Without it, only `image_id`
+        # is attached and the create call WILL fail on aspect mismatch — kept
+        # as a defensive default so callers that hand-roll uploads don't break.
+        local_png_path: Optional[str] = None,
     ) -> CreateAdResult:
         """Create a Responsive Display Ad. `campaign_id` is actually the
         Google ad_group resource name (we kept the kwarg name for ABC
         consistency).
 
         Required RDA inputs:
-          - headlines:        list of 3-5 short headlines (each ≤30 chars)
-          - long_headline:    one long headline (≤90 chars)
-          - descriptions:     list of 1-5 descriptions (each ≤90 chars)
-          - marketing_image:  resource name from `upload_image`
-          - business_name:    "Outlier"
-          - final_urls:       list of landing pages
+          - headlines:               3-5 short headlines (each ≤30 chars)
+          - long_headline:           one long headline (≤90 chars)
+          - descriptions:            1-5 descriptions (each ≤90 chars)
+          - marketing_images:        1.91:1, derived from local_png_path
+          - square_marketing_images: 1:1, from `image_id` (or local_png_path)
+          - business_name:           "Outlier"
+          - final_urls:              list of landing pages
         """
         try:
             client = self._ensure_client()
@@ -353,9 +398,33 @@ class GoogleAdsClient(AdPlatformClient):
                 ad_desc.text = d
                 rda.descriptions.append(ad_desc)
 
-            img_asset = client.get_type("AdImageAsset")
-            img_asset.asset = image_id
-            rda.marketing_images.append(img_asset)
+            # Auto-generate the 1.91:1 landscape variant when given a source
+            # PNG; without it we'd fail ASPECT_RATIO_NOT_ALLOWED at create-time.
+            landscape_id: Optional[str] = None
+            if local_png_path:
+                try:
+                    landscape_id = self.upload_image_landscape(local_png_path)
+                except Exception as exc:
+                    log.warning(
+                        "Google upload_image_landscape failed for %s — falling "
+                        "back to source image_id in both slots (will likely hit "
+                        "ASPECT_RATIO_NOT_ALLOWED): %s",
+                        local_png_path, exc,
+                    )
+
+            # marketing_images: 1.91:1. Use the generated landscape if we
+            # have one; otherwise fall back to the source (legacy behaviour
+            # — will fail aspect check on Google's side but the rest of the
+            # call is preserved for diagnostic clarity).
+            landscape_asset = client.get_type("AdImageAsset")
+            landscape_asset.asset = landscape_id or image_id
+            rda.marketing_images.append(landscape_asset)
+
+            # square_marketing_images: 1:1. Always the source image_id, which
+            # the Outlier pipeline produces natively as 1024×1024 / 1480×1480.
+            square_asset = client.get_type("AdImageAsset")
+            square_asset.asset = image_id
+            rda.square_marketing_images.append(square_asset)
 
             try:
                 resp = ad_service.mutate_ad_group_ads(

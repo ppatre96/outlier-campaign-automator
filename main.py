@@ -3323,6 +3323,10 @@ def _process_extra_platform_arm(
                             headlines=platform_copy.get("headlines") or [],
                             long_headline=platform_copy.get("long_headline") or "",
                             descriptions=platform_copy.get("descriptions") or [],
+                            # 2026-05-18: pass the local PNG path so
+                            # create_image_ad can generate the 1.91:1
+                            # landscape variant Google RDA requires.
+                            local_png_path=str(png_path) if png_path else None,
                         )
                     else:  # meta
                         ad_result = client.create_image_ad(
