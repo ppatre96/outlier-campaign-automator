@@ -1353,51 +1353,64 @@ def _process_inmail_campaigns(
                 )
                 continue
 
-            # Targeting resolution — once per (cohort × geo).
-            facet_urns = urn_res.resolve_cohort_rules(cohort.rules)
-            if group_geos:
-                facet_urns = _apply_geo_overrides(facet_urns, group_geos, urn_res)
-            cohort_add_urns    = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_add", []) or [])
-            cohort_remove_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_remove", []) or [])
-            cohort_exclude_urns = _subtract_urn_dicts(
-                _merge_urn_dicts(shared_exclude_urns, cohort_add_urns),
-                cohort_remove_urns,
-            )
-
-            # Campaign name — Smart Ramp v2 spec, ONE name per (cohort × geo)
-            # (no angle suffix; angles are now the multi-creative dimension).
-            if naming_meta is not None:
-                from src.campaign_name import build_campaign_name
-                campaign_name = build_campaign_name(
-                    ramp_id=ramp_id or "",
-                    submitted_at=naming_meta.get("submitted_at", ""),
-                    cohort=cohort,
-                    geo_group=geo_group,
-                    platform="linkedin",
-                    campaign_type="inmail",
-                    pod=naming_meta.get("pod"),
-                    domain=naming_meta.get("domain"),
-                    locale=naming_meta.get("locale"),
-                    included_geos=naming_meta.get("included_geos"),
-                    campaign_state=naming_meta.get("campaign_state"),
+            # Per-(cohort × geo) isolation: failure in one combo (URN resolution,
+            # LinkedIn validation, network) must NOT abort the remaining combos
+            # in the outer loop. Mirrors _process_static_campaigns. The 2026-05-16
+            # incident — LinkedIn returning 400 FAILED_TO_PROCESS_CAMPAIGN_FOR_
+            # AUDIENCE_SIZE_ESTIMATION on a single NW-European cohort — aborted
+            # the entire row's InMail arm before this try block existed.
+            try:
+                # Targeting resolution — once per (cohort × geo).
+                facet_urns = urn_res.resolve_cohort_rules(cohort.rules)
+                if group_geos:
+                    facet_urns = _apply_geo_overrides(facet_urns, group_geos, urn_res)
+                cohort_add_urns    = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_add", []) or [])
+                cohort_remove_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_remove", []) or [])
+                cohort_exclude_urns = _subtract_urn_dicts(
+                    _merge_urn_dicts(shared_exclude_urns, cohort_add_urns),
+                    cohort_remove_urns,
                 )
-            else:
-                geo_suffix = f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
-                campaign_name = f"{cohort._stg_name}{geo_suffix} InMail"
 
-            # ONE campaign per (cohort × geo)
-            campaign_urn = li_client.create_inmail_campaign(
-                name=campaign_name,
-                campaign_group_urn=group_urn,
-                facet_urns=facet_urns,
-                exclude_facet_urns=cohort_exclude_urns,
-            )
-            campaign_id = campaign_urn.rsplit(":", 1)[-1]
-            sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
-            log.info(
-                "Created InMail campaign %s cohort=%s geo=%s rate=%s (%d angles to attach)",
-                campaign_urn, cohort.name, geo_group.cluster_label, geo_group.advertised_rate, len(valid_pairs),
-            )
+                # Campaign name — Smart Ramp v2 spec, ONE name per (cohort × geo)
+                # (no angle suffix; angles are now the multi-creative dimension).
+                if naming_meta is not None:
+                    from src.campaign_name import build_campaign_name
+                    campaign_name = build_campaign_name(
+                        ramp_id=ramp_id or "",
+                        submitted_at=naming_meta.get("submitted_at", ""),
+                        cohort=cohort,
+                        geo_group=geo_group,
+                        platform="linkedin",
+                        campaign_type="inmail",
+                        pod=naming_meta.get("pod"),
+                        domain=naming_meta.get("domain"),
+                        locale=naming_meta.get("locale"),
+                        included_geos=naming_meta.get("included_geos"),
+                        campaign_state=naming_meta.get("campaign_state"),
+                    )
+                else:
+                    geo_suffix = f" [{geo_group.cluster_label}]" if geo_group.cluster != "global_mix" else ""
+                    campaign_name = f"{cohort._stg_name}{geo_suffix} InMail"
+
+                # ONE campaign per (cohort × geo)
+                campaign_urn = li_client.create_inmail_campaign(
+                    name=campaign_name,
+                    campaign_group_urn=group_urn,
+                    facet_urns=facet_urns,
+                    exclude_facet_urns=cohort_exclude_urns,
+                )
+                campaign_id = campaign_urn.rsplit(":", 1)[-1]
+                sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
+                log.info(
+                    "Created InMail campaign %s cohort=%s geo=%s rate=%s (%d angles to attach)",
+                    campaign_urn, cohort.name, geo_group.cluster_label, geo_group.advertised_rate, len(valid_pairs),
+                )
+            except Exception as exc:
+                log.exception(
+                    "_process_inmail_campaigns: cohort '%s' geo=%s campaign creation failed — skipping all angles: %s",
+                    getattr(cohort, "name", "?"), geo_group.cluster_label, exc,
+                )
+                continue
 
             # Build the UTM destination URL once per (cohort × geo). Each
             # angle's ad shares the same target URL but gets a distinct
