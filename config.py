@@ -71,9 +71,18 @@ LINKEDIN_CONVERSION_ID = int(os.getenv("LINKEDIN_CONVERSION_ID", "19801700"))
 # maintains custom LPs under outlier.ai/experts/<slug>; this map matches the
 # cohort's domain to its LP so the destination URL on every ad lands on the
 # right page. Smart Ramp's `campaign_state.utm_<channel>.base_url` takes
-# precedence when filled in. Override via env LP_URL_BY_DOMAIN_JSON (JSON
-# string) to extend without code changes — useful for new ramps with custom
-# LPs the team hasn't yet captured in Smart Ramp.
+# precedence when filled in.
+#
+# Values can be:
+#   - A SLUG (preferred) — looked up against the LP_URL_SHEET_ID inventory
+#     via `SheetsClient.read_lp_url_map()` to resolve the live Full URL.
+#     Marketing edits the URL once in the sheet; pipeline picks it up next
+#     run. The slug may include or omit a leading "/" — both work.
+#   - A full URL (back-compat) — used as-is, no sheet lookup.
+#
+# Override via env LP_URL_BY_DOMAIN_JSON (JSON string) to extend without
+# code changes — useful for new ramps with custom LPs the team hasn't yet
+# captured in Smart Ramp.
 import json as _json
 try:
     _lp_env = os.getenv("LP_URL_BY_DOMAIN_JSON", "")
@@ -81,15 +90,25 @@ try:
 except Exception:
     LP_URL_BY_DOMAIN = {}
 LP_URL_BY_DOMAIN = {
-    # GMR-0020 (provided 2026-05-13 by Pranav)
-    "Finance & Quantitative Analysis": "https://outlier.ai/experts/qfinance",
-    "Machine Learning":                 "https://outlier.ai/experts/ml",
-    "Computer Science & AI":            "https://outlier.ai/experts/cs",
+    # GMR-0020 (provided 2026-05-13 by Pranav) — slugs now, URL is sheet-resolved
+    "Finance & Quantitative Analysis": "qfinance",
+    "Machine Learning":                 "ml",
+    "Computer Science & AI":            "cs",
     # Earlier-session references (kept for back-compat; verify when running these ramps):
-    "Clinical Medicine":               "https://outlier.ai/experts/cardiology-ctrl",
-    "Law":                              "https://outlier.ai/experts/law-sgp",
+    "Clinical Medicine":                "cardiology-ctrl",
+    "Law":                              "law-sgp",
     **LP_URL_BY_DOMAIN,  # env override last so it wins
 }
+
+# Marketing-team-maintained LP URL inventory. One sheet, multiple tabs by
+# vertical (Experts / Coding / Math / Languages / Speech / HLE / ...). Each
+# row has Page Name + Slug + Full URL + Status. SheetsClient.read_lp_url_map()
+# flattens to {slug: full_url} for every Published row across all tabs.
+# Override via env LP_URL_SHEET_ID for staging/test sheets.
+LP_URL_SHEET_ID = os.getenv(
+    "LP_URL_SHEET_ID",
+    "1AmM78xzVDf7UWV9icxODw6vxY12nSNZ6121Gcf0ibx4",
+)
 
 # Default exclusion targeting applied to EVERY LinkedIn campaign the pipeline
 # creates. Sourced from the canonical "exclusions reference" campaign curated

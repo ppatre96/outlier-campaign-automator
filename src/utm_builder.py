@@ -114,17 +114,25 @@ def resolve_base_lp_url(
     platform: str,
     fallback: str,
     matched_domain: Optional[str] = None,
+    sheets_client=None,
 ) -> str:
     """Pull the per-cohort landing page URL.
 
     Resolution order:
       1. `campaign_state.utm_<channel>.<base_url|url|...>` — when the marketing
          team fills this in via Smart Ramp.
-      2. `matched_domain` → LP slug via `config.LP_URL_BY_DOMAIN`. Defaults
-         seeded with the slugs the team shared for GMR-0020 (qfinance / ml / cs).
+      2. `matched_domain` → slug via `config.LP_URL_BY_DOMAIN`, then slug →
+         full URL via `sheets_client.read_lp_url_map()` (the marketing-team-
+         maintained LP inventory sheet). Marketing controls the URL itself;
+         eng only maps domain → slug. If the dict value already starts with
+         "http", it's treated as a full URL (back-compat with pre-sheet rows).
       3. `fallback` (typically `config.LINKEDIN_DESTINATION`).
 
     Smart Ramp uses `utm_joveo` for the Google bucket; mapped here.
+
+    `sheets_client` is optional — when None (e.g. tests, replay scripts that
+    don't construct a SheetsClient), the sheet-lookup leg of path 2 is skipped
+    and only `LP_URL_BY_DOMAIN` full-URL values resolve.
     """
     # 1) Smart Ramp campaign_state — preferred when filled
     if isinstance(campaign_state, dict):
@@ -136,15 +144,32 @@ def resolve_base_lp_url(
                 if v:
                     return v
 
-    # 2) Domain → LP slug map (config-driven, env-overridable)
+    # 2) Domain → slug → sheet (or full URL for back-compat)
     if matched_domain:
         try:
             import config as _cfg
             lp_map = getattr(_cfg, "LP_URL_BY_DOMAIN", {}) or {}
-            v = lp_map.get(matched_domain)
-            if v:
-                return v
+            v = (lp_map.get(matched_domain) or "").strip()
         except Exception:
-            pass
+            v = ""
+        if v:
+            # Back-compat: a full URL in LP_URL_BY_DOMAIN is used as-is.
+            if v.startswith("http://") or v.startswith("https://"):
+                return v
+            # New form: value is a slug — resolve via the LP inventory sheet.
+            if sheets_client is not None:
+                try:
+                    lp_url_map = sheets_client.read_lp_url_map()
+                except Exception as exc:
+                    log.warning("resolve_base_lp_url: sheet read failed (%s) — using fallback", exc)
+                    lp_url_map = {}
+                slug_key = v.lstrip("/").rstrip("/").rsplit("/", 1)[-1]
+                url = lp_url_map.get(slug_key) or lp_url_map.get(v.lstrip("/"))
+                if url:
+                    return url
+                log.warning(
+                    "resolve_base_lp_url: slug %r (matched_domain=%r) not Published in LP sheet — falling back",
+                    v, matched_domain,
+                )
 
     return fallback

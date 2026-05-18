@@ -76,6 +76,9 @@ class NullSheetsClient:
     def get_text_layer_map(self, *a, **kw) -> dict:
         return {}
 
+    def read_lp_url_map(self, force_refresh: bool = False) -> dict[str, str]:
+        return {}
+
 
 def _credentials_available() -> bool:
     """True when a service-account credentials file exists and is readable."""
@@ -133,6 +136,7 @@ class SheetsClient:
         self._triggers = self._gc.open_by_key(config.TRIGGERS_SHEET_ID)
         self._urn_sheet = self._gc.open_by_key(config.URN_SHEET_ID)
         self._drive_service = None  # lazy-init in _get_drive()
+        self._lp_url_map_cache: dict[str, str] | None = None  # lazy, see read_lp_url_map
         # Phase 3.3 — gspread is not thread-safe (sequential http client + no
         # internal locking). With the InMail + Static arms now running
         # concurrently, calls to update_li_campaign_id / write_creative /
@@ -449,6 +453,69 @@ class SheetsClient:
             ws = self._urn_sheet.worksheet(tab_name)
             rows = ws.get_all_records()
         return rows
+
+    # ── LP URL inventory (marketing-maintained) ───────────────────────────────
+
+    def read_lp_url_map(self, force_refresh: bool = False) -> dict[str, str]:
+        """Return a `{slug: full_url}` map for every Published row across all
+        tabs in the LP URL inventory sheet (config.LP_URL_SHEET_ID).
+
+        Source of truth for landing-page URLs maintained by the marketing team.
+        Each tab is a vertical (Experts / Coding / Math / Languages / Speech /
+        HLE / ...). Schema: Page Name | Slug | Full URL | Status | Job Post ID
+        | Sign Up Link. Rows with Status != "Published" are skipped (drafts and
+        404s would silently break ads).
+
+        Cached on the instance — typically called once per pipeline run by
+        `resolve_base_lp_url`. Pass `force_refresh=True` to bypass the cache
+        (useful for long-running daemons that should pick up sheet edits).
+
+        Slug normalisation: the sheet sometimes stores slugs with a leading
+        "/" ("/experts/qfinance"), sometimes without ("qfinance"). The cache
+        is keyed by the TRAILING segment after the last "/" — so both
+        config.LP_URL_BY_DOMAIN values ("qfinance") and full-path slugs
+        ("/experts/qfinance") resolve to the same URL.
+        """
+        if self._lp_url_map_cache is not None and not force_refresh:
+            return self._lp_url_map_cache
+
+        out: dict[str, str] = {}
+        try:
+            with self._write_lock:
+                ss = self._gc.open_by_key(config.LP_URL_SHEET_ID)
+                worksheets = ss.worksheets()
+                for ws in worksheets:
+                    try:
+                        rows = ws.get_all_records()
+                    except Exception as exc:
+                        log.warning("read_lp_url_map: skipping tab %r (%s)", ws.title, exc)
+                        continue
+                    for r in rows:
+                        if (r.get("Status") or "").strip() != "Published":
+                            continue
+                        slug = (r.get("Slug") or "").strip()
+                        url  = (r.get("Full URL") or "").strip()
+                        if not slug or not url:
+                            continue
+                        # Normalise: cache by the trailing path segment so
+                        # both "qfinance" and "/experts/qfinance" lookups
+                        # find the same URL.
+                        leaf = slug.rstrip("/").rsplit("/", 1)[-1]
+                        if leaf and leaf not in out:
+                            out[leaf] = url
+                        # Also store the full slug form for callers that
+                        # already include the path prefix.
+                        full_slug = slug.lstrip("/")
+                        if full_slug and full_slug not in out:
+                            out[full_slug] = url
+        except Exception as exc:
+            log.warning("read_lp_url_map: sheet read failed (%s) — returning empty map", exc)
+            self._lp_url_map_cache = {}
+            return self._lp_url_map_cache
+
+        log.info("read_lp_url_map: loaded %d Published LPs from %s", len(out), config.LP_URL_SHEET_ID)
+        self._lp_url_map_cache = out
+        return out
 
 
 def make_stg_id() -> str:

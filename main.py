@@ -1421,6 +1421,7 @@ def _process_inmail_campaigns(
                 platform="linkedin",
                 fallback=destination_url_override or config.LINKEDIN_DESTINATION,
                 matched_domain=(naming_meta or {}).get("domain"),
+                sheets_client=sheets,
             )
 
             # Attach one InMail ad per (valid) angle to the same campaign.
@@ -2828,13 +2829,14 @@ def _process_static_campaigns(
 
             # Build the UTM destination URL per (cohort × geo × angle). Base
             # LP resolved from Smart Ramp's campaign_state.utm_linkedin or
-            # config.LP_URL_BY_DOMAIN; falls back to LINKEDIN_DESTINATION.
+            # config.LP_URL_BY_DOMAIN → LP sheet; falls back to LINKEDIN_DESTINATION.
             from src.utm_builder import build_utm_url, resolve_base_lp_url
             base_lp = resolve_base_lp_url(
                 campaign_state=(naming_meta or {}).get("campaign_state"),
                 platform="linkedin",
                 fallback=destination_url_override or config.LINKEDIN_DESTINATION,
                 matched_domain=(naming_meta or {}).get("domain"),
+                sheets_client=sheets,
             )
             utm_url = build_utm_url(
                 base_url=base_lp, platform="linkedin",
@@ -2969,6 +2971,7 @@ def _process_extra_platform_arm(
     destination_url_override: str | None,
     unique_id: str | None = None,
     naming_meta: dict | None = None,
+    sheets=None,
 ) -> dict:
     """Per-platform static-ad arm for non-LinkedIn platforms (Meta + Google).
 
@@ -3315,6 +3318,7 @@ def _process_extra_platform_arm(
                         platform=platform,
                         fallback=destination_url_override or config.LINKEDIN_DESTINATION,
                         matched_domain=(naming_meta or {}).get("domain"),
+                        sheets_client=sheets,
                     )
                     utm_url = build_utm_url(
                         base_url=base_lp, platform=platform,
@@ -3658,6 +3662,7 @@ def _process_row_both_modes(
                         destination_url_override=destination_url_override,
                         unique_id=unique_id,
                         naming_meta=naming_meta,
+                        sheets=sheets,
                     )
                     extra_platform_results[platform_name] = r
                 except Exception:
