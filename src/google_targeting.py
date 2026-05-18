@@ -158,21 +158,52 @@ class GoogleSegmentResolver(TargetingResolver):
         return out
 
     def _lookup_geos_via_api(self, isos: list[str]) -> dict[str, list[str]]:
+        """Resolve ISO country codes to Google Ads `geoTargetConstants/<id>`
+        resource names.
+
+        Implementation note (2026-05-18): originally used
+        `GeoTargetConstantService.suggest_geo_target_constants` with just
+        `country_code`, but google-ads v25+ requires the `oneof query` to be
+        populated (`location_names` OR `geo_targets`); setting only
+        `country_code` fails with `REQUEST_PARAMETERS_UNSET`. Switched to a
+        direct GAQL search against the `geo_target_constant` resource, which
+        is the canonical pattern when you already have ISO codes and only
+        care about country-level resources.
+        """
         client = self._ensure_client()
-        gtc_service = client.get_service("GeoTargetConstantService")
+        ga_service = client.get_service("GoogleAdsService")
+        customer_id = str(config.GOOGLE_ADS_CUSTOMER_ID).replace("-", "")
+        # Target-type preference: 'Country' covers most ISO codes (US, GB,
+        # MX, etc.); some entities Google models as 'Region' (e.g. Puerto
+        # Rico, US Virgin Islands) — fall back to those when no Country row
+        # exists, so we don't drop territories from targeting silently.
+        type_priority = {"Country": 0, "Region": 1, "Territory": 2}
         out: dict[str, list[str]] = {}
         for iso in isos:
+            iso_upper = iso.upper()
             try:
-                req = client.get_type("SuggestGeoTargetConstantsRequest")
-                req.country_code = iso.upper()
-                req.locale = "en"
-                resp = gtc_service.suggest_geo_target_constants(request=req)
-                resources = []
-                for sugg in resp.geo_target_constant_suggestions[:1]:
-                    resources.append(sugg.geo_target_constant.resource_name)
+                query = (
+                    "SELECT geo_target_constant.resource_name, "
+                    "geo_target_constant.target_type "
+                    "FROM geo_target_constant "
+                    f"WHERE geo_target_constant.country_code = '{iso_upper}' "
+                    "AND geo_target_constant.status = 'ENABLED' "
+                    "AND geo_target_constant.target_type IN "
+                    "('Country', 'Region', 'Territory')"
+                )
+                resp = ga_service.search(customer_id=customer_id, query=query)
+                candidates: list[tuple[int, str]] = []
+                for row in resp:
+                    g = row.geo_target_constant
+                    pri = type_priority.get(g.target_type, 99)
+                    candidates.append((pri, g.resource_name))
+                candidates.sort()
+                resources = [candidates[0][1]] if candidates else []
                 out[iso] = resources
+                if not resources:
+                    log.warning("Google geo lookup for %s returned no rows", iso)
             except Exception as exc:
-                log.warning("Google geo suggest for %s failed: %s", iso, exc)
+                log.warning("Google geo search for %s failed: %s", iso, exc)
                 out[iso] = []
         return out
 
