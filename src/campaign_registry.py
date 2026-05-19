@@ -101,7 +101,7 @@ COLUMNS = [
     "creative_image_path",      # local path to the rendered PNG (used to embed image in Sheets)
     "cohort_geo",               # "<stg_id>__<geo_cluster>" — matches the Drive PNG folder name; used by reconcile_creative_paths() to backfill empty creative_image_path entries by walking Drive
     "inmail_subject",
-    "inmail_body_preview",      # first 150 chars
+    "inmail_body",              # full body delivered on LinkedIn
     # ── Lifecycle ─────────────────────────────────────────────────────────────
     "created_at",
     "status",                   # active | paused | deprecated
@@ -145,7 +145,7 @@ class CampaignEntry:
     creative_image_path:    str = ""
     cohort_geo:             str = ""    # "<stg_id>__<geo_cluster>" — Drive PNG folder name
     inmail_subject:         str = ""
-    inmail_body_preview:    str = ""
+    inmail_body:            str = ""
     created_at:             str = ""
     status:                 str = "active"
     deprecation_reason:     str = ""
@@ -265,7 +265,7 @@ def _write_excel(records: list[dict]) -> None:
         "geos": 18, "angle": 7, "campaign_type": 10, "advertised_rate": 12,
         "linkedin_campaign_urn": 35, "creative_urn": 35,
         "headline": 30, "subheadline": 30, "photo_subject": 35,
-        "inmail_subject": 35, "inmail_body_preview": 40,
+        "inmail_subject": 35, "inmail_body": 80,
         "created_at": 20, "status": 12,
     }
     for col_idx, col in enumerate(COLUMNS, 1):
@@ -344,7 +344,7 @@ def log_campaign(
         creative_image_path=creative_image_path,
         cohort_geo=cohort_geo,
         inmail_subject=inmail_subject,
-        inmail_body_preview=inmail_body[:150] if inmail_body else "",
+        inmail_body=inmail_body or "",
         gemini_prompt=gemini_prompt,
         created_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         status="active",
