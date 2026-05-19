@@ -817,7 +817,13 @@ Bad examples (never do these):
 The photo generator will add: close-up portrait framing, plant-filled home interior, natural window light, warm film aesthetic.
 
 ## RESPONSE FORMAT
-Return ONLY valid JSON, no other text. Every variant MUST contain all 8 fields below:
+Return ONLY valid JSON, no other text. Every variant MUST contain ALL the fields below.
+The `rationale` field is REQUIRED — explain in 1–2 sentences why THIS angle for THIS
+audience now, ideally tying back to a specific competitor signal from the intel
+above (e.g. "counters Mercor's April 2026 data breach with enterprise-security
+framing"). The console renders rationale to Diego/Bryan as "Angles we'd test" so
+they can decide which channel/budget to fund.
+
 ```json
 {{
   "tg_label": "<your derived human-readable label for this TG, e.g. 'European DNA sequencing researcher'>",
@@ -832,6 +838,8 @@ Return ONLY valid JSON, no other text. Every variant MUST contain all 8 fields b
       "ad_description": "<≤100 chars — small text, optional but recommended>",
       "cta_button": "APPLY",
       "photo_subject": "<[gender] [ethnicity] [profession], [activity]>",
+      "rationale": "<1–2 sentences. Why this angle for this audience. Reference a competitor signal when relevant.>",
+      "competitor_signal": "<short tag e.g. 'Mercor data breach 2026-04' or empty string if none>",
       "layerUpdates": {{"<node_id_from_layers>": "new text"}}
     }},
     {{
@@ -844,6 +852,8 @@ Return ONLY valid JSON, no other text. Every variant MUST contain all 8 fields b
       "ad_description": "...",
       "cta_button": "APPLY",
       "photo_subject": "...",
+      "rationale": "...",
+      "competitor_signal": "...",
       "layerUpdates": {{"<node_id_from_layers>": "new text"}}
     }},
     {{
@@ -856,6 +866,8 @@ Return ONLY valid JSON, no other text. Every variant MUST contain all 8 fields b
       "ad_description": "...",
       "cta_button": "APPLY",
       "photo_subject": "...",
+      "rationale": "...",
+      "competitor_signal": "...",
       "layerUpdates": {{"<node_id_from_layers>": "new text"}}
     }}
   ]

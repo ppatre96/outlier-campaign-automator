@@ -196,6 +196,86 @@ def update_status(
         conn.commit()
 
 
+def upsert_cohort_brief_rationale(
+    *,
+    ramp_id: str,
+    cohort_id: str,
+    cohort_signature: str,
+    channel: str,
+    angle: str,
+    geo_cluster: Optional[str] = None,
+    angle_label: Optional[str] = None,
+    headline: Optional[str] = None,
+    subheadline: Optional[str] = None,
+    photo_subject: Optional[str] = None,
+    rationale: Optional[str] = None,
+    competitor_signal: Optional[str] = None,
+    expected_uplift_pp: Optional[float] = None,
+) -> None:
+    """Phase 5 — persist the brief-agent's per-angle reasoning so the console
+    can render "Angles we'd test" with rationale above the timeline.
+
+    Idempotent: ON CONFLICT (ramp_id, cohort_id, channel, angle, geo_cluster)
+    DO UPDATE so re-running prep with the same inputs overwrites cleanly.
+
+    Best-effort: swallows UIDecisionsUnavailable so a Postgres outage never
+    blocks copy generation. Caller logs the failure.
+    """
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO cohort_brief_rationale (
+                    ramp_id, cohort_id, cohort_signature, geo_cluster, channel,
+                    angle, angle_label, headline, subheadline, photo_subject,
+                    rationale, competitor_signal, expected_uplift_pp
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (ramp_id, cohort_id, channel, angle, geo_cluster) DO UPDATE SET
+                    angle_label        = EXCLUDED.angle_label,
+                    headline           = EXCLUDED.headline,
+                    subheadline        = EXCLUDED.subheadline,
+                    photo_subject      = EXCLUDED.photo_subject,
+                    rationale          = EXCLUDED.rationale,
+                    competitor_signal  = EXCLUDED.competitor_signal,
+                    expected_uplift_pp = EXCLUDED.expected_uplift_pp
+                """,
+                (
+                    ramp_id, cohort_id, cohort_signature, geo_cluster, channel,
+                    angle, angle_label, headline, subheadline, photo_subject,
+                    rationale, competitor_signal, expected_uplift_pp,
+                ),
+            )
+            conn.commit()
+    except UIDecisionsUnavailable as exc:
+        log.debug("upsert_cohort_brief_rationale skipped (%s/%s/%s): %s",
+                  ramp_id, cohort_id, angle, exc)
+
+
+def upsert_competitor_intel_snapshot(ramp_id: str, snapshot: dict) -> None:
+    """Phase 5 — snapshot data/competitor_intel/latest.json against a ramp at
+    prep time. The console reads this to render the "Competitor landscape"
+    card alongside the angles. ON CONFLICT updates so re-running prep
+    refreshes the snapshot.
+
+    Best-effort — Postgres outage never blocks the pipeline.
+    """
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO competitor_intel_snapshots (ramp_id, snapshot)
+                VALUES (%s, %s::jsonb)
+                ON CONFLICT (ramp_id) DO UPDATE SET
+                    snapshot = EXCLUDED.snapshot
+                """,
+                (ramp_id, json.dumps(snapshot)),
+            )
+            conn.commit()
+    except UIDecisionsUnavailable as exc:
+        log.debug("upsert_competitor_intel_snapshot skipped (%s): %s", ramp_id, exc)
+
+
 def log_event(
     ramp_id: str,
     event_type: str,

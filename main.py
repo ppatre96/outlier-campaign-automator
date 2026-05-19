@@ -1312,6 +1312,15 @@ def _process_inmail_campaigns(
                     cohort.name, geo_group.cluster_label,
                 )
                 continue
+            # Phase 5 — persist per-angle rationale for the console.
+            if ramp_id:
+                _persist_cohort_rationales(
+                    ramp_id=ramp_id,
+                    cohort=cohort,
+                    geo_cluster=geo_group.cluster,
+                    channel="linkedin_inmail",
+                    variants=variants,
+                )
 
             # Per-angle brand voice validation. Aggregate failures so MUST
             # violations on one angle don't kill the whole (cohort × geo) —
@@ -2313,6 +2322,70 @@ def _cohort_geo_label(cohort, geo_group) -> str:
     return f"{stg}__{cluster}"
 
 
+def _persist_cohort_rationales(
+    *,
+    ramp_id: str,
+    cohort,
+    geo_cluster: str,
+    channel: str,
+    variants: list[dict],
+) -> None:
+    """Phase 5 — best-effort persistence of per-angle rationale + a snapshot
+    of the produced copy into Postgres. Each variant becomes one row in
+    `cohort_brief_rationale` keyed by (ramp_id, cohort_id, channel, angle,
+    geo_cluster). Silent on UIDecisionsUnavailable so a Postgres outage
+    never blocks copy gen.
+
+    `variants` come from build_copy_variants / build_inmail_variants —
+    accepts either dicts (static) or InMailVariant dataclasses by
+    duck-typing the field reads.
+    """
+    if not (ramp_id and variants):
+        return
+    try:
+        from src.ui_decisions import upsert_cohort_brief_rationale
+    except ImportError:
+        return
+    cohort_id = getattr(cohort, "_stg_id", "") or getattr(cohort, "id", "") or ""
+    cohort_signature = getattr(cohort, "name", "") or ""
+    for v in variants:
+        # Static variants are dicts; InMail variants are dataclasses.
+        def _g(k: str) -> str:
+            if isinstance(v, dict):
+                return str(v.get(k, "") or "")
+            return str(getattr(v, k, "") or "")
+        angle = _g("angle")
+        if not angle:
+            continue
+        # Optional expected_uplift_pp parsed as float when present.
+        uplift_raw = _g("expected_uplift_pp")
+        try:
+            uplift_val = float(uplift_raw) if uplift_raw not in ("", None) else None
+        except (TypeError, ValueError):
+            uplift_val = None
+        try:
+            upsert_cohort_brief_rationale(
+                ramp_id=ramp_id,
+                cohort_id=cohort_id,
+                cohort_signature=cohort_signature,
+                geo_cluster=geo_cluster or None,
+                channel=channel,
+                angle=angle,
+                angle_label=_g("angleLabel") or _g("angle_label") or None,
+                headline=_g("headline") or None,
+                subheadline=_g("subheadline") or _g("subject") or None,
+                photo_subject=_g("photo_subject") or None,
+                rationale=_g("rationale") or None,
+                competitor_signal=_g("competitor_signal") or None,
+                expected_uplift_pp=uplift_val,
+            )
+        except Exception as _exc:
+            log.debug(
+                "_persist_cohort_rationales: row write failed (non-fatal) ramp=%s cohort=%s angle=%s: %s",
+                ramp_id, cohort_id, angle, _exc,
+            )
+
+
 def _process_static_campaigns(
     selected,
     *,
@@ -2468,13 +2541,25 @@ def _process_static_campaigns(
                 figma_client.get_text_layer_map(figma_file, figma_node)
                 if has_figma else {}
             )
-            return build_copy_variants(
+            variants = build_copy_variants(
                 cohort, layer_map,
                 geos=group_geos,
                 description_hint=cohort_description,
                 hourly_rate=geo_group.advertised_rate,
                 geo_icp_hint=geo_group.icp_hint,
             )
+            # Phase 5 — persist per-angle rationale so the console can render
+            # "Angles we'd test" above the timeline. Best-effort: failures
+            # never abort copy gen.
+            if ramp_id and variants:
+                _persist_cohort_rationales(
+                    ramp_id=ramp_id,
+                    cohort=cohort,
+                    geo_cluster=geo_group.cluster,
+                    channel="linkedin",
+                    variants=variants,
+                )
+            return variants
         except Exception as exc:
             log.warning("Static copy generation failed for '%s' / '%s': %s (%s)",
                         cohort.name, job["geo_label"], exc, type(exc).__name__,
@@ -3929,6 +4014,24 @@ def run_launch_for_ramp(
     if prep_only:
         aggregated["prep_only"] = True
         aggregated["cohorts_mined"] = []
+
+    # Phase 5 — snapshot the competitor intel JSON against this ramp so the
+    # console renders the intel that informed THIS run's brief. Best-effort:
+    # missing file or Postgres outage → log + continue.
+    try:
+        from pathlib import Path as _Path
+        from src.ui_decisions import upsert_competitor_intel_snapshot
+        _intel_path = _Path("data/competitor_intel/latest.json")
+        if _intel_path.exists():
+            import json as _json_mod
+            _intel_data = _json_mod.loads(_intel_path.read_text())
+            upsert_competitor_intel_snapshot(ramp_id, _intel_data)
+            log.info(
+                "Phase5: snapshotted competitor_intel for ramp=%s (%d top-level keys)",
+                ramp_id, len(_intel_data),
+            )
+    except Exception as _exc:
+        log.warning("Phase5: competitor_intel snapshot skipped: %s", _exc)
 
     # Cross-row (cohort × geo_cluster) dedup state, scoped to this single ramp.
     # Two independent sets so the InMail and Static arms — which run
