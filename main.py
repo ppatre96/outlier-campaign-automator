@@ -1171,6 +1171,7 @@ def _process_inmail_campaigns(
     unique_id: str | None = None,
     naming_meta: dict | None = None,
     seen_keys: set | None = None,
+    daily_budget_cents: int | None = None,
 ) -> None:
     """
     InMail (Message Ad) path — no creative generation.
@@ -1393,11 +1394,16 @@ def _process_inmail_campaigns(
                     campaign_name = f"{cohort._stg_name}{geo_suffix} InMail"
 
                 # ONE campaign per (cohort × geo)
+                _li_inmail_budget_kwargs = (
+                    {"daily_budget_cents": daily_budget_cents}
+                    if daily_budget_cents is not None else {}
+                )
                 campaign_urn = li_client.create_inmail_campaign(
                     name=campaign_name,
                     campaign_group_urn=group_urn,
                     facet_urns=facet_urns,
                     exclude_facet_urns=cohort_exclude_urns,
+                    **_li_inmail_budget_kwargs,
                 )
                 campaign_id = campaign_urn.rsplit(":", 1)[-1]
                 sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
@@ -2331,6 +2337,7 @@ def _process_static_campaigns(
     unique_id: str | None = None,
     naming_meta: dict | None = None,
     seen_keys: set | None = None,
+    daily_budget_cents: int | None = None,
 ) -> dict:
     """Static-ad arm — symmetric counterpart to _process_inmail_campaigns.
 
@@ -2747,11 +2754,16 @@ def _process_static_campaigns(
                 cohort_remove_urns,
             )
 
+            _li_static_budget_kwargs = (
+                {"daily_budget_cents": daily_budget_cents}
+                if daily_budget_cents is not None else {}
+            )
             campaign_urn = li_client.create_campaign(
                 name=campaign_name,
                 campaign_group_urn=group_urn,
                 facet_urns=facet_urns,
                 exclude_facet_urns=cohort_exclude_urns,
+                **_li_static_budget_kwargs,
             )
             campaign_id = campaign_urn.rsplit(":", 1)[-1]
             sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
@@ -2972,6 +2984,7 @@ def _process_extra_platform_arm(
     unique_id: str | None = None,
     naming_meta: dict | None = None,
     sheets=None,
+    daily_budget_cents: int | None = None,
 ) -> dict:
     """Per-platform static-ad arm for non-LinkedIn platforms (Meta + Google).
 
@@ -3246,10 +3259,15 @@ def _process_extra_platform_arm(
                 if extras:
                     campaign_name = f"{campaign_name} | {extras}"
             targeting = resolver.resolve_cohort(cohort, geos=group_geos)
+            _extra_budget_kwargs = (
+                {"daily_budget_cents": daily_budget_cents}
+                if daily_budget_cents is not None else {}
+            )
             sub_id = client.create_campaign(
                 name=campaign_name,
                 campaign_group_id=group_id,
                 targeting=targeting,
+                **_extra_budget_kwargs,
             )
             out["campaigns"].append(sub_id)
             out["campaigns_by_cohort"][by_cohort_key] = sub_id
@@ -3455,6 +3473,8 @@ def _process_row_both_modes(
     seen_inmail_keys: set | None = None,
     seen_static_keys: set | None = None,
     prep_only: bool = False,
+    channels: list[str] | None = None,
+    budgets: dict[str, int] | None = None,
 ) -> dict:
     # Naming metadata bundle — read once from the row dict so the arm
     # functions can forward to src.campaign_name.build_campaign_name without
@@ -3490,6 +3510,23 @@ def _process_row_both_modes(
                 _override, modes,
             )
             modes = _override
+
+    # Phase 2 — per-ramp channel override (from console approval decision).
+    # `channels` is a subset of {'linkedin','meta','google'}. Wins over both
+    # the OUTLIER_ARMS env var and config.ENABLED_PLATFORMS for this row.
+    # 'linkedin' implies both InMail + Static; absence → drop both LI arms.
+    # Meta/Google filtering happens later in the extras loop.
+    linkedin_enabled = channels is None or "linkedin" in channels
+    if not linkedin_enabled and modes:
+        log.info(
+            "_process_row_both_modes: channels=%s excludes linkedin — "
+            "dropping LinkedIn arms (modes was %s)",
+            channels, modes,
+        )
+        modes = tuple()
+
+    # Per-channel budget cents (None → platform client uses its PLACEHOLDER).
+    linkedin_budget_cents = (budgets or {}).get("linkedin")
     flow_id = row.get("flow_id", "")
     location = row.get("location", "")
     config_name = row.get("config_name") or flow_id
@@ -3591,6 +3628,7 @@ def _process_row_both_modes(
                 unique_id=unique_id,
                 naming_meta=naming_meta,
                 seen_keys=seen_inmail_keys,
+                daily_budget_cents=linkedin_budget_cents,
             )
             return r if isinstance(r, dict) else {}
         except Exception:
@@ -3623,6 +3661,7 @@ def _process_row_both_modes(
                 unique_id=unique_id,
                 naming_meta=naming_meta,
                 seen_keys=seen_static_keys,
+                daily_budget_cents=linkedin_budget_cents,
             )
             return r if isinstance(r, dict) else {}
         except Exception:
@@ -3677,6 +3716,16 @@ def _process_row_both_modes(
     if "static" in modes and not dry_run:
         from src.ad_platform import enabled_platforms
         platforms = [p for p in enabled_platforms() if p != "linkedin"]
+        # Phase 2 — `channels` decision-row override filters the extras list.
+        if channels is not None:
+            allowed_extras = {c for c in channels if c != "linkedin"}
+            filtered = [p for p in platforms if p in allowed_extras]
+            if filtered != platforms:
+                log.info(
+                    "_process_row_both_modes: channels=%s → extras platforms %s → %s",
+                    channels, platforms, filtered,
+                )
+            platforms = filtered
         specs = (static_result or {}).get("campaign_specs") or []
         if platforms and specs:
             extras = _build_extra_platform_clients(platforms)
@@ -3695,6 +3744,7 @@ def _process_row_both_modes(
                         unique_id=unique_id,
                         naming_meta=naming_meta,
                         sheets=sheets,
+                        daily_budget_cents=(budgets or {}).get(platform_name),
                     )
                     extra_platform_results[platform_name] = r
                 except Exception:
@@ -3794,6 +3844,8 @@ def run_launch_for_ramp(
     modes: tuple[str, ...] = ("inmail", "static"),
     dry_run: bool = False,
     prep_only: bool = False,
+    channels: list[str] | None = None,
+    budgets: dict[str, int] | None = None,
 ) -> dict:
     """Programmatic entry point for the Smart Ramp poller (Plan 01).
 
@@ -3809,6 +3861,15 @@ def run_launch_for_ramp(
     campaign-console approval gate so Diego/Bryan can see what the pipeline
     *would* launch before clicking Approve. See `_prep_ramp` /
     `_launch_ramp` for the intent-named wrappers.
+
+    `channels` + `budgets` (Phase 2): per-ramp overrides supplied by the
+    console's approval decision. When None, the legacy global defaults
+    (config.ENABLED_PLATFORMS + each platform client's PLACEHOLDER budget)
+    apply. When set:
+      - channels: subset of {'linkedin','meta','google'} — drives which
+        arms execute. 'linkedin' covers both Static + InMail.
+      - budgets: {'linkedin'|'meta'|'google': int_cents_per_day}. A missing
+        key → use the platform client's PLACEHOLDER default.
 
     Backwards compat note: this is ADDITIVE. The legacy `python main.py
     --ramp-id <id>` CLI continues to use the original `_process_row` flow via
@@ -3897,6 +3958,8 @@ def run_launch_for_ramp(
                 seen_inmail_keys=seen_inmail_keys,
                 seen_static_keys=seen_static_keys,
                 prep_only=prep_only,
+                channels=channels,
+                budgets=budgets,
             )
             aggregated["campaign_groups"].extend(outcome.get("campaign_groups", []) or [])
             aggregated["inmail_campaigns"].extend(outcome.get("inmail_campaigns", []) or [])
@@ -3930,10 +3993,15 @@ def _launch_ramp(ramp_id: str, decision=None) -> dict:
     """Run the full pipeline (prep + platform creates) for a ramp that has
     already been approved in the console. `decision` is the
     `src.ui_decisions.Decision` row carrying channel selection + budget
-    overrides (consumed in Phase 2's per-ramp plumbing).
+    overrides. When `decision` is None, falls back to global defaults
+    (config.ENABLED_PLATFORMS + per-client PLACEHOLDER budgets).
     """
-    # decision-driven channel/budget threading lands in Phase 2.
-    return run_launch_for_ramp(ramp_id, dry_run=False, prep_only=False)
+    channels = list(decision.channels) if decision and decision.channels else None
+    budgets = dict(decision.budgets) if decision and decision.budgets else None
+    return run_launch_for_ramp(
+        ramp_id, dry_run=False, prep_only=False,
+        channels=channels, budgets=budgets,
+    )
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
