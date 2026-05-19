@@ -84,6 +84,18 @@ def _inmail_arm_kwargs(cohorts, li_client, urn_res):
     )
 
 
+def _block_registry_writes(monkeypatch):
+    """Block all `log_campaign` writes (sheet + JSON + xlsx) for the test.
+
+    `_process_inmail_campaigns` imports `log_campaign` function-locally from
+    src.campaign_registry, which carries a module-global SheetsClient
+    singleton — bypassing the `sheets=` arg the test mocks. Without this
+    block the test would write live rows into the Campaign Registry sheet.
+    """
+    import src.campaign_registry as _reg
+    monkeypatch.setattr(_reg, "log_campaign", lambda **kw: None)
+
+
 def test_inmail_create_failure_does_not_abort_remaining_cohorts(monkeypatch):
     """When `create_inmail_campaign` raises on cohort A, cohort B's
     `create_inmail_campaign` must still be called. Before the fix the
@@ -92,6 +104,7 @@ def test_inmail_create_failure_does_not_abort_remaining_cohorts(monkeypatch):
     """
     import main as M
     _stub_one_geo_group(monkeypatch)
+    _block_registry_writes(monkeypatch)
 
     # Variants must be non-empty so we reach the create_inmail_campaign call.
     monkeypatch.setattr(
@@ -140,6 +153,7 @@ def test_inmail_create_success_path_unchanged(monkeypatch):
     accidental control-flow regressions in the new try/except wrapper."""
     import main as M
     _stub_one_geo_group(monkeypatch)
+    _block_registry_writes(monkeypatch)
 
     monkeypatch.setattr(
         M, "build_inmail_variants",
