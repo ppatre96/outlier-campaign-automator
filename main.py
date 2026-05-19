@@ -3454,6 +3454,7 @@ def _process_row_both_modes(
     figma_node: str = "",
     seen_inmail_keys: set | None = None,
     seen_static_keys: set | None = None,
+    prep_only: bool = False,
 ) -> dict:
     # Naming metadata bundle — read once from the row dict so the arm
     # functions can forward to src.campaign_name.build_campaign_name without
@@ -3511,6 +3512,37 @@ def _process_row_both_modes(
                     cohort_id_override or flow_id or "?")
         return {
             "ok": True,
+            "campaign_groups": [],
+            "inmail_campaigns": [],
+            "static_campaigns": [],
+            "creative_paths": {},
+            "per_cohort": [],
+        }
+
+    # Phase 1.4 — prep_only short-circuit. Cohorts have been mined + written to
+    # the Triggers Sheet by _resolve_cohorts; that's enough for the UI to show
+    # the ramp as "ready for review". The arms (which generate copy, images,
+    # and call platform create_campaign) are gated until Diego/Bryan approve
+    # via outlier-campaign-console. Phase 5 will move brief + image generation
+    # into prep so the UI can preview them; for now the timeline shows cohorts
+    # + targeting only until launch fires.
+    if prep_only:
+        log.info(
+            "_process_row_both_modes[prep_only]: %d cohort(s) mined for row %s — "
+            "skipping arms; awaiting approval",
+            len(resolved.selected), cohort_id_override or flow_id or "?",
+        )
+        return {
+            "ok": True,
+            "prep_only": True,
+            "cohorts_mined": [
+                {
+                    "name": c.name,
+                    "stg_id": getattr(c, "_stg_id", ""),
+                    "stg_name": getattr(c, "_stg_name", ""),
+                }
+                for c in resolved.selected
+            ],
             "campaign_groups": [],
             "inmail_campaigns": [],
             "static_campaigns": [],
@@ -3761,6 +3793,7 @@ def run_launch_for_ramp(
     ramp_id: str,
     modes: tuple[str, ...] = ("inmail", "static"),
     dry_run: bool = False,
+    prep_only: bool = False,
 ) -> dict:
     """Programmatic entry point for the Smart Ramp poller (Plan 01).
 
@@ -3770,6 +3803,12 @@ def run_launch_for_ramp(
 
     Per-row isolation: a single row raising never aborts the rest. Per-cohort
     isolation lives inside _process_static_campaigns / _process_inmail_campaigns.
+
+    `prep_only=True` (Phase 1.4): mine cohorts + write them to the Triggers
+    Sheet, then STOP before any platform API call. Used by the outlier-
+    campaign-console approval gate so Diego/Bryan can see what the pipeline
+    *would* launch before clicking Approve. See `_prep_ramp` /
+    `_launch_ramp` for the intent-named wrappers.
 
     Backwards compat note: this is ADDITIVE. The legacy `python main.py
     --ramp-id <id>` CLI continues to use the original `_process_row` flow via
@@ -3826,6 +3865,9 @@ def run_launch_for_ramp(
         "creative_paths": {},
         "per_cohort": [],
     }
+    if prep_only:
+        aggregated["prep_only"] = True
+        aggregated["cohorts_mined"] = []
 
     # Cross-row (cohort × geo_cluster) dedup state, scoped to this single ramp.
     # Two independent sets so the InMail and Static arms — which run
@@ -3854,12 +3896,15 @@ def run_launch_for_ramp(
                 figma_node=row.get("figma_node", ""),
                 seen_inmail_keys=seen_inmail_keys,
                 seen_static_keys=seen_static_keys,
+                prep_only=prep_only,
             )
             aggregated["campaign_groups"].extend(outcome.get("campaign_groups", []) or [])
             aggregated["inmail_campaigns"].extend(outcome.get("inmail_campaigns", []) or [])
             aggregated["static_campaigns"].extend(outcome.get("static_campaigns", []) or [])
             aggregated["creative_paths"].update(outcome.get("creative_paths", {}) or {})
             aggregated["per_cohort"].extend(outcome.get("per_cohort", []) or [])
+            if prep_only:
+                aggregated["cohorts_mined"].extend(outcome.get("cohorts_mined", []) or [])
         except Exception:
             log.exception(
                 "run_launch_for_ramp: row failed for ramp=%s cohort=%s — continuing with next row",
@@ -3868,6 +3913,27 @@ def run_launch_for_ramp(
             continue
 
     return aggregated
+
+
+def _prep_ramp(ramp_id: str) -> dict:
+    """Run pipeline prep stages only — mine cohorts + write them to the
+    Triggers Sheet. No platform API calls. Used by the outlier-campaign-
+    console approval gate to populate UI state before Diego/Bryan choose
+    channels + budgets. Idempotent: re-running re-reads cohorts and
+    re-upserts the same Triggers rows (Phase 5 will add Postgres rationale
+    persistence).
+    """
+    return run_launch_for_ramp(ramp_id, dry_run=False, prep_only=True)
+
+
+def _launch_ramp(ramp_id: str, decision=None) -> dict:
+    """Run the full pipeline (prep + platform creates) for a ramp that has
+    already been approved in the console. `decision` is the
+    `src.ui_decisions.Decision` row carrying channel selection + budget
+    overrides (consumed in Phase 2's per-ramp plumbing).
+    """
+    # decision-driven channel/budget threading lands in Phase 2.
+    return run_launch_for_ramp(ramp_id, dry_run=False, prep_only=False)
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

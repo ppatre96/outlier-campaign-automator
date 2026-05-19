@@ -231,15 +231,133 @@ def run_ramp_pipeline(record: RampRecord, dry_run: bool = False, version: int = 
         "per_cohort": [ {cohort_id, cohort_description, inmail_urn, static_urn,
                           inmail_creative, static_creative}, ... ],
       }
+
+    Phase 1.5 — outlier-campaign-console approval gate. When
+    `config.UI_GATE_ENABLED=true`, this function consults Postgres before
+    dispatching:
+
+      no row in ramp_decisions  → call _prep_ramp(), upsert awaiting_approval,
+                                  return prep result. UI takes over.
+      status prep_running       → defensive — same as awaiting_approval.
+      status awaiting_approval  → log + return early; nothing to do.
+      status approved / yolo    → atomic claim_ramp() → _launch_ramp().
+                                  On success: update_status('completed').
+                                  On failure: update_status('failed').
+      status launching          → another worker holds the claim; skip.
+      status completed / failed → terminal; the user-facing decision is in
+                                  the past. Skip to avoid double-launch.
+
+    On UIDecisionsUnavailable (DB down / DATABASE_URL unset) with gate ON,
+    we fail-closed: log + return ok=False with a clear error class. The
+    poller's existing failure-counter + escalation gate then surfaces the
+    outage to Slack. When gate is OFF, behavior is unchanged.
     """
-    from main import run_launch_for_ramp
+    from main import run_launch_for_ramp, _prep_ramp, _launch_ramp, _ramp_to_rows
     log.info(
         "Running pipeline for ramp=%s version=%s dry_run=%s",
         record.id, version, dry_run,
     )
-    return run_launch_for_ramp(
-        record.id, modes=("inmail", "static"), dry_run=dry_run,
-    )
+
+    # Legacy path — gate disabled. No Postgres lookups; behaves as before.
+    if not getattr(config, "UI_GATE_ENABLED", False):
+        return run_launch_for_ramp(
+            record.id, modes=("inmail", "static"), dry_run=dry_run,
+        )
+
+    # Dry-run never gates. Always behave as before.
+    if dry_run:
+        return run_launch_for_ramp(
+            record.id, modes=("inmail", "static"), dry_run=True,
+        )
+
+    # Gated path — consult Postgres.
+    try:
+        from src.ui_decisions import (
+            UIDecisionsUnavailable,
+            get_decision,
+            claim_ramp,
+            upsert_awaiting_approval,
+            update_status,
+        )
+    except ImportError as exc:
+        log.error("UI gate ON but src.ui_decisions import failed: %s", exc)
+        return {"ok": False, "error": f"ui_decisions import failed: {exc}",
+                "campaign_groups": [], "inmail_campaigns": [],
+                "static_campaigns": [], "creative_paths": {}, "per_cohort": []}
+
+    try:
+        decision = get_decision(record.id)
+    except UIDecisionsUnavailable as exc:
+        log.warning("UI gate ON but Postgres unreachable (%s) — skipping ramp %s",
+                    exc, record.id)
+        return {"ok": False, "error": f"ui_decisions unreachable: {exc}",
+                "campaign_groups": [], "inmail_campaigns": [],
+                "static_campaigns": [], "creative_paths": {}, "per_cohort": []}
+
+    # No prior decision → first time we've seen this ramp post-submission.
+    # Run prep (cohort mining + Triggers Sheet rows) + write awaiting_approval.
+    if decision is None:
+        log.info("UI gate: ramp %s has no decision — running prep + awaiting approval", record.id)
+        prep_result = _prep_ramp(record.id)
+        try:
+            upsert_awaiting_approval(
+                record.id,
+                matched_domain=(record.cohorts[0].matched_domain
+                                if record.cohorts else "") or "",
+                requester_name=getattr(record, "requester_name", "") or "",
+                summary=getattr(record, "summary", "") or "",
+                submitted_at=getattr(record, "submitted_at", "") or None,
+                prep_summary={
+                    "cohorts_mined": prep_result.get("cohorts_mined", []),
+                    "rows_processed": len(_ramp_to_rows(record)),
+                },
+            )
+        except UIDecisionsUnavailable as exc:
+            log.warning("Prep finished for %s but upsert failed: %s — UI won't see it until next poll", record.id, exc)
+        return prep_result
+
+    # Terminal / in-flight states — nothing to do this tick.
+    if decision.status in ("awaiting_approval", "prep_running", "launching",
+                            "completed", "failed"):
+        log.info("UI gate: ramp %s status=%s — skipping (UI controls)",
+                 record.id, decision.status)
+        return {"ok": True, "ui_gated": True, "status": decision.status,
+                "campaign_groups": [], "inmail_campaigns": [],
+                "static_campaigns": [], "creative_paths": {}, "per_cohort": []}
+
+    # Approved or YOLO — try to atomically claim and launch.
+    if decision.status in ("approved", "yolo"):
+        claimed = claim_ramp(record.id)
+        if claimed is None:
+            log.info("UI gate: ramp %s claim raced (likely concurrent poller) — skipping",
+                     record.id)
+            return {"ok": True, "ui_gated": True, "status": "claim_lost",
+                    "campaign_groups": [], "inmail_campaigns": [],
+                    "static_campaigns": [], "creative_paths": {}, "per_cohort": []}
+        try:
+            result = _launch_ramp(record.id, decision=claimed)
+            update_status(record.id,
+                          "completed" if result.get("ok") else "failed",
+                          payload={"campaign_count":
+                                   len(result.get("static_campaigns", []) or []) +
+                                   len(result.get("inmail_campaigns", []) or [])})
+            return result
+        except Exception as exc:
+            log.exception("UI gate: ramp %s launch raised", record.id)
+            try:
+                update_status(record.id, "failed",
+                              payload={"error_class": type(exc).__name__,
+                                       "error_message": str(exc)[:300]})
+            except UIDecisionsUnavailable:
+                pass
+            raise
+
+    # Unknown status — defensively skip.
+    log.warning("UI gate: ramp %s has unknown status %r — skipping",
+                record.id, decision.status)
+    return {"ok": False, "error": f"unknown status {decision.status!r}",
+            "campaign_groups": [], "inmail_campaigns": [],
+            "static_campaigns": [], "creative_paths": {}, "per_cohort": []}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
