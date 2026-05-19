@@ -184,6 +184,20 @@ SPECIAL_AD_CATEGORY  = os.getenv("SPECIAL_AD_CATEGORY", "EMPLOYMENT")
 # LinkedInClient.AGENT_NAME_PREFIX rule.
 AGENT_NAME_PREFIX    = os.getenv("AGENT_NAME_PREFIX", "agent_")
 
+# ── outlier-campaign-console approval gate (UI) ────────────────────────────────
+# When true, the poller writes each new ramp to Vercel Postgres at
+# `awaiting_approval` after prep completes and skips `_launch_ramp` until
+# Diego/Bryan click Approve in the console (which flips the row to
+# 'approved'/'yolo'). Default false → legacy behavior preserved; enable per
+# environment only after the console is deployed + verified. See
+# `src/ui_decisions.py` for the Postgres wrapper and
+# `scripts/sql/001_ramp_decisions.sql` for the schema.
+UI_GATE_ENABLED      = os.getenv("UI_GATE_ENABLED", "false").lower() in ("1", "true", "yes")
+# Vercel Postgres connection string. Doppler-injected in dev + prd. Used by
+# both the pipeline (src/ui_decisions.py) and any local script that reads
+# decision rows. Empty string → UIDecisionsUnavailable on first DB call.
+DATABASE_URL         = os.getenv("DATABASE_URL", "")
+
 # ── Meta Ads ──────────────────────────────────────────────────────────────────
 META_ACCESS_TOKEN    = os.getenv("META_ACCESS_TOKEN", "")
 META_APP_ID          = os.getenv("META_APP_ID", "")
