@@ -369,6 +369,51 @@ class LinkedInClient(AdPlatformClient):
         self._raise_for_status(resp, "renameCampaign")
         log.info("Renamed campaign %s → %s", campaign_id, new_name)
 
+    def update_campaign_budget(
+        self,
+        campaign_id_or_urn: str,
+        daily_budget_cents: int,
+    ) -> None:
+        """Phase 7 — PATCH a sponsored campaign's dailyBudget.
+
+        `daily_budget_cents` is dollars-cents (e.g. 5000 = $50/day). LinkedIn's
+        dailyBudget is a Money object `{currencyCode, amount}` with `amount`
+        formatted as a decimal string in MAJOR units ($50.00, not 5000).
+
+        A budget of 0 effectively pauses spend without flipping campaign status
+        — useful for the Accept-action='pause' flow in the console: setting
+        dailyBudget=$0 stops delivery while keeping the campaign in its current
+        state so it can be reactivated without losing the URN.
+
+        Caveat: LinkedIn enforces a minimum daily budget (~$10/day) on most
+        objectives. Sending 0 may 422 with FIELD_VALUE_NOT_ALLOWED in some
+        accounts. The caller should fall through to a real pause (status PATCH)
+        when this returns non-2xx.
+        """
+        if daily_budget_cents < 0:
+            raise ValueError(f"daily_budget_cents must be ≥ 0, got {daily_budget_cents}")
+        campaign_id = str(campaign_id_or_urn).rsplit(":", 1)[-1]
+        # LinkedIn Money.amount is a decimal string in MAJOR currency units.
+        amount_str = f"{daily_budget_cents / 100:.2f}"
+        payload = {
+            "patch": {
+                "$set": {
+                    "dailyBudget": {"currencyCode": "USD", "amount": amount_str}
+                }
+            }
+        }
+        resp = self._req(
+            "POST",
+            self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/adCampaigns/{campaign_id}"),
+            json=payload,
+            headers={"X-RestLi-Method": "PARTIAL_UPDATE", "Content-Type": "application/json"},
+        )
+        self._raise_for_status(resp, "updateCampaignBudget")
+        log.info(
+            "LinkedIn campaign %s dailyBudget → $%s/day",
+            campaign_id, amount_str,
+        )
+
     def get_campaign(self, campaign_urn_or_id: str) -> dict:
         """Fetch full campaign JSON from LinkedIn API (includes targetingCriteria)."""
         campaign_id = str(campaign_urn_or_id).rsplit(":", 1)[-1]

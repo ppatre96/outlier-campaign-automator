@@ -20,8 +20,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Any, Optional
 
 try:
     import psycopg
@@ -274,6 +274,212 @@ def upsert_competitor_intel_snapshot(ramp_id: str, snapshot: dict) -> None:
             conn.commit()
     except UIDecisionsUnavailable as exc:
         log.debug("upsert_competitor_intel_snapshot skipped (%s): %s", ramp_id, exc)
+
+
+# ── Phase 6 — recommendations ────────────────────────────────────────────────
+#
+# Schema lives in scripts/sql/003_recommendations.sql:
+#   ramp_recommendations(id, ramp_id, campaign_urn, cohort_signature, channel,
+#                        angle, classification, action, rationale,
+#                        metric_signal jsonb, replacement_brief_id,
+#                        decision, decided_by, decided_at, generated_at)
+# UNIQUE (ramp_id, campaign_urn) so a re-run of recommend_actions overwrites
+# the previous row in place. We never keep history — intent + outcome live in
+# ramp_audit_log via log_event.
+
+VALID_CLASSIFICATIONS = {"working", "underperforming", "failing", "insufficient_data"}
+VALID_ACTIONS         = {"keep", "pause", "replace"}
+VALID_DECISIONS       = {"pending", "accepted", "rejected"}
+
+
+@dataclass
+class Recommendation:
+    id:                   Optional[int] = None
+    ramp_id:              str = ""
+    campaign_urn:         str = ""
+    cohort_signature:     Optional[str] = None
+    channel:              Optional[str] = None
+    angle:                Optional[str] = None
+    classification:       str = "insufficient_data"
+    action:               str = "keep"
+    rationale:            Optional[str] = None
+    metric_signal:        dict = field(default_factory=dict)
+    replacement_brief_id: Optional[int] = None
+    decision:             str = "pending"
+    decided_by:           Optional[str] = None
+    decided_at:           Optional[str] = None
+    generated_at:         Optional[str] = None
+
+
+_RECOMMENDATION_COLS = (
+    "id, ramp_id, campaign_urn, cohort_signature, channel, angle, "
+    "classification::text, action::text, rationale, metric_signal, "
+    "replacement_brief_id, decision::text, decided_by, decided_at, generated_at"
+)
+
+
+def _row_to_recommendation(row) -> Recommendation:
+    return Recommendation(
+        id=row[0],
+        ramp_id=row[1],
+        campaign_urn=row[2],
+        cohort_signature=row[3],
+        channel=row[4],
+        angle=row[5],
+        classification=row[6],
+        action=row[7],
+        rationale=row[8],
+        metric_signal=dict(row[9] or {}),
+        replacement_brief_id=row[10],
+        decision=row[11],
+        decided_by=row[12],
+        decided_at=row[13].isoformat() if row[13] else None,
+        generated_at=row[14].isoformat() if row[14] else None,
+    )
+
+
+def upsert_recommendation(
+    *,
+    ramp_id: str,
+    campaign_urn: str,
+    classification: str,
+    action: str,
+    cohort_signature: Optional[str] = None,
+    channel: Optional[str] = None,
+    angle: Optional[str] = None,
+    rationale: Optional[str] = None,
+    metric_signal: Optional[dict[str, Any]] = None,
+    replacement_brief_id: Optional[int] = None,
+) -> Optional[Recommendation]:
+    """Insert or update a per-campaign recommendation. Idempotent on
+    (ramp_id, campaign_urn) — re-running classification overwrites the
+    previous classification, action, rationale, and metric_signal.
+
+    Preserves `decision` + `decided_by` + `decided_at` on conflict so a human's
+    accept/reject doesn't get wiped by the next daily evaluation pass.
+
+    Best-effort: returns None and logs when Postgres is unreachable so the
+    feedback agent can keep iterating other campaigns.
+    """
+    if classification not in VALID_CLASSIFICATIONS:
+        raise ValueError(f"invalid classification: {classification!r}")
+    if action not in VALID_ACTIONS:
+        raise ValueError(f"invalid action: {action!r}")
+
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                INSERT INTO ramp_recommendations (
+                    ramp_id, campaign_urn, cohort_signature, channel, angle,
+                    classification, action, rationale, metric_signal,
+                    replacement_brief_id
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s,
+                    %s::recommendation_classification,
+                    %s::recommendation_action,
+                    %s, %s::jsonb, %s
+                )
+                ON CONFLICT (ramp_id, campaign_urn) DO UPDATE SET
+                    cohort_signature     = EXCLUDED.cohort_signature,
+                    channel              = EXCLUDED.channel,
+                    angle                = EXCLUDED.angle,
+                    classification       = EXCLUDED.classification,
+                    action               = EXCLUDED.action,
+                    rationale            = EXCLUDED.rationale,
+                    metric_signal        = EXCLUDED.metric_signal,
+                    replacement_brief_id = EXCLUDED.replacement_brief_id,
+                    generated_at         = NOW()
+                RETURNING {_RECOMMENDATION_COLS}
+                """,
+                (
+                    ramp_id, campaign_urn, cohort_signature, channel, angle,
+                    classification, action, rationale,
+                    json.dumps(metric_signal or {}),
+                    replacement_brief_id,
+                ),
+            )
+            row = cur.fetchone()
+            conn.commit()
+            return _row_to_recommendation(row) if row else None
+    except UIDecisionsUnavailable as exc:
+        log.debug("upsert_recommendation skipped (%s/%s): %s",
+                  ramp_id, campaign_urn, exc)
+        return None
+
+
+def list_recommendations(
+    ramp_id: str,
+    *,
+    decision: Optional[str] = None,
+) -> list[Recommendation]:
+    """Return all recommendations for a ramp, most-recent first. When
+    `decision` is provided, filters to that decision state (e.g. 'pending')."""
+    if decision is not None and decision not in VALID_DECISIONS:
+        raise ValueError(f"invalid decision filter: {decision!r}")
+    with _connect() as conn, conn.cursor() as cur:
+        if decision is None:
+            cur.execute(
+                f"SELECT {_RECOMMENDATION_COLS} FROM ramp_recommendations "
+                "WHERE ramp_id = %s ORDER BY generated_at DESC, id DESC",
+                (ramp_id,),
+            )
+        else:
+            cur.execute(
+                f"SELECT {_RECOMMENDATION_COLS} FROM ramp_recommendations "
+                "WHERE ramp_id = %s AND decision = %s::recommendation_decision "
+                "ORDER BY generated_at DESC, id DESC",
+                (ramp_id, decision),
+            )
+        return [_row_to_recommendation(r) for r in cur.fetchall()]
+
+
+def set_recommendation_decision(
+    recommendation_id: int,
+    decision: str,
+    *,
+    by_user: Optional[str] = None,
+) -> Optional[Recommendation]:
+    """Flip a recommendation's decision (pending → accepted/rejected). The
+    UI calls this from the Accept / Reject buttons. Returns the updated row
+    or None if `recommendation_id` doesn't exist."""
+    if decision not in VALID_DECISIONS:
+        raise ValueError(f"invalid decision: {decision!r}")
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            UPDATE ramp_recommendations
+               SET decision   = %s::recommendation_decision,
+                   decided_by = %s,
+                   decided_at = NOW()
+             WHERE id = %s
+         RETURNING {_RECOMMENDATION_COLS}
+            """,
+            (decision, by_user, recommendation_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            conn.rollback()
+            return None
+        rec = _row_to_recommendation(row)
+        cur.execute(
+            "INSERT INTO ramp_audit_log (ramp_id, event_type, payload, by_user) "
+            "VALUES (%s, %s, %s::jsonb, %s)",
+            (
+                rec.ramp_id,
+                f"recommendation_{decision}",
+                json.dumps({
+                    "recommendation_id": recommendation_id,
+                    "campaign_urn":      rec.campaign_urn,
+                    "classification":    rec.classification,
+                    "action":            rec.action,
+                }),
+                by_user,
+            ),
+        )
+        conn.commit()
+        return rec
 
 
 def log_event(

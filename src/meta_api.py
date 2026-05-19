@@ -239,6 +239,47 @@ class MetaClient(AdPlatformClient):
         log.info("Meta ad set created %s (name=%s, campaign=%s)", ad_set_id, name, campaign_group_id)
         return ad_set_id
 
+    def update_campaign_budget(
+        self,
+        campaign_id: str,
+        daily_budget_cents: int,
+    ) -> None:
+        """Phase 7 — update an Ad Set's daily_budget via the Marketing API.
+
+        Meta's budget lives on the Ad Set (not the parent Campaign) in ABO mode,
+        which is what the pipeline creates. `campaign_id` here is an Ad Set ID
+        (the kwarg name matches the cross-platform ABC contract — see
+        `create_campaign` for the same convention).
+
+        daily_budget_cents is the Meta-native unit (cents/minor currency).
+        Setting daily_budget to 0 isn't a valid Meta API value — to "pause"
+        via budget, the caller should send a tiny placeholder (e.g. the
+        $1.00/day floor in `PLACEHOLDER_DAILY_BUDGET_CENTS`) AND additionally
+        flip status to PAUSED via a separate call. Sending 0 here raises so
+        the caller doesn't silently get a no-op.
+        """
+        if daily_budget_cents <= 0:
+            raise ValueError(
+                "Meta daily_budget must be > 0. To pause a campaign, "
+                "set status=PAUSED separately and/or pass at least 100 cents.",
+            )
+        self._ensure_init()
+        from facebook_business.adobjects.adset import AdSet
+
+        try:
+            ad_set = AdSet(campaign_id)
+            ad_set.api_update(params={AdSet.Field.daily_budget: daily_budget_cents})
+        except Exception as exc:
+            log.error(
+                "Meta update_campaign_budget failed for adset %s: %s",
+                campaign_id, exc,
+            )
+            raise
+        log.info(
+            "Meta ad set %s daily_budget → %d cents/day",
+            campaign_id, daily_budget_cents,
+        )
+
     # ── Image upload ─────────────────────────────────────────────────────────
 
     def upload_image(self, image_path: str | Path) -> str:

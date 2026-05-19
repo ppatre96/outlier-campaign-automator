@@ -1,0 +1,74 @@
+name: Budget Update (Phase 7)
+
+# Fires when the outlier-campaign-console's editable budget cell triggers
+# workflow_dispatch with platform + campaign_id + new_budget_cents inputs.
+# Routes the update through scripts/update_budget.py → the right ad-platform
+# client's update_campaign_budget method.
+#
+# Designed for one-shot use; does not run on a cron. Each invocation
+# updates exactly one campaign's daily budget on one platform.
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Ad platform: linkedin | meta | google"
+        required: true
+        type: choice
+        options:
+          - linkedin
+          - meta
+          - google
+      campaign_id:
+        description: >-
+          Platform-native campaign id. LinkedIn: full URN
+          (urn:li:sponsoredCampaign:1234567) or bare numeric. Meta: ad-set
+          numeric id. Google: campaigns/{numeric} resource name or bare numeric.
+        required: true
+      new_budget_cents:
+        description: "New daily budget in cents (e.g. 5000 = $50/day)"
+        required: true
+        default: "5000"
+
+jobs:
+  update:
+    name: Update campaign daily budget
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Echo inputs (for run log)
+        run: |
+          echo "platform:          ${{ github.event.inputs.platform }}"
+          echo "campaign_id:       ${{ github.event.inputs.campaign_id }}"
+          echo "new_budget_cents:  ${{ github.event.inputs.new_budget_cents }}"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v4
+
+      - name: Run budget update
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: |
+          doppler run -- python3 scripts/update_budget.py \
+            --platform "${{ github.event.inputs.platform }}" \
+            --campaign-id "${{ github.event.inputs.campaign_id }}" \
+            --budget-cents "${{ github.event.inputs.new_budget_cents }}"

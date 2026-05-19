@@ -34,6 +34,15 @@ CPA_Z_SCORE_PAUSE     = 3.0   # PAUSE recommendation if z-score exceeds this
 CPA_Z_SCORE_ALERT     = 2.0   # flag as underperforming if z-score exceeds this
 CTR_DECLINE_THRESHOLD = -0.10  # 10% week-over-week CTR decline
 
+# Phase 6 — per-campaign recommendation thresholds (registry-driven).
+# Locked by the handoff (session_handoff_2026_05_19_ui_phases.md, Phase 6
+# classification rules). Bumping these without aligning the console copy
+# will break the user-facing rationale strings.
+REC_MIN_SPEND_FOR_JUDGEMENT_USD = 20.0   # below this, classification = insufficient_data
+REC_CTR_PCT_FLOOR               = 1.0    # CTR (%) below this with clicks > 0 → underperforming
+REC_CPA_CEILING_USD             = 50.0   # CPA above this with clicks > 0 → underperforming
+REC_FAILING_SPEND_FLOOR_USD     = 20.0   # zero clicks AND spend ≥ this → failing
+
 
 class FeedbackAgent:
     """
@@ -345,6 +354,89 @@ class FeedbackAgent:
         )
         return result
 
+    # ── Phase 6: per-campaign recommendations (registry-driven) ──────────────
+
+    def recommend_actions(
+        self,
+        ramp_id: str,
+        *,
+        persist: bool = True,
+    ) -> list[dict]:
+        """Classify every campaign owned by `ramp_id` and produce one
+        recommendation per campaign. The console reads these out of Postgres
+        and renders Accept / Reject buttons.
+
+        Reads metrics from the local Campaign Registry (`get_active_campaigns`)
+        — already authoritative since `update_metrics` writes it after every
+        Redash refresh. No Redash call needed here.
+
+        Classification (locked in handoff):
+          working           → clicks > 0 AND ctr_pct ≥ 1.0% AND cpa_usd < $50
+                              (or cpa_usd is null / no applications yet)
+          underperforming   → clicks > 0 AND (ctr_pct < 1.0% OR cpa_usd > $50)
+          failing           → clicks == 0 AND spend_usd ≥ $20
+          insufficient_data → spend_usd < $20
+
+        Actions: working→keep, underperforming→replace, failing→pause,
+        insufficient_data→keep.
+
+        Returns the list of recommendation dicts (one per campaign). When
+        `persist=True` (default), upserts each row into `ramp_recommendations`
+        via `ui_decisions.upsert_recommendation`. Returns an empty list when
+        the ramp has no campaigns in the registry.
+        """
+        from src import campaign_registry, ui_decisions
+
+        rows = campaign_registry.get_active_campaigns(smart_ramp_id=ramp_id)
+        if not rows:
+            log.info("recommend_actions(%s): no registry rows", ramp_id)
+            return []
+
+        recommendations: list[dict] = []
+        for row in rows:
+            classification, action, rationale, signal = _classify_campaign_row(row)
+            campaign_urn = (
+                row.get("platform_campaign_id")
+                or row.get("linkedin_campaign_urn")
+                or ""
+            )
+            if not campaign_urn:
+                log.debug(
+                    "recommend_actions(%s): skipping row with no campaign id (cohort=%s angle=%s)",
+                    ramp_id, row.get("cohort_id"), row.get("angle"),
+                )
+                continue
+            rec = {
+                "ramp_id":          ramp_id,
+                "campaign_urn":     campaign_urn,
+                "cohort_signature": row.get("cohort_signature") or None,
+                "channel":          row.get("platform") or row.get("channel") or None,
+                "angle":            row.get("angle") or None,
+                "classification":   classification,
+                "action":           action,
+                "rationale":        rationale,
+                "metric_signal":    signal,
+            }
+            recommendations.append(rec)
+            if persist:
+                try:
+                    ui_decisions.upsert_recommendation(**rec)
+                except Exception as exc:
+                    log.warning(
+                        "recommend_actions: upsert failed for %s/%s: %s",
+                        ramp_id, campaign_urn, exc,
+                    )
+
+        log.info(
+            "recommend_actions(%s): %d recommendations (working=%d underperforming=%d failing=%d insufficient=%d)",
+            ramp_id, len(recommendations),
+            sum(1 for r in recommendations if r["classification"] == "working"),
+            sum(1 for r in recommendations if r["classification"] == "underperforming"),
+            sum(1 for r in recommendations if r["classification"] == "failing"),
+            sum(1 for r in recommendations if r["classification"] == "insufficient_data"),
+        )
+        return recommendations
+
     def generate_slack_alert(
         self,
         underperformers: list[dict],
@@ -436,6 +528,90 @@ class FeedbackAgent:
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _coerce_float(v: Any) -> float | None:
+    """Best-effort cast of a registry numeric (impressions, spend, ...) to float."""
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _classify_campaign_row(row: dict) -> tuple[str, str, str, dict]:
+    """Apply the Phase 6 classification rules to a single Campaign Registry
+    row. Returns (classification, action, rationale, metric_signal_dict).
+
+    Rules (handoff-locked):
+      insufficient_data — spend < $20
+      failing           — clicks == 0 AND spend >= $20
+      underperforming   — clicks > 0 AND (ctr_pct < 1.0% OR cpa > $50)
+      working           — everything else with clicks > 0
+    """
+    impressions = _coerce_float(row.get("impressions")) or 0.0
+    clicks      = _coerce_float(row.get("clicks"))      or 0.0
+    ctr_pct     = _coerce_float(row.get("ctr_pct"))     or 0.0
+    spend_usd   = _coerce_float(row.get("spend_usd"))   or 0.0
+    cpa_usd     = _coerce_float(row.get("cpa_usd"))   # may be None
+
+    signal = {
+        "impressions": int(impressions),
+        "clicks":      int(clicks),
+        "ctr_pct":     round(ctr_pct, 3),
+        "spend_usd":   round(spend_usd, 2),
+        "cpa_usd":     None if cpa_usd is None else round(cpa_usd, 2),
+    }
+
+    if spend_usd < REC_MIN_SPEND_FOR_JUDGEMENT_USD and clicks == 0:
+        return (
+            "insufficient_data",
+            "keep",
+            f"Only ${spend_usd:.2f} spent so far — need ≥${REC_MIN_SPEND_FOR_JUDGEMENT_USD:.0f} to judge.",
+            signal,
+        )
+
+    if clicks == 0 and spend_usd >= REC_FAILING_SPEND_FLOOR_USD:
+        return (
+            "failing",
+            "pause",
+            f"Zero clicks after ${spend_usd:.2f} spent. Pause this campaign.",
+            signal,
+        )
+
+    # clicks > 0 from here on (or insufficient_data already returned).
+    if clicks > 0:
+        cpa_too_high = cpa_usd is not None and cpa_usd > REC_CPA_CEILING_USD
+        ctr_too_low  = ctr_pct < REC_CTR_PCT_FLOOR
+        if cpa_too_high or ctr_too_low:
+            reasons: list[str] = []
+            if ctr_too_low:
+                reasons.append(f"CTR {ctr_pct:.2f}% below the {REC_CTR_PCT_FLOOR:.1f}% floor")
+            if cpa_too_high:
+                reasons.append(f"CPA ${cpa_usd:.2f} above the ${REC_CPA_CEILING_USD:.0f} ceiling")
+            return (
+                "underperforming",
+                "replace",
+                "Underperforming: " + " and ".join(reasons) + ". Test a fresh angle.",
+                signal,
+            )
+        cpa_str = f"${cpa_usd:.2f}" if cpa_usd is not None else "n/a"
+        return (
+            "working",
+            "keep",
+            f"Working: CTR {ctr_pct:.2f}% / CPA {cpa_str}. Keep running.",
+            signal,
+        )
+
+    # Fallback: insufficient data even though spend is non-trivial but clicks=0
+    # and spend below the failing floor.
+    return (
+        "insufficient_data",
+        "keep",
+        f"Only ${spend_usd:.2f} spent — judgement deferred until spend ≥${REC_MIN_SPEND_FOR_JUDGEMENT_USD:.0f}.",
+        signal,
+    )
+
 
 def _ensure_numeric(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     """Coerce listed columns to float; ignore errors (leaves NaN for bad values)."""

@@ -242,6 +242,111 @@ class GoogleAdsClient(AdPlatformClient):
         self._apply_audience_criteria(ad_group_resource, targeting)
         return ad_group_resource
 
+    def update_campaign_budget(
+        self,
+        campaign_id: str,
+        daily_budget_cents: int,
+    ) -> None:
+        """Phase 7 — update a Google Ads Campaign's daily budget.
+
+        Google budgets live on the Campaign (not the Ad Group), and via a
+        SHARED CampaignBudget resource that the Campaign references. We:
+          1. GET the campaign to resolve its campaign_budget resource_name
+          2. PATCH that CampaignBudget's amount_micros via
+             CampaignBudgetService.mutate_campaign_budgets
+
+        `campaign_id` accepts either the bare numeric campaign id or the full
+        resource name `customers/{cust}/campaigns/{id}` (matches what
+        `create_campaign_group` returns).
+
+        Conversion: $1 = 1,000,000 micros = 100 cents.
+                    amount_micros = daily_budget_cents * 10_000
+
+        daily_budget_cents=0 is allowed by the API; Google interprets it as
+        "campaign cannot spend". The reviewer can then bump it back up via
+        the UI to resume delivery (or this method, called from the console).
+        """
+        if daily_budget_cents < 0:
+            raise ValueError(f"daily_budget_cents must be ≥ 0, got {daily_budget_cents}")
+        client = self._ensure_client()
+
+        # Resolve the campaign_budget resource_name. Caller may have passed
+        # either the full resource name or the bare numeric id.
+        if campaign_id.startswith("customers/"):
+            campaign_resource = campaign_id
+        else:
+            campaign_resource = (
+                f"customers/{self._customer_id_str}/campaigns/{campaign_id}"
+            )
+
+        ga_service = client.get_service("GoogleAdsService")
+        query = (
+            "SELECT campaign.campaign_budget "
+            "FROM campaign "
+            f"WHERE campaign.resource_name = '{campaign_resource}' "
+            "LIMIT 1"
+        )
+        try:
+            stream = ga_service.search(
+                customer_id=self._customer_id_str,
+                query=query,
+            )
+            budget_resource: str | None = None
+            for row in stream:
+                budget_resource = row.campaign.campaign_budget
+                break
+        except Exception as exc:
+            log.error(
+                "Google update_campaign_budget search failed for %s: %s",
+                campaign_resource, exc,
+            )
+            raise
+
+        if not budget_resource:
+            raise RuntimeError(
+                f"Google campaign {campaign_resource} has no campaign_budget "
+                "resource — cannot update budget.",
+            )
+
+        # PATCH the CampaignBudget. update_mask must list every field we set.
+        budget_service = client.get_service("CampaignBudgetService")
+        op = client.get_type("CampaignBudgetOperation")
+        b = op.update
+        b.resource_name = budget_resource
+        b.amount_micros = int(daily_budget_cents) * 10_000
+
+        try:
+            from google.api_core import protobuf_helpers
+        except Exception:
+            protobuf_helpers = None  # type: ignore[assignment]
+
+        if protobuf_helpers is not None:
+            op.update_mask.CopyFrom(
+                protobuf_helpers.field_mask(None, b._pb)
+            )
+        else:
+            # Fallback for environments without google.api_core helpers.
+            op.update_mask.paths.append("amount_micros")
+
+        try:
+            resp = budget_service.mutate_campaign_budgets(
+                customer_id=self._customer_id_str,
+                operations=[op],
+            )
+        except Exception as exc:
+            log.error(
+                "Google mutate_campaign_budgets failed for %s: %s",
+                budget_resource, exc,
+            )
+            raise
+
+        updated_resource = resp.results[0].resource_name
+        log.info(
+            "Google campaign %s budget %s → %d cents/day (%d micros)",
+            campaign_resource, updated_resource,
+            daily_budget_cents, daily_budget_cents * 10_000,
+        )
+
     def _apply_audience_criteria(self, ad_group_resource: str, targeting: dict[str, Any]) -> None:
         try:
             client = self._ensure_client()
