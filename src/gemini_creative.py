@@ -178,9 +178,14 @@ BACKGROUND:
   sits just outside the frame top-left). Cool teal/blue ambient light in the bottom-left \
   corner (evening window light or ambient fill). This natural lighting palette will be \
   enhanced by branded color overlays added in post-processing.
-- If a laptop or screen is visible, show natural document/text content appropriate for \
-  the profession (clinical notes, emails, documents, code) — NOT data charts, graphs, \
-  dashboards, or medical imaging displays.
+- LAPTOPS / SCREENS: prefer to keep them OUT of frame or out of focus. If a \
+  laptop is part of the subject's activity, render it CLOSED, ANGLED AWAY from \
+  the camera so the screen is not visible, or DEEPLY BLURRED in the bokeh — \
+  NEVER showing software UI, document text, code, emails, video timelines, or \
+  any rendered content. Preferred alternatives: paper notes, a notebook + pen, \
+  the subject looking up away from the device, a cup of coffee on the desk. \
+  (Updated 2026-05-20 — Vision QC's no-text-in-photo rule was failing every \
+  attempt when laptops rendered with editing UI / document content.)
 
 CRITICAL OUTPUT CONSTRAINTS:
 - DO NOT render any text, words, letters, numbers, logos, or wordmarks in the image.

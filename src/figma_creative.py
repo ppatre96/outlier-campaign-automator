@@ -839,14 +839,28 @@ Format: "[gender] [ethnicity] [specific profession title], [specific activity at
 
 Derive this from the professional identity you identified above. Never use generic descriptions.
 
+🚫 **AVOID activities that put the subject staring at a laptop/phone/tablet screen** — the photo
+generator renders software UI / document text / video timelines into those screens, and the
+Vision QC pass rejects any rendered text in the photo. The activity should make sense for the
+profession WITHOUT requiring a screen as the focal point.
+
 Good examples:
-  - "male Northern European DNA sequencing researcher, reviewing sequencing data on a laptop at home"
-  - "female Italian research associate, reading academic papers on a laptop at a home desk"
-  - "male South Asian environmental engineer, reviewing technical drawings on a laptop at home"
+  - "male Northern European DNA sequencing researcher, looking up from his desk holding a printed gel image"
+  - "female Italian research associate, writing notes in a paper notebook at a window-lit desk"
+  - "male South Asian environmental engineer, examining a rolled-up site blueprint on a sunlit table"
+  - "female Polish short-form video editor, sketching storyboard frames in a notebook on her couch"
+  - "male West African video creator, holding a phone showing a blank screen (camera lens-side down) at a desk"
 
 Bad examples (never do these):
   - "professional person working at a laptop at home" — too generic
   - "scientist at a computer" — too vague, no ethnicity, no activity
+  - "video editor reviewing clips on a laptop" — screen-bound, Vision QC will fail (2026-05-20 GMR-0021 lesson)
+  - "freelancer editing on CapCut at a desk" — names software, Gemini will render the UI
+  - "researcher reviewing data on a dashboard" — same problem, screen content gets rendered
+
+Pattern: choose an off-screen analog of the actual work (paper notes, a printout, a notebook,
+a closed laptop, looking up from the device). The viewer should still read the profession
+from setting + posture + props without needing the screen content as a tell.
 
 The photo generator will add: close-up portrait framing, plant-filled home interior, natural window light, warm film aesthetic.
 
