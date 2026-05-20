@@ -84,7 +84,6 @@ COLUMNS = [
     "angle",                    # A / B / C / F
     "campaign_type",            # "static" | "inmail"
     "advertised_rate",          # e.g. "$50/hr"
-    "audience_size",            # LinkedIn audience estimate at (cohort × geo) — populated 2026-05-20 via per-geo audienceCounts recheck after _apply_geo_overrides
     # ── Ad platform identity ──────────────────────────────────────────────────
     "channel",                  # display alias for platform — "LinkedIn" | "Meta" | "Google"
     "platform",                 # internal lower-case key — "linkedin" | "meta" | "google"
@@ -108,9 +107,6 @@ COLUMNS = [
     "status",                   # active | paused | deprecated
     "deprecation_reason",
     "gemini_prompt",            # base Gemini image gen prompt (first attempt, no QC suffix)
-    "qc_verdict",               # PASS | FAIL | "" — final QC verdict for this angle's creative
-    "qc_attempts",              # int — how many gen attempts ran before the verdict was reached
-    "qc_violations",            # JSON list of violation strings (only populated when verdict=FAIL); empty otherwise. Powers the failure-analysis UI + per-rule skip overrides.
     # ── Performance metrics (filled by feedback agent) ─────────────────────────
     "impressions",
     "clicks",
@@ -121,6 +117,14 @@ COLUMNS = [
     "applications",
     "cpa_usd",
     "last_metrics_at",
+    # ── 2026-05-20 additions (APPENDED at end on purpose) ─────────────────────
+    # Inserting new columns into the middle of COLUMNS misreads every existing
+    # data row by shifting positions. Always APPEND. The console parses by
+    # header name (lib/sheets.ts) so position doesn't matter for new data.
+    "audience_size",            # LinkedIn audience estimate at (cohort × geo) — populated by main.py per-geo audienceCounts recheck
+    "qc_verdict",               # PASS | FAIL | "" — final QC verdict for this angle's creative
+    "qc_attempts",              # int — gen attempts before final verdict
+    "qc_violations",            # JSON list of violation strings — empty unless verdict=FAIL. Powers failure-analysis UI + per-rule skip overrides.
 ]
 
 
