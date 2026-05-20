@@ -117,6 +117,158 @@
       "static_campaigns": [],
       "superseded": false,
       "version": 1
+    },
+    "GMR-0020": {
+      "campaign_groups": [
+        "urn:li:sponsoredCampaignGroup:951306696",
+        "urn:li:sponsoredCampaignGroup:949706776",
+        "urn:li:sponsoredCampaignGroup:952403226"
+      ],
+      "consecutive_failures": 0,
+      "creative_paths": {
+        "f021869b-2b98-4729-bb34-120087bc8e92_anglo_A_static": "https://drive.google.com/file/d/1cXKJ93XMiB-oiyFD2W43YM-zBI-CQBh7/view?usp=drivesdk",
+        "f021869b-2b98-4729-bb34-120087bc8e92_anglo_B_static": "https://drive.google.com/file/d/1tD2BBTzgwahYlwo9GDKq0DjYhi3wit7b/view?usp=drivesdk",
+        "f021869b-2b98-4729-bb34-120087bc8e92_anglo_C_static": "https://drive.google.com/file/d/1F23G9Yr0cqGiiqDkSog_HEbFH98xJ093/view?usp=drivesdk",
+        "f021869b-2b98-4729-bb34-120087bc8e92_latin_american_A_static": "https://drive.google.com/file/d/1dR6h9oz3DgLAtv9FQC6_qO6_Zo1fJp3o/view?usp=drivesdk",
+        "f021869b-2b98-4729-bb34-120087bc8e92_latin_american_B_static": "https://drive.google.com/file/d/1JFRSOAqN1SSUe4kjtvdERL_D8eDO_Obb/view?usp=drivesdk",
+        "f021869b-2b98-4729-bb34-120087bc8e92_latin_american_C_static": "https://drive.google.com/file/d/1P31_Wbo_E1pJLXdWC7BzZQz1QJn9zMXd/view?usp=drivesdk",
+        "f021869b-2b98-4729-bb34-120087bc8e92_northern_european_A_static": "https://drive.google.com/file/d/1vvDcPApFICj4fB5J3ceg7palotQLYk2P/view?usp=drivesdk",
+        "f021869b-2b98-4729-bb34-120087bc8e92_northern_european_B_static": "https://drive.google.com/file/d/1sTB4B7-opHVIR8mWHEOnf2_xBpOjYVd7/view?usp=drivesdk",
+        "f021869b-2b98-4729-bb34-120087bc8e92_northern_european_C_static": "https://drive.google.com/file/d/1jYtOqywsA06YCPbzL3nOMGZ1pyUkQqrF/view?usp=drivesdk",
+        "f09204a4-c7b8-4c46-804c-4c9ac69dbcfe_anglo_A_static": "https://drive.google.com/file/d/1kV_9X6xzf91cxI1KD7UhkTyx5gZuFCbb/view?usp=drivesdk",
+        "f09204a4-c7b8-4c46-804c-4c9ac69dbcfe_latin_american_B_static": "https://drive.google.com/file/d/1ZiXOBV3DuwpYoiDZsVcE7ZAiX3y0xuLL/view?usp=drivesdk",
+        "f09204a4-c7b8-4c46-804c-4c9ac69dbcfe_latin_american_C_static": "https://drive.google.com/file/d/1d9xCEVlLnRT_27yj5umnRFxuPEEd3cxI/view?usp=drivesdk"
+      },
+      "escalation_dm_sent": false,
+      "first_seen_at": "2026-05-13T02:38:20.502167+00:00",
+      "inmail_campaigns": [],
+      "last_failure_class": null,
+      "last_failure_traceback": null,
+      "last_processed_at": "2026-05-15T19:21:05.030729+00:00",
+      "last_signature": "sha256:d62b0f11172912b8f4d14b588c4b73c2b3b3db05eadfbaeedccea3da0372b970",
+      "per_cohort": [
+        {
+          "cohort_description": "skills__deep_learning",
+          "cohort_id": "f021869b-2b98-4729-bb34-120087bc8e92",
+          "inmail_creative": null,
+          "inmail_urn": null,
+          "static_creative": null,
+          "static_urn": null
+        },
+        {
+          "cohort_description": "fields_of_study__applied_mathematics + fields_of_study__mathematics",
+          "cohort_id": "f021869b-2b98-4729-bb34-120087bc8e92",
+          "inmail_creative": null,
+          "inmail_urn": null,
+          "static_creative": null,
+          "static_urn": null
+        },
+        {
+          "cohort_description": "fields_of_study__physics",
+          "cohort_id": "f021869b-2b98-4729-bb34-120087bc8e92",
+          "inmail_creative": null,
+          "inmail_urn": null,
+          "static_creative": null,
+          "static_urn": null
+        },
+        {
+          "cohort_description": "skills__deep_learning",
+          "cohort_id": "bf838557-c41f-4fb7-9f50-fe3945d79a2f",
+          "inmail_creative": null,
+          "inmail_urn": null,
+          "static_creative": null,
+          "static_urn": null
+        },
+        {
+          "cohort_description": "fields_of_study__applied_mathematics + fields_of_study__mathematics",
+          "cohort_id": "bf838557-c41f-4fb7-9f50-fe3945d79a2f",
+          "inmail_creative": null,
+          "inmail_urn": null,
+          "static_creative": null,
+          "static_urn": null
+        },
+        {
+          "cohort_description": "fields_of_study__physics",
+          "cohort_id": "bf838557-c41f-4fb7-9f50-fe3945d79a2f",
+          "inmail_creative": null,
+          "inmail_urn": null,
+          "static_creative": null,
+          "static_urn": null
+        },
+        {
+          "cohort_description": "skills__machine_learning + skills__data_analysis",
+          "cohort_id": "f09204a4-c7b8-4c46-804c-4c9ac69dbcfe",
+          "inmail_creative": null,
+          "inmail_urn": null,
+          "static_creative": null,
+          "static_urn": null
+        }
+      ],
+      "project_name": "arXiv v2",
+      "requester_name": "Daniel Lim",
+      "static_campaigns": [
+        "urn:li:sponsoredCampaign:849246326",
+        "urn:li:sponsoredCampaign:849494536",
+        "urn:li:sponsoredCampaign:849396536",
+        "urn:li:sponsoredCampaign:849266926",
+        "urn:li:sponsoredCampaign:849316656",
+        "urn:li:sponsoredCampaign:849246346",
+        "urn:li:sponsoredCampaign:849286166",
+        "urn:li:sponsoredCampaign:849346566",
+        "urn:li:sponsoredCampaign:849456016",
+        "urn:li:sponsoredCampaign:849356506",
+        "urn:li:sponsoredCampaign:849396966"
+      ],
+      "superseded": false,
+      "version": 1
+    },
+    "GMR-0021": {
+      "campaign_groups": [
+        "urn:li:sponsoredCampaignGroup:953810666",
+        "120246281783970257"
+      ],
+      "consecutive_failures": 0,
+      "creative_paths": {
+        "cb561b66-8717-4a93-b42a-225b4b1fd63f_eastern_european_A_meta": "120246281805220257",
+        "cb561b66-8717-4a93-b42a-225b4b1fd63f_eastern_european_A_static": "",
+        "cb561b66-8717-4a93-b42a-225b4b1fd63f_eastern_european_B_meta": "120246281807250257",
+        "cb561b66-8717-4a93-b42a-225b4b1fd63f_eastern_european_B_static": "",
+        "cb561b66-8717-4a93-b42a-225b4b1fd63f_eastern_european_C_meta": "120246281809920257",
+        "cb561b66-8717-4a93-b42a-225b4b1fd63f_global_mix_A_meta": "120246281790440257",
+        "cb561b66-8717-4a93-b42a-225b4b1fd63f_global_mix_B_meta": "120246281794970257",
+        "cb561b66-8717-4a93-b42a-225b4b1fd63f_global_mix_B_static": "",
+        "cb561b66-8717-4a93-b42a-225b4b1fd63f_global_mix_C_meta": "120246281800150257",
+        "cb561b66-8717-4a93-b42a-225b4b1fd63f_latin_american_A_meta": "120246281816560257",
+        "cb561b66-8717-4a93-b42a-225b4b1fd63f_latin_american_B_meta": "120246281820710257",
+        "cb561b66-8717-4a93-b42a-225b4b1fd63f_latin_american_B_static": "",
+        "cb561b66-8717-4a93-b42a-225b4b1fd63f_latin_american_C_meta": "120246281823900257"
+      },
+      "escalation_dm_sent": false,
+      "first_seen_at": "2026-05-19T19:29:38.277781+00:00",
+      "inmail_campaigns": [],
+      "last_failure_class": null,
+      "last_failure_traceback": null,
+      "last_processed_at": "2026-05-20T06:45:11.830211+00:00",
+      "last_signature": "sha256:9fa69b9a2f83e506d20feaf3d9675c5142a4f088d4ccc0cea305405dfce9e02d",
+      "per_cohort": [
+        {
+          "cohort_description": "Short-Form Video Editors & Mobile Content Creators",
+          "cohort_id": "cb561b66-8717-4a93-b42a-225b4b1fd63f",
+          "inmail_creative": null,
+          "inmail_urn": null,
+          "static_creative": null,
+          "static_urn": null
+        }
+      ],
+      "project_name": "[SCALE - RLHF for HQL] - Multimango",
+      "requester_name": "Tuan (Sneha Proxy)",
+      "static_campaigns": [
+        "urn:li:sponsoredCampaign:849879356",
+        "urn:li:sponsoredCampaign:849968676",
+        "urn:li:sponsoredCampaign:849959546"
+      ],
+      "superseded": false,
+      "version": 1
     }
   }
 }
