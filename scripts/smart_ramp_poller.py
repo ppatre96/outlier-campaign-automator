@@ -499,44 +499,44 @@ def _regen_failed_creatives(ramp_id: str, *, dry_run: bool = False) -> int:
     """Regen-only path: re-run image gen for registry rows where the original
     pipeline run produced no creative.
 
-    Scope (intentional):
-    - Reads `data/campaign_registry.json` for rows matching `ramp_id` with
-      empty `creative_image_path` AND empty `creative_urn`. Those are the
-      rows where the original `_process_static_campaigns` saw QC FAIL after
-      all retries (png_path = None → skipped Drive upload + ad attach).
-    - Reads QC rule overrides from the console's Postgres
-      (`qc_rule_overrides` table, ramp_id-scoped) and suppresses any
-      matching rules during regen. Without overrides the same rules that
-      failed the first pass will fail again — the toggle in the UI is the
-      escape hatch.
-    - For each row, rebuilds a minimal variant dict from registry columns
-      (headline, subheadline, photo_subject), calls
-      generate_imagen_creative_with_qc with the override-suppressed QC,
-      uploads to Drive, uploads to LinkedIn, attaches as a creative to the
-      EXISTING campaign URN (already in the row), and patches the registry
-      row in place.
+    Flow:
+    1. Read qc_rule_overrides from console Postgres (ramp_id-scoped). Empty
+       set when no overrides — regen runs with default QC; the same rules
+       that failed last time will fail again unless reviewer toggled them.
+    2. Load data/campaign_registry.json. Filter to rows matching ramp_id
+       with empty creative_image_path AND empty creative_urn. These are the
+       genuine-fail rows (the original gen + 10 retries hit QC FAIL → png
+       set to None → no Drive + no LinkedIn attach).
+    3. For each failed row:
+       a. Rebuild a minimal variant dict (angle, headline, subheadline,
+          photo_subject, tg_label) from the row's columns
+       b. Call generate_imagen_creative_with_qc(..., skip_rules=overrides).
+          When skip_rules is set, the QC loop drops matching violations and
+          can promote a FAIL to PASS if every remaining violation was skipped.
+       c. On verdict ∈ {PASS, UNKNOWN}:
+          - upload PNG to Drive at <ramp>/<platform>/<cohort_geo>/<angle>.png
+          - upload PNG to LinkedIn → image_urn
+          - create image_ad attached to the row's EXISTING campaign URN
+          - patch the registry row: creative_image_path + creative_urn +
+            qc_verdict + qc_attempts + qc_violations (post-skip-rule filter)
+       d. On verdict == FAIL: leave the row untouched; log the violations.
+    4. Reports a per-row tally + total recovered.
 
-    Status (2026-05-20):
-    - Workflow input + flag plumbing: ✅
-    - Postgres read of overrides: ⚠️ pipeline doesn't yet ship a Postgres
-      client. Path-of-least-resistance fix: HTTP fetch to the console's
-      `/api/ramps/<id>/qc-overrides` endpoint with the Vercel
-      protection-bypass header. Documented; not yet implemented.
-    - QC-rule suppression: ⚠️ needs `skip_rules` kwarg on
-      `generate_imagen_creative_with_qc`. Not yet wired.
-    - Variant reconstruction + Drive + LinkedIn attach + registry patch:
-      ⚠️ reuses existing helpers but needs an integration loop. Not yet
-      wired.
+    Non-LinkedIn rows (Meta, Google) are skipped in this v1 — their
+    creative-attach path differs from LinkedIn's create_image_ad and would
+    need separate platform-specific handling. Tracked as a follow-up.
 
-    Until the implementation lands, this function logs what it WOULD do and
-    exits 0 so the workflow_dispatch run completes cleanly. The console's
-    Regen button + qc_rule_overrides toggle still persist correctly so
-    reviewer intent is captured for the follow-up.
+    Idempotent — re-running after a successful regen is a no-op (rows
+    already have a creative_image_path).
     """
     import json
     log.info("=" * 70)
     log.info("REGEN MODE — ramp_id=%s dry_run=%s", ramp_id, dry_run)
     log.info("=" * 70)
+
+    from src.console_db import list_qc_rule_overrides
+    skip_rules = list_qc_rule_overrides(ramp_id)
+    log.info("Skip rules: %s", sorted(skip_rules) if skip_rules else "(none)")
 
     reg_path = Path(__file__).resolve().parent.parent / "data" / "campaign_registry.json"
     if not reg_path.exists():
@@ -549,30 +549,155 @@ def _regen_failed_creatives(ramp_id: str, *, dry_run: bool = False) -> int:
         and not r.get("creative_image_path")
         and not r.get("creative_urn")
         and (r.get("angle") or r.get("geo_cluster_label"))
+        and (r.get("platform") or "").lower() == "linkedin"  # v1: LinkedIn only
     ]
-    log.info("Failed-creative rows for %s: %d", ramp_id, len(failed))
+    log.info("Failed LinkedIn rows for %s: %d", ramp_id, len(failed))
     if not failed:
-        log.info("Nothing to regen — every row has a creative attached.")
+        log.info("Nothing to regen — every LinkedIn row has a creative.")
         return 0
 
-    log.info("Slots that WOULD be regenerated (Phase 2 — pipeline implementation pending):")
-    for r in failed:
-        log.info(
-            "  %s · %s · angle=%s · headline=%r",
-            r.get("platform", "?"),
-            r.get("cohort_geo") or r.get("geo_cluster_label") or "?",
-            r.get("angle", "?"),
-            (r.get("headline") or "")[:60],
+    if dry_run:
+        log.info("dry-run: skipping actual regen. Would attempt %d row(s).", len(failed))
+        return 0
+
+    # Lazy imports — keep the poller's import cost down for non-regen runs.
+    from src.gemini_creative import generate_imagen_creative_with_qc
+    from src.figma_creative import rewrite_variant_copy
+    from src.campaign_registry import update_row as _reg_update_row
+    from src.linkedin_api import LinkedInClient
+
+    li_client: LinkedInClient | None = None  # lazy-init on first need
+
+    succeeded = 0
+    failed_again = 0
+    for row in failed:
+        angle = row.get("angle", "")
+        cohort_geo = row.get("cohort_geo", "")
+        campaign_urn = (
+            row.get("platform_campaign_id") or row.get("linkedin_campaign_urn") or ""
         )
-        for v in r.get("qc_violations") or []:
-            # qc_violations may be JSON-encoded string OR raw list depending on writer.
-            if isinstance(v, str):
-                log.info("      ⚠ %s", v)
-    log.warning(
-        "Pipeline-side regen NOT YET IMPLEMENTED. Reviewer's skip-rule overrides "
-        "are persisted in Postgres and will apply once the regen function lands. "
-        "See _regen_failed_creatives docstring for the implementation plan."
+        if not campaign_urn:
+            log.warning(
+                "Row missing platform_campaign_id — cannot attach creative; skipping. "
+                "cohort_geo=%s angle=%s",
+                cohort_geo, angle,
+            )
+            failed_again += 1
+            continue
+
+        variant = {
+            "angle":          angle,
+            "headline":       row.get("headline", ""),
+            "subheadline":    row.get("subheadline", ""),
+            "photo_subject":  row.get("photo_subject", ""),
+            "tg_label":       row.get("cohort_signature", ""),
+            "intro_text":     "",
+            "ad_headline":    row.get("headline", "")[:70],
+            "ad_description": row.get("subheadline", "")[:100],
+            "cta_button":     "APPLY",
+        }
+
+        log.info(
+            "Regen %s · angle=%s · headline=%r",
+            cohort_geo, angle, variant["headline"][:50],
+        )
+        try:
+            png_path, qc_report = generate_imagen_creative_with_qc(
+                variant=variant,
+                copy_rewriter=rewrite_variant_copy,
+                skip_rules=skip_rules,
+            )
+        except Exception as exc:
+            log.exception("Gen raised — skipping. cohort_geo=%s angle=%s: %s", cohort_geo, angle, exc)
+            failed_again += 1
+            continue
+
+        verdict = (qc_report or {}).get("verdict", "UNKNOWN")
+        if verdict == "FAIL":
+            log.warning(
+                "  QC still FAIL after regen — violations=%s",
+                (qc_report or {}).get("violations", []),
+            )
+            # Persist the new attempt count + violations so the UI reflects
+            # the latest run even when the creative still can't ship.
+            _reg_update_row(
+                smart_ramp_id=ramp_id,
+                cohort_geo=cohort_geo,
+                angle=angle,
+                platform="linkedin",
+                fields={
+                    "qc_verdict": "FAIL",
+                    "qc_attempts": (qc_report or {}).get("attempts"),
+                    "qc_violations": json.dumps((qc_report or {}).get("violations") or []),
+                },
+            )
+            failed_again += 1
+            continue
+
+        # PASS or UNKNOWN — ship the creative.
+        try:
+            from src.gdrive import upload_creative_in_hierarchy
+            drive_url = upload_creative_in_hierarchy(
+                file_path=Path(str(png_path)),
+                ramp_id=ramp_id,
+                channel="linkedin",
+                cohort_geo=cohort_geo,
+                angle=angle,
+            ) or ""
+        except Exception as exc:
+            log.warning("Drive upload failed for %s/%s: %s", cohort_geo, angle, exc)
+            drive_url = ""
+
+        if li_client is None:
+            li_client = LinkedInClient()
+
+        try:
+            image_urn = li_client.upload_image(png_path)
+            ad_result = li_client.create_image_ad(
+                campaign_urn=campaign_urn,
+                image_urn=image_urn,
+                headline=variant["headline"]
+                    or f"Your expertise is in demand.",
+                description=variant["subheadline"]
+                    or "Earn payment doing remote AI tasks on your schedule.",
+                intro_text=variant["intro_text"],
+                ad_headline=variant["ad_headline"],
+                ad_description=variant["ad_description"],
+                cta_button=variant["cta_button"],
+                destination_url="",  # use campaign's default
+            )
+            creative_urn = ad_result.creative_urn if ad_result.status == "ok" else ""
+        except Exception as exc:
+            log.exception("LinkedIn attach failed for %s/%s: %s", cohort_geo, angle, exc)
+            creative_urn = ""
+
+        _reg_update_row(
+            smart_ramp_id=ramp_id,
+            cohort_geo=cohort_geo,
+            angle=angle,
+            platform="linkedin",
+            fields={
+                "creative_image_path": drive_url or str(png_path),
+                "creative_urn":         creative_urn,
+                "platform_creative_id": creative_urn,
+                "qc_verdict":           verdict,
+                "qc_attempts":          (qc_report or {}).get("attempts"),
+                "qc_violations":        json.dumps((qc_report or {}).get("violations") or []),
+            },
+        )
+        if creative_urn:
+            succeeded += 1
+            log.info("  ✓ regen success — creative=%s", creative_urn)
+        else:
+            failed_again += 1
+            log.warning("  ✗ LinkedIn attach failed; registry updated with drive_url only")
+
+    log.info("=" * 70)
+    log.info(
+        "REGEN COMPLETE — recovered=%d still_failing=%d total_attempted=%d",
+        succeeded, failed_again, len(failed),
     )
+    log.info("=" * 70)
     return 0
 
 

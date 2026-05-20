@@ -1060,6 +1060,7 @@ def generate_imagen_creative_with_qc(
     copy_rewriter: "callable | None" = None,
     initial_prompt_suffix: str = "",
     no_reference_image: bool = False,
+    skip_rules: set[str] | None = None,
     **kwargs,
 ) -> tuple[Path, dict]:
     """
@@ -1214,6 +1215,34 @@ def generate_imagen_creative_with_qc(
         last_report = report.to_dict()
         log.info("QC attempt %d: %s (target=%s, %d violations)",
                  attempt + 1, report.verdict, report.retry_target, len(report.violations))
+
+        # Skip-rule overrides (set by the regen path via console qc_rule_overrides).
+        # Filter the violation list to drop any whose classification is in
+        # skip_rules; if no real violations remain, force PASS so the next-best
+        # creative ships.
+        if skip_rules:
+            from src.console_db import filter_violations_by_overrides
+            kept = filter_violations_by_overrides(report.violations, skip_rules)
+            dropped_n = len(report.violations) - len(kept)
+            if dropped_n > 0:
+                log.info(
+                    "skip_rules suppressed %d violation(s); %d remaining after overrides",
+                    dropped_n, len(kept),
+                )
+            if not kept and report.verdict != "PASS":
+                log.info(
+                    "All %d violations matched skip_rules — promoting verdict to PASS",
+                    dropped_n,
+                )
+                last_report["verdict"] = "PASS"
+                last_report["violations"] = []
+                last_report["skip_rules_applied"] = sorted(skip_rules)
+                last_report["gemini_prompt"] = _base_prompt
+                return path, last_report
+            # Persist filtered violations + the applied rule list onto the
+            # report so the registry row reflects the override-aware view.
+            last_report["violations"] = kept
+            last_report["skip_rules_applied"] = sorted(skip_rules)
 
         if report.verdict == "PASS":
             last_report["gemini_prompt"] = _base_prompt

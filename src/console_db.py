@@ -1,0 +1,114 @@
+"""src/console_db.py
+====================
+
+Minimal Postgres connector for the console's `qc_rule_overrides` table.
+
+The console (outlier-campaign-console) stores reviewer-flagged skip rules
+per ramp in Postgres. The pipeline needs to read those overrides at regen
+time so it can suppress matching QC rules during gen. Both repos share the
+same `DATABASE_URL` (Vercel Postgres pooled connection) via Doppler.
+
+Read-only by design — only the console writes to this table.
+"""
+from __future__ import annotations
+
+import logging
+import os
+from typing import Iterable
+
+log = logging.getLogger(__name__)
+
+
+def list_qc_rule_overrides(ramp_id: str) -> set[str]:
+    """Return the set of rule_name strings the reviewer has skip-flagged for
+    this ramp. Empty set when nothing is flagged OR when DATABASE_URL is not
+    available (e.g., local dev without Doppler).
+
+    Never raises — connection errors fall back to an empty set so a regen
+    attempt with no override DB still runs (the QC will reject the same
+    rules that failed last time, but the run completes gracefully).
+    """
+    db_url = os.environ.get("DATABASE_URL", "")
+    if not db_url:
+        log.warning(
+            "DATABASE_URL not set — cannot read qc_rule_overrides for ramp=%s. "
+            "Regen will use default QC rules (no overrides applied).",
+            ramp_id,
+        )
+        return set()
+
+    try:
+        import psycopg
+    except ImportError:
+        log.error(
+            "psycopg not installed — install psycopg[binary] to read overrides. "
+            "Regen will use default QC rules.",
+        )
+        return set()
+
+    try:
+        with psycopg.connect(db_url, connect_timeout=10) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT rule_name FROM qc_rule_overrides WHERE ramp_id = %s",
+                    (ramp_id,),
+                )
+                names = {row[0] for row in cur.fetchall()}
+                log.info("Loaded %d QC override(s) for ramp=%s: %s", len(names), ramp_id, sorted(names))
+                return names
+    except Exception as exc:
+        log.warning(
+            "Postgres read failed for qc_rule_overrides (ramp=%s): %s — "
+            "falling back to empty override set",
+            ramp_id, exc,
+        )
+        return set()
+
+
+# Pattern → rule_name. MIRROR of app/ramps/[id]/sections/failure-analysis.tsx
+# RULE_PATTERNS. Keep in sync.
+import re
+
+_RULE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"headline.*words", re.I), "headline_word_count"),
+    (re.compile(r"headline.*chars", re.I), "headline_char_count"),
+    (re.compile(r"headline.*wraps?", re.I), "headline_line_wrap"),
+    (re.compile(r"subheadline.*words", re.I), "subheadline_word_count"),
+    (re.compile(r"subheadline.*chars", re.I), "subheadline_char_count"),
+    (re.compile(r"subheadline.*wraps?", re.I), "subheadline_line_wrap"),
+    (re.compile(r"brand.?voice|banned", re.I), "brand_voice"),
+    (re.compile(r"cta_button", re.I), "cta_enum"),
+    (re.compile(r"rendered.text|text.in.photo|words.*image|letters.*image", re.I), "image_text"),
+    (re.compile(r"matches_reference|mimic", re.I), "image_mimicry"),
+    (re.compile(r"headroom|crop|gap", re.I), "image_headroom"),
+    (re.compile(r"contrast|overlap", re.I), "image_contrast"),
+    (re.compile(r"subject|authentic", re.I), "image_subject"),
+]
+
+
+def classify_violation(violation: str) -> str:
+    """Map a raw violation string to the canonical rule_name used by the
+    console's override toggles. Returns "other" when no pattern matches.
+    """
+    for pat, name in _RULE_PATTERNS:
+        if pat.search(violation):
+            return name
+    return "other"
+
+
+def filter_violations_by_overrides(
+    violations: Iterable[str], skip_rules: set[str]
+) -> list[str]:
+    """Return a new list of violations with all entries whose classification
+    is in `skip_rules` removed. Used to soften the QC verdict during regen
+    when reviewers have explicitly flagged a rule to skip.
+    """
+    if not skip_rules:
+        return list(violations)
+    out = []
+    for v in violations:
+        if classify_violation(v) in skip_rules:
+            log.debug("Suppressing violation per override: %r", v)
+            continue
+        out.append(v)
+    return out

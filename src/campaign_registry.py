@@ -392,6 +392,56 @@ def _id_match(rec: dict, campaign_id: str) -> bool:
     )
 
 
+def update_row(
+    *,
+    smart_ramp_id: str,
+    cohort_geo: str,
+    angle: str,
+    platform: str,
+    fields: dict,
+) -> bool:
+    """Patch a single registry row identified by
+    (smart_ramp_id, cohort_geo, angle, platform). Used by the regen path to
+    write back the new creative_image_path + creative_urn + qc_verdict +
+    qc_violations after a successful re-gen.
+
+    Returns True when exactly one row matched + was updated, False otherwise.
+    Concurrent writers are safe (the file-level _registry_lock is held
+    across load → mutate → save).
+    """
+    with _registry_lock:
+        records = _load()
+        updated = 0
+        for rec in records:
+            if (
+                rec.get("smart_ramp_id") == smart_ramp_id
+                and rec.get("cohort_geo") == cohort_geo
+                and rec.get("angle") == angle
+                and (rec.get("platform") or "").lower() == platform.lower()
+            ):
+                for k, v in fields.items():
+                    rec[k] = v
+                updated += 1
+        if updated == 1:
+            _save(records)
+            log.info(
+                "Registry: patched row ramp=%s cohort_geo=%s angle=%s platform=%s fields=%s",
+                smart_ramp_id, cohort_geo, angle, platform, sorted(fields.keys()),
+            )
+            return True
+        if updated == 0:
+            log.warning(
+                "Registry update_row found 0 matches for ramp=%s cohort_geo=%s angle=%s platform=%s",
+                smart_ramp_id, cohort_geo, angle, platform,
+            )
+        else:
+            log.warning(
+                "Registry update_row matched %d rows for ramp=%s cohort_geo=%s angle=%s platform=%s — refusing to patch (ambiguous)",
+                updated, smart_ramp_id, cohort_geo, angle, platform,
+            )
+        return False
+
+
 def update_metrics(
     linkedin_campaign_urn: str,
     impressions: int,
