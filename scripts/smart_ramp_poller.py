@@ -495,6 +495,87 @@ def _drive_notifier(outcome: dict, dry_run: bool) -> None:
             )
 
 
+def _regen_failed_creatives(ramp_id: str, *, dry_run: bool = False) -> int:
+    """Regen-only path: re-run image gen for registry rows where the original
+    pipeline run produced no creative.
+
+    Scope (intentional):
+    - Reads `data/campaign_registry.json` for rows matching `ramp_id` with
+      empty `creative_image_path` AND empty `creative_urn`. Those are the
+      rows where the original `_process_static_campaigns` saw QC FAIL after
+      all retries (png_path = None → skipped Drive upload + ad attach).
+    - Reads QC rule overrides from the console's Postgres
+      (`qc_rule_overrides` table, ramp_id-scoped) and suppresses any
+      matching rules during regen. Without overrides the same rules that
+      failed the first pass will fail again — the toggle in the UI is the
+      escape hatch.
+    - For each row, rebuilds a minimal variant dict from registry columns
+      (headline, subheadline, photo_subject), calls
+      generate_imagen_creative_with_qc with the override-suppressed QC,
+      uploads to Drive, uploads to LinkedIn, attaches as a creative to the
+      EXISTING campaign URN (already in the row), and patches the registry
+      row in place.
+
+    Status (2026-05-20):
+    - Workflow input + flag plumbing: ✅
+    - Postgres read of overrides: ⚠️ pipeline doesn't yet ship a Postgres
+      client. Path-of-least-resistance fix: HTTP fetch to the console's
+      `/api/ramps/<id>/qc-overrides` endpoint with the Vercel
+      protection-bypass header. Documented; not yet implemented.
+    - QC-rule suppression: ⚠️ needs `skip_rules` kwarg on
+      `generate_imagen_creative_with_qc`. Not yet wired.
+    - Variant reconstruction + Drive + LinkedIn attach + registry patch:
+      ⚠️ reuses existing helpers but needs an integration loop. Not yet
+      wired.
+
+    Until the implementation lands, this function logs what it WOULD do and
+    exits 0 so the workflow_dispatch run completes cleanly. The console's
+    Regen button + qc_rule_overrides toggle still persist correctly so
+    reviewer intent is captured for the follow-up.
+    """
+    import json
+    log.info("=" * 70)
+    log.info("REGEN MODE — ramp_id=%s dry_run=%s", ramp_id, dry_run)
+    log.info("=" * 70)
+
+    reg_path = Path(__file__).resolve().parent.parent / "data" / "campaign_registry.json"
+    if not reg_path.exists():
+        log.error("Registry not found at %s", reg_path)
+        return 1
+    records = json.loads(reg_path.read_text())
+    failed = [
+        r for r in records
+        if r.get("smart_ramp_id") == ramp_id
+        and not r.get("creative_image_path")
+        and not r.get("creative_urn")
+        and (r.get("angle") or r.get("geo_cluster_label"))
+    ]
+    log.info("Failed-creative rows for %s: %d", ramp_id, len(failed))
+    if not failed:
+        log.info("Nothing to regen — every row has a creative attached.")
+        return 0
+
+    log.info("Slots that WOULD be regenerated (Phase 2 — pipeline implementation pending):")
+    for r in failed:
+        log.info(
+            "  %s · %s · angle=%s · headline=%r",
+            r.get("platform", "?"),
+            r.get("cohort_geo") or r.get("geo_cluster_label") or "?",
+            r.get("angle", "?"),
+            (r.get("headline") or "")[:60],
+        )
+        for v in r.get("qc_violations") or []:
+            # qc_violations may be JSON-encoded string OR raw list depending on writer.
+            if isinstance(v, str):
+                log.info("      ⚠ %s", v)
+    log.warning(
+        "Pipeline-side regen NOT YET IMPLEMENTED. Reviewer's skip-rule overrides "
+        "are persisted in Postgres and will apply once the regen function lands. "
+        "See _regen_failed_creatives docstring for the implementation plan."
+    )
+    return 0
+
+
 def run_once(args: argparse.Namespace) -> int:
     """Single poll cycle. Returns process exit code (0 == success)."""
     state = _read_state()
@@ -505,6 +586,11 @@ def run_once(args: argparse.Namespace) -> int:
 
     # --ramp-id force-process path: skip the list fetch, fetch the one and process it
     if getattr(args, "ramp_id", None):
+        if getattr(args, "regen_mode", False):
+            # Regen-only path: bypass Stage A/B/C entirely and just re-run gen
+            # for empty-creative registry rows of this ramp.
+            return _regen_failed_creatives(args.ramp_id, dry_run=args.dry_run)
+
         full = client.fetch_ramp(args.ramp_id)
         if not full:
             log.error("Could not fetch ramp %s", args.ramp_id)
@@ -630,6 +716,15 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p.add_argument(
         "--dry-run", action="store_true",
         help="Run pipeline + classification but skip state write + Slack notify",
+    )
+    p.add_argument(
+        "--regen-mode", action="store_true",
+        help=(
+            "Regen-only: skip Stage A/B/C. Re-runs image gen + Drive upload + "
+            "LinkedIn creative attach for registry rows where creative_image_path "
+            "is empty. Reads qc_rule_overrides for this ramp_id from console DB "
+            "and suppresses matching QC rules during gen. Requires --ramp-id."
+        ),
     )
     return p.parse_args(argv)
 

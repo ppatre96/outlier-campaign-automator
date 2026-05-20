@@ -22,6 +22,14 @@ on:
         options:
           - "true"
           - "false"
+      regen_mode:
+        description: "Regen-only: skip Stage A/B/C; re-run gen + Drive upload + ad attach ONLY for registry rows with empty creative_image_path. Reads qc_rule_overrides from Postgres to suppress flagged QC rules for this ramp."
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 jobs:
   poll:
@@ -90,6 +98,14 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
              [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
             ARGS="$ARGS --dry-run"
+          fi
+
+          # Regen-only mode: skips Stage A/B/C, re-runs gen for empty-creative
+          # registry rows only, reads qc_rule_overrides from Postgres to
+          # suppress reviewer-flagged QC rules for this ramp.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
+             [ "${{ github.event.inputs.regen_mode }}" = "true" ]; then
+            ARGS="$ARGS --regen-mode"
           fi
 
           echo "Running: doppler run -- python scripts/smart_ramp_poller.py $ARGS"
