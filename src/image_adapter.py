@@ -175,15 +175,20 @@ def _add_outlier_watermark(canvas: Image.Image, platform: str = "") -> Image.Ima
     canvas_w, canvas_h = canvas.size
 
     wm_target_w = int(canvas_w * 0.18)
-    logo_img = _rasterize_outlier_logo(target_width=wm_target_w)
+    # White wordmark on photo (2026-05-20 user direction). Photo backgrounds
+    # are typically mid-to-dark in the bottom-right corner (warm interiors,
+    # window-light scenes), so white reads more legibly than brown.
+    logo_img = _rasterize_outlier_logo(target_width=wm_target_w, color=(255, 255, 255))
     if logo_img is None:
         return canvas
 
-    # Fade to ~60% opacity by scaling the alpha channel.
+    # Fade to ~70% opacity by scaling the alpha channel. White at 60% reads
+    # too washed-out on lighter regions; 70% holds the brand without
+    # competing with the headline overlay.
     if logo_img.mode != "RGBA":
         logo_img = logo_img.convert("RGBA")
     r, g, b, a = logo_img.split()
-    a = a.point(lambda p: int(p * 0.60))
+    a = a.point(lambda p: int(p * 0.70))
     logo_img = Image.merge("RGBA", (r, g, b, a))
 
     # Bottom-right placement, with platform-aware vertical offset to clear

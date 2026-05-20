@@ -81,9 +81,23 @@ def _load_outlier_logo_svg() -> str:
     return ""
 
 
-def _rasterize_outlier_logo(target_width: int = 800) -> Image.Image | None:
+def _rasterize_outlier_logo(
+    target_width: int = 800,
+    color: tuple[int, int, int] | None = None,
+) -> Image.Image | None:
     """
-    Rasterize the Outlier SVG logo to a PIL image, tinted to Outlier brown (#3D1A00).
+    Rasterize the Outlier SVG logo to a PIL image, tinted to the given color
+    while preserving the original alpha mask.
+
+    Args:
+        target_width: rasterization width in px.
+        color: RGB tuple to tint the logo. Defaults to OUTLIER_BROWN — used
+               by the earnings strip at the bottom of the LinkedIn 1:1
+               composite (light background, brown reads as brand). The
+               Meta/Google bottom-right watermark (image_adapter._add_outlier
+               _watermark) passes (255, 255, 255) for white-on-photo
+               readability per 2026-05-20 user direction.
+
     Returns None if cairosvg or the SVG file isn't available.
     """
     svg_path = None
@@ -99,10 +113,11 @@ def _rasterize_outlier_logo(target_width: int = 800) -> Image.Image | None:
         import cairosvg
         png_bytes = cairosvg.svg2png(url=str(svg_path), output_width=target_width)
         logo = Image.open(BytesIO(png_bytes)).convert("RGBA")
-        # Tint the black logo to Outlier brown while preserving alpha
+        # Tint the black source logo to the requested color, preserving alpha.
         r, g, b, a = logo.split()
-        brown = Image.new("RGB", logo.size, OUTLIER_BROWN)
-        tinted = Image.merge("RGBA", (*brown.split(), a))
+        tint_rgb = color if color is not None else OUTLIER_BROWN
+        tinted_rgb = Image.new("RGB", logo.size, tint_rgb)
+        tinted = Image.merge("RGBA", (*tinted_rgb.split(), a))
         return tinted
     except Exception as exc:
         log.warning("Could not rasterize Outlier logo SVG: %s", exc)
