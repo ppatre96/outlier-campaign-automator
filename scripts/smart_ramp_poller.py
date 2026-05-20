@@ -543,17 +543,27 @@ def _regen_failed_creatives(ramp_id: str, *, dry_run: bool = False) -> int:
         log.error("Registry not found at %s", reg_path)
         return 1
     records = json.loads(reg_path.read_text())
+    # Regen v2 supports LinkedIn + Meta. Google needs separate handling for
+    # the 1:1 + 1.91:1 RDA variant pair — tracked as a follow-up.
+    supported_platforms = {"linkedin", "meta"}
     failed = [
         r for r in records
         if r.get("smart_ramp_id") == ramp_id
         and not r.get("creative_image_path")
         and not r.get("creative_urn")
         and (r.get("angle") or r.get("geo_cluster_label"))
-        and (r.get("platform") or "").lower() == "linkedin"  # v1: LinkedIn only
+        and (r.get("platform") or "").lower() in supported_platforms
     ]
-    log.info("Failed LinkedIn rows for %s: %d", ramp_id, len(failed))
+    skipped_google = sum(
+        1 for r in records
+        if r.get("smart_ramp_id") == ramp_id
+        and not r.get("creative_image_path")
+        and (r.get("platform") or "").lower() == "google"
+    )
+    log.info("Failed rows for %s: %d (linkedin/meta) + %d google (skipped — v3)",
+             ramp_id, len(failed), skipped_google)
     if not failed:
-        log.info("Nothing to regen — every LinkedIn row has a creative.")
+        log.info("Nothing to regen — every LinkedIn/Meta row has a creative.")
         return 0
 
     if dry_run:
@@ -561,26 +571,29 @@ def _regen_failed_creatives(ramp_id: str, *, dry_run: bool = False) -> int:
         return 0
 
     # Lazy imports — keep the poller's import cost down for non-regen runs.
-    from src.gemini_creative import generate_imagen_creative_with_qc
+    from src.gemini_creative import generate_imagen_creative_with_qc, generate_imagen_photo
     from src.figma_creative import rewrite_variant_copy
     from src.campaign_registry import update_row as _reg_update_row
     from src.linkedin_api import LinkedInClient
+    from src.image_adapter import compose_ad_for_platform, primary_aspect
 
     li_client: LinkedInClient | None = None  # lazy-init on first need
+    meta_client = None  # lazy-init on first Meta row
 
     succeeded = 0
     failed_again = 0
     for row in failed:
+        platform = (row.get("platform") or "").lower()
         angle = row.get("angle", "")
         cohort_geo = row.get("cohort_geo", "")
-        campaign_urn = (
+        campaign_id = (
             row.get("platform_campaign_id") or row.get("linkedin_campaign_urn") or ""
         )
-        if not campaign_urn:
+        if not campaign_id:
             log.warning(
                 "Row missing platform_campaign_id — cannot attach creative; skipping. "
-                "cohort_geo=%s angle=%s",
-                cohort_geo, angle,
+                "platform=%s cohort_geo=%s angle=%s",
+                platform, cohort_geo, angle,
             )
             failed_again += 1
             continue
@@ -598,17 +611,22 @@ def _regen_failed_creatives(ramp_id: str, *, dry_run: bool = False) -> int:
         }
 
         log.info(
-            "Regen %s · angle=%s · headline=%r",
-            cohort_geo, angle, variant["headline"][:50],
+            "Regen %s · %s · angle=%s · headline=%r",
+            platform, cohort_geo, angle, variant["headline"][:50],
         )
         try:
+            # Always run QC against the 1:1 composite — that gates the photo's
+            # subject + composition + brand quality. Meta then re-renders the
+            # underlying photo at 4:5 (different aspect, same subject) for
+            # final upload. Without the 1:1 QC gate Meta would skip QC entirely.
             png_path, qc_report = generate_imagen_creative_with_qc(
                 variant=variant,
                 copy_rewriter=rewrite_variant_copy,
                 skip_rules=skip_rules,
             )
         except Exception as exc:
-            log.exception("Gen raised — skipping. cohort_geo=%s angle=%s: %s", cohort_geo, angle, exc)
+            log.exception("Gen raised — skipping. platform=%s cohort_geo=%s angle=%s: %s",
+                          platform, cohort_geo, angle, exc)
             failed_again += 1
             continue
 
@@ -618,13 +636,11 @@ def _regen_failed_creatives(ramp_id: str, *, dry_run: bool = False) -> int:
                 "  QC still FAIL after regen — violations=%s",
                 (qc_report or {}).get("violations", []),
             )
-            # Persist the new attempt count + violations so the UI reflects
-            # the latest run even when the creative still can't ship.
             _reg_update_row(
                 smart_ramp_id=ramp_id,
                 cohort_geo=cohort_geo,
                 angle=angle,
-                platform="linkedin",
+                platform=platform,
                 fields={
                     "qc_verdict": "FAIL",
                     "qc_attempts": (qc_report or {}).get("attempts"),
@@ -634,63 +650,102 @@ def _regen_failed_creatives(ramp_id: str, *, dry_run: bool = False) -> int:
             failed_again += 1
             continue
 
-        # PASS or UNKNOWN — ship the creative.
+        # PASS or UNKNOWN — ship the creative. Per-platform path below.
+        if platform == "meta":
+            # Re-render the QC'd photo at Meta's preferred 4:5 aspect. Reuses
+            # the SAME subject prompt but at the new aspect override so the
+            # subject doesn't get center-cropped out of frame.
+            try:
+                meta_bg = generate_imagen_photo(variant, aspect=(4, 5))
+                meta_png_path = compose_ad_for_platform(
+                    bg_image=meta_bg,
+                    copy_variant=variant,
+                    platform="meta",
+                    angle=angle,
+                    aspect=(4, 5),
+                )
+                final_png = meta_png_path
+            except Exception as exc:
+                log.warning(
+                    "Meta 4:5 re-render failed — falling back to 1:1 PNG. %s/%s: %s",
+                    cohort_geo, angle, exc,
+                )
+                final_png = png_path
+        else:
+            final_png = png_path
+
         try:
             from src.gdrive import upload_creative_in_hierarchy
             drive_url = upload_creative_in_hierarchy(
-                file_path=Path(str(png_path)),
+                file_path=Path(str(final_png)),
                 ramp_id=ramp_id,
-                channel="linkedin",
+                channel=platform,
                 cohort_geo=cohort_geo,
                 angle=angle,
             ) or ""
         except Exception as exc:
-            log.warning("Drive upload failed for %s/%s: %s", cohort_geo, angle, exc)
+            log.warning("Drive upload failed for %s/%s/%s: %s", platform, cohort_geo, angle, exc)
             drive_url = ""
 
-        if li_client is None:
-            li_client = LinkedInClient()
-
+        creative_id = ""
         try:
-            image_urn = li_client.upload_image(png_path)
-            ad_result = li_client.create_image_ad(
-                campaign_urn=campaign_urn,
-                image_urn=image_urn,
-                headline=variant["headline"]
-                    or f"Your expertise is in demand.",
-                description=variant["subheadline"]
-                    or "Earn payment doing remote AI tasks on your schedule.",
-                intro_text=variant["intro_text"],
-                ad_headline=variant["ad_headline"],
-                ad_description=variant["ad_description"],
-                cta_button=variant["cta_button"],
-                destination_url="",  # use campaign's default
-            )
-            creative_urn = ad_result.creative_urn if ad_result.status == "ok" else ""
+            if platform == "linkedin":
+                if li_client is None:
+                    li_client = LinkedInClient()
+                image_urn = li_client.upload_image(final_png)
+                ad_result = li_client.create_image_ad(
+                    campaign_urn=campaign_id,
+                    image_urn=image_urn,
+                    headline=variant["headline"] or "Your expertise is in demand.",
+                    description=variant["subheadline"]
+                        or "Earn payment doing remote AI tasks on your schedule.",
+                    intro_text=variant["intro_text"],
+                    ad_headline=variant["ad_headline"],
+                    ad_description=variant["ad_description"],
+                    cta_button=variant["cta_button"],
+                    destination_url="",  # use campaign's default
+                )
+                creative_id = ad_result.creative_id or "" if ad_result.status == "ok" else ""
+            elif platform == "meta":
+                if meta_client is None:
+                    from src.meta_api import MetaClient
+                    meta_client = MetaClient()
+                from src.copy_adapter import adapt_copy_for_platform
+                meta_copy = adapt_copy_for_platform(variant, "meta")
+                image_id = meta_client.upload_image(final_png)
+                ad_result = meta_client.create_image_ad(
+                    campaign_id=campaign_id,
+                    image_id=image_id,
+                    headline=meta_copy.get("headline", variant["headline"]),
+                    description=meta_copy.get("description", variant["subheadline"]),
+                    primary_text=meta_copy.get("primary_text"),
+                    cta=meta_copy.get("cta"),
+                    destination_url=None,
+                )
+                creative_id = ad_result.creative_id or "" if ad_result.status == "ok" else ""
         except Exception as exc:
-            log.exception("LinkedIn attach failed for %s/%s: %s", cohort_geo, angle, exc)
-            creative_urn = ""
+            log.exception("%s attach failed for %s/%s: %s", platform, cohort_geo, angle, exc)
 
         _reg_update_row(
             smart_ramp_id=ramp_id,
             cohort_geo=cohort_geo,
             angle=angle,
-            platform="linkedin",
+            platform=platform,
             fields={
-                "creative_image_path": drive_url or str(png_path),
-                "creative_urn":         creative_urn,
-                "platform_creative_id": creative_urn,
+                "creative_image_path": drive_url or str(final_png),
+                "creative_urn":         creative_id if platform == "linkedin" else "",
+                "platform_creative_id": creative_id,
                 "qc_verdict":           verdict,
                 "qc_attempts":          (qc_report or {}).get("attempts"),
                 "qc_violations":        json.dumps((qc_report or {}).get("violations") or []),
             },
         )
-        if creative_urn:
+        if creative_id:
             succeeded += 1
-            log.info("  ✓ regen success — creative=%s", creative_urn)
+            log.info("  ✓ regen success — %s creative=%s", platform, creative_id)
         else:
             failed_again += 1
-            log.warning("  ✗ LinkedIn attach failed; registry updated with drive_url only")
+            log.warning("  ✗ %s attach failed; registry updated with drive_url only", platform)
 
     log.info("=" * 70)
     log.info(
