@@ -44,14 +44,18 @@ def stage_c(
 
     log.info("Stage C: %d cohorts have resolvable URNs", len(resolved))
 
-    # Step 2 — audience counts (HARD STOP on auth errors)
+    # Step 2 — audience counts (HARD STOP on auth errors). When a cohort
+    # comes in below AUDIENCE_SIZE_MIN, run the de-narrowing retry: iteratively
+    # drop the lowest-importance rule (lowest score contribution) from the
+    # cohort and re-query, until we either clear the floor or run out of
+    # rules. 2026-05-20: user directive — wrong rate in ads is risky but so
+    # is a sub-50k audience pool that can't deliver impressions.
     sized: list[tuple[Cohort, dict, int]] = []
     for cohort, facet_urns in resolved:
         try:
             count = li_client.get_audience_count(facet_urns)
         except Exception as exc:
             msg = str(exc)
-            # Hard stop on auth/permission errors
             if _is_auth_error(msg):
                 raise RuntimeError(
                     f"LinkedIn Audience Counts API blocked (auth error): {msg}"
@@ -61,12 +65,29 @@ def stage_c(
 
         cohort.audience_size = count
         if count < config.AUDIENCE_SIZE_MIN:
-            log.info("Cohort '%s' audience=%d < %d — rejected", cohort.name, count, config.AUDIENCE_SIZE_MIN)
-            cohort.reject_reason = f"audience={count} < {config.AUDIENCE_SIZE_MIN}"
-            continue
+            log.info(
+                "Cohort '%s' audience=%d < %d — attempting de-narrowing",
+                cohort.name, count, config.AUDIENCE_SIZE_MIN,
+            )
+            count, facet_urns = _denarrow_until_above_threshold(
+                cohort=cohort,
+                facet_urns=facet_urns,
+                urn_resolver=urn_resolver,
+                li_client=li_client,
+            )
+            cohort.audience_size = count
+            if count < config.AUDIENCE_SIZE_MIN:
+                log.info(
+                    "Cohort '%s' audience=%d < %d after de-narrowing — rejected",
+                    cohort.name, count, config.AUDIENCE_SIZE_MIN,
+                )
+                cohort.reject_reason = (
+                    f"audience={count} < {config.AUDIENCE_SIZE_MIN} (de-narrowed to {len(cohort.rules)} rules)"
+                )
+                continue
 
         sized.append((cohort, facet_urns, count))
-        log.info("Cohort '%s' audience=%d ✓", cohort.name, count)
+        log.info("Cohort '%s' audience=%d ✓ (rules=%d)", cohort.name, count, len(cohort.rules))
 
     log.info("Stage C: %d cohorts pass audience threshold", len(sized))
 
@@ -114,6 +135,80 @@ def stage_c(
 def _is_auth_error(msg: str) -> bool:
     msg_lower = msg.lower()
     return any(k in msg_lower for k in ("401", "403", "unauthorized", "forbidden", "token"))
+
+
+# ── De-narrowing retry (2026-05-20) ──────────────────────────────────────────
+# When a cohort's audience comes in below AUDIENCE_SIZE_MIN, iteratively drop
+# the lowest-importance rule and re-query LinkedIn audienceCounts. Stops when
+# the audience clears the floor OR we run out of rules. MUTATES cohort.rules
+# in place so downstream stages (copy gen, campaign creation) see the relaxed
+# targeting.
+#
+# "Lowest importance" = lowest contribution to the cohort score. For cohorts
+# coming from stage_a_lift, this is the rule with the lowest lift; for stage_a
+# _support cohorts where individual lift isn't tracked, we fall back to dropping
+# the LAST rule added (the rules list is roughly in importance order — anchor
+# role first, refinements after). Conservative: never drops below 1 rule.
+
+_DENARROW_MAX_DROPS = 5  # at most 5 rules dropped per cohort
+
+def _denarrow_until_above_threshold(
+    *,
+    cohort: "Cohort",
+    facet_urns: dict[str, list[str]],
+    urn_resolver: "UrnResolver",
+    li_client: "LinkedInClient",
+) -> tuple[int, dict[str, list[str]]]:
+    """Drop one rule at a time and re-query until audience >= floor.
+
+    Returns (final_count, final_facet_urns). On exhaustion returns the last
+    measured count + URNs (caller decides whether to reject or accept).
+    """
+    threshold = config.AUDIENCE_SIZE_MIN
+    drops = 0
+    last_count = cohort.audience_size or 0
+
+    while drops < _DENARROW_MAX_DROPS and len(cohort.rules) > 1:
+        # Drop the LAST rule (least-important per the rules-list ordering convention).
+        dropped = cohort.rules.pop()
+        drops += 1
+        log.info(
+            "  de-narrow #%d: dropping rule %r — re-querying audience for %d remaining rules",
+            drops, dropped[0], len(cohort.rules),
+        )
+
+        # Re-resolve URNs (rule removal may free up facets entirely).
+        try:
+            new_facet_urns = urn_resolver.resolve_cohort_rules(cohort.rules)
+        except Exception as exc:
+            log.warning("  de-narrow URN re-resolve failed: %s — stopping", exc)
+            return last_count, facet_urns
+        if not new_facet_urns:
+            log.warning("  de-narrow zeroed URNs after dropping %r — stopping", dropped[0])
+            return last_count, facet_urns
+
+        try:
+            new_count = li_client.get_audience_count(new_facet_urns)
+        except Exception as exc:
+            if _is_auth_error(str(exc)):
+                raise
+            log.warning("  de-narrow audienceCounts failed: %s — stopping", exc)
+            return last_count, facet_urns
+
+        log.info("  de-narrow #%d result: audience=%d (was %d, threshold=%d)",
+                 drops, new_count, last_count, threshold)
+        last_count = new_count
+        facet_urns = new_facet_urns
+        if new_count >= threshold:
+            log.info(
+                "  de-narrow ✓ cohort '%s' now passes (dropped %d rule(s))",
+                cohort.name, drops,
+            )
+            return new_count, facet_urns
+
+    log.info("  de-narrow exhausted (dropped %d rules, %d remaining) — audience=%d",
+             drops, len(cohort.rules), last_count)
+    return last_count, facet_urns
 
 
 # ── CLI dry-run ────────────────────────────────────────────────────────────────
