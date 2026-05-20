@@ -252,6 +252,92 @@ def upsert_cohort_brief_rationale(
                   ramp_id, cohort_id, angle, exc)
 
 
+def upsert_competitor_role_ads(
+    ramp_id: str, role_query: str, ads: list[dict]
+) -> None:
+    """Persist Meta Ad Library role-based lookups for a ramp's targeted role.
+
+    Schema (idempotent CREATE TABLE on first call):
+      competitor_role_ads(
+        id          BIGSERIAL PRIMARY KEY,
+        ramp_id     TEXT NOT NULL,
+        role_query  TEXT NOT NULL,
+        page_name   TEXT NOT NULL,
+        ad_body     TEXT,
+        pay_rate    TEXT,
+        impressions_lower BIGINT, impressions_upper BIGINT,
+        spend_lower_usd NUMERIC, spend_upper_usd NUMERIC,
+        ad_snapshot_url TEXT,
+        delivery_start_time TIMESTAMPTZ,
+        captured_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (ramp_id, role_query, page_name, ad_body)
+      )
+
+    Re-running for the same (ramp_id, role_query, page_name, ad_body) is a
+    no-op via ON CONFLICT DO NOTHING. The captured_at timestamp on the first
+    write preserves the original capture; downstream queries treat the
+    presence of any row as evidence the competitor ran the ad at that time.
+
+    Best-effort — Postgres outage never blocks the pipeline.
+    """
+    if not ads:
+        return
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS competitor_role_ads (
+                  id BIGSERIAL PRIMARY KEY,
+                  ramp_id    TEXT NOT NULL,
+                  role_query TEXT NOT NULL,
+                  page_name  TEXT NOT NULL,
+                  ad_body    TEXT,
+                  pay_rate   TEXT,
+                  impressions_lower BIGINT,
+                  impressions_upper BIGINT,
+                  spend_lower_usd   NUMERIC,
+                  spend_upper_usd   NUMERIC,
+                  ad_snapshot_url   TEXT,
+                  delivery_start_time TIMESTAMPTZ,
+                  captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                  UNIQUE (ramp_id, role_query, page_name, md5(coalesce(ad_body, '')))
+                )
+                """
+            )
+            for ad in ads:
+                cur.execute(
+                    """
+                    INSERT INTO competitor_role_ads
+                      (ramp_id, role_query, page_name, ad_body, pay_rate,
+                       impressions_lower, impressions_upper,
+                       spend_lower_usd, spend_upper_usd,
+                       ad_snapshot_url, delivery_start_time)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (
+                        ramp_id, role_query,
+                        ad.get("page_name", ""),
+                        ad.get("ad_body", ""),
+                        ad.get("pay_rate"),
+                        ad.get("impressions_lower"),
+                        ad.get("impressions_upper"),
+                        ad.get("spend_lower_usd"),
+                        ad.get("spend_upper_usd"),
+                        ad.get("ad_snapshot_url", ""),
+                        ad.get("delivery_start_time") or None,
+                    ),
+                )
+            conn.commit()
+            log.info("Persisted %d Meta role-ads for ramp=%s role=%r",
+                     len(ads), ramp_id, role_query)
+    except UIDecisionsUnavailable as exc:
+        log.debug(
+            "upsert_competitor_role_ads skipped (ramp=%s role=%r): %s",
+            ramp_id, role_query, exc,
+        )
+
+
 def upsert_competitor_intel_snapshot(ramp_id: str, snapshot: dict) -> None:
     """Phase 5 — snapshot data/competitor_intel/latest.json against a ramp at
     prep time. The console reads this to render the "Competitor landscape"

@@ -535,7 +535,143 @@ def analyze_task_demand(listings: list[TaskListing]) -> dict:
     }
 
 
-# ── Meta Ads Library ──────────────────────────────────────────────────────────
+# ── Meta Ads Library — role-based lookup (Graph API) ─────────────────────────
+
+
+def fetch_role_based_meta_ads(
+    role_query: str,
+    *,
+    max_results: int = 30,
+    countries: list[str] | None = None,
+    active_status: str = "ALL",
+) -> list[dict]:
+    """Query Meta's public Ad Library Graph API for ads matching a role.
+
+    Built 2026-05-20 per user direction: "see if competitors are looking for
+    the similar role on Meta Ads, and if so what their messaging / pay rate /
+    TG was". The existing fetch_meta_ads() queries by COMPETITOR NAME — this
+    new function queries by JOB-ROLE search terms (e.g. "video editor",
+    "research associate") so we can see who else is hiring for the same TG.
+
+    API: https://graph.facebook.com/v18.0/ads_archive
+    Auth: requires META_ACCESS_TOKEN (already configured for live ad creation).
+    Cost: free, rate-limited to ~200 calls/hour per token.
+
+    Args:
+        role_query: search terms — typically the cohort's targeted role.
+        max_results: hard cap on returned ads.
+        countries: ISO-2 country codes. Defaults to US + GB + CA + AU
+                   (English-speaking markets where Outlier competes).
+        active_status: ALL | ACTIVE | INACTIVE. ALL surfaces past campaigns
+                       too which is useful for "what messaging worked".
+
+    Returns: list of dicts with keys page_name, ad_body, ad_link_title,
+    ad_link_description, pay_rate (regex-extracted), impressions, spend,
+    bylines, ad_snapshot_url, delivery_start_time. Never raises — network /
+    auth errors return an empty list with a warning log.
+    """
+    import config as _cfg
+    token = getattr(_cfg, "META_ACCESS_TOKEN", "")
+    if not token:
+        log.warning("fetch_role_based_meta_ads: META_ACCESS_TOKEN not set — skipping")
+        return []
+    if not (role_query or "").strip():
+        return []
+
+    countries = countries or ["US", "GB", "CA", "AU"]
+    countries_param = "[" + ",".join(f'"{c}"' for c in countries) + "]"
+    fields = ",".join([
+        "page_name",
+        "ad_creative_bodies",
+        "ad_creative_link_titles",
+        "ad_creative_link_descriptions",
+        "bylines",
+        "languages",
+        "ad_delivery_start_time",
+        "ad_delivery_stop_time",
+        "ad_snapshot_url",
+        "impressions",
+        "spend",
+        "publisher_platforms",
+    ])
+    url = "https://graph.facebook.com/v18.0/ads_archive"
+    params = {
+        "search_terms":        role_query,
+        "ad_active_status":    active_status,
+        "ad_reached_countries": countries_param,
+        "fields":              fields,
+        "limit":               str(min(max_results, 50)),
+        "access_token":        token,
+    }
+
+    try:
+        resp = requests.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+    except Exception as exc:
+        log.warning(
+            "fetch_role_based_meta_ads(%r) HTTP failure: %s — returning empty",
+            role_query, exc,
+        )
+        return []
+
+    data = resp.json() or {}
+    raw_ads = data.get("data", []) or []
+    log.info(
+        "fetch_role_based_meta_ads(%r): %d ads from %d countries (%s)",
+        role_query, len(raw_ads), len(countries), countries,
+    )
+
+    out: list[dict] = []
+    _pay_re = re.compile(r"\$\s?(\d{1,3}(?:[\.,]\d{1,2})?)\s?(?:/|per\s?)?(?:hr|hour|hour\.|hr\.)?", re.I)
+    for ad in raw_ads[:max_results]:
+        bodies = ad.get("ad_creative_bodies") or []
+        body = bodies[0] if bodies else ""
+        titles = ad.get("ad_creative_link_titles") or []
+        descs = ad.get("ad_creative_link_descriptions") or []
+
+        # Pay-rate regex on body + title + description.
+        candidates = " · ".join(filter(None, [body, *titles, *descs]))
+        pay_match = _pay_re.search(candidates)
+        pay_rate = f"${pay_match.group(1)}/hr" if pay_match else None
+
+        impressions_range = ad.get("impressions") or {}
+        spend_range = ad.get("spend") or {}
+
+        out.append({
+            "page_name":           ad.get("page_name", ""),
+            "ad_body":             body,
+            "ad_link_title":       titles[0] if titles else "",
+            "ad_link_description": descs[0] if descs else "",
+            "bylines":             ad.get("bylines", ""),
+            "languages":           ad.get("languages", []),
+            "pay_rate":            pay_rate,
+            "impressions_lower":   _to_int(impressions_range.get("lower_bound")),
+            "impressions_upper":   _to_int(impressions_range.get("upper_bound")),
+            "spend_lower_usd":     _to_float(spend_range.get("lower_bound")),
+            "spend_upper_usd":     _to_float(spend_range.get("upper_bound")),
+            "ad_snapshot_url":     ad.get("ad_snapshot_url", ""),
+            "delivery_start_time": ad.get("ad_delivery_start_time", ""),
+            "delivery_stop_time":  ad.get("ad_delivery_stop_time", ""),
+            "publisher_platforms": ad.get("publisher_platforms", []),
+        })
+    return out
+
+
+def _to_int(v) -> int | None:
+    try:
+        return int(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_float(v) -> float | None:
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+# ── Meta Ads Library — competitor-keyed lookup (browser-rendered) ────────────
 
 def fetch_meta_ads(competitor_key: str) -> list[AdCreative]:
     """

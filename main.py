@@ -4237,6 +4237,43 @@ def run_launch_for_ramp(
     except Exception as _exc:
         log.warning("Phase5: competitor_intel snapshot skipped: %s", _exc)
 
+    # 2026-05-20 — role-based Meta Ad Library lookup. For each unique
+    # (matched_domain or cohort role) on this ramp, query Meta's public
+    # ads_archive endpoint for competitors running ads for the SAME role.
+    # Best-effort; skips silently when META_ACCESS_TOKEN is missing or the
+    # Graph API errors out. Surfaces in the console's competitor card so
+    # reviewers see competitor messaging / pay rate / TG context before
+    # approving channels.
+    try:
+        from src.competitor_intel import fetch_role_based_meta_ads
+        from src.ui_decisions import upsert_competitor_role_ads
+        seen_role_queries: set[str] = set()
+        for _cohort in getattr(ramp, "cohorts", []) or []:
+            # Prefer matched_domain (concise, role-aligned) then fall back to
+            # the first 5 words of cohort_description (paragraph form).
+            role_q = (
+                (getattr(_cohort, "matched_domain", "") or "").strip()
+                or " ".join((getattr(_cohort, "cohort_description", "") or "").split()[:5])
+            ).strip()
+            if not role_q or role_q in seen_role_queries:
+                continue
+            seen_role_queries.add(role_q)
+            try:
+                _role_ads = fetch_role_based_meta_ads(role_q, max_results=30)
+                if _role_ads:
+                    upsert_competitor_role_ads(ramp_id, role_q, _role_ads)
+                    log.info(
+                        "Meta role-ads: persisted %d ads for ramp=%s role=%r",
+                        len(_role_ads), ramp_id, role_q,
+                    )
+            except Exception as _r_exc:
+                log.warning(
+                    "Meta role-ads lookup failed for role=%r ramp=%s: %s",
+                    role_q, ramp_id, _r_exc,
+                )
+    except Exception as _exc:
+        log.warning("Meta role-ads lookup skipped (import / setup error): %s", _exc)
+
     # Cross-row (cohort × geo_cluster) dedup state, scoped to this single ramp.
     # Two independent sets so the InMail and Static arms — which run
     # concurrently on the same row inside _process_row_both_modes — don't race
