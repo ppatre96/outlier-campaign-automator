@@ -108,6 +108,9 @@ COLUMNS = [
     "status",                   # active | paused | deprecated
     "deprecation_reason",
     "gemini_prompt",            # base Gemini image gen prompt (first attempt, no QC suffix)
+    "qc_verdict",               # PASS | FAIL | "" — final QC verdict for this angle's creative
+    "qc_attempts",              # int — how many gen attempts ran before the verdict was reached
+    "qc_violations",            # JSON list of violation strings (only populated when verdict=FAIL); empty otherwise. Powers the failure-analysis UI + per-rule skip overrides.
     # ── Performance metrics (filled by feedback agent) ─────────────────────────
     "impressions",
     "clicks",
@@ -152,6 +155,9 @@ class CampaignEntry:
     status:                 str = "active"
     deprecation_reason:     str = ""
     gemini_prompt:          str = ""
+    qc_verdict:             str = ""           # "PASS" | "FAIL" | "" when QC didn't run
+    qc_attempts:            int | None = None  # gen attempts before final verdict
+    qc_violations:          str = ""           # JSON-encoded list of violation strings
     # metrics — empty until feedback agent runs
     impressions:            int | None = None
     clicks:                 int | None = None
@@ -305,6 +311,9 @@ def log_campaign(
     campaign_name: str = "",
     cohort_geo: str = "",
     audience_size: int | None = None,
+    qc_verdict: str = "",
+    qc_attempts: int | None = None,
+    qc_violations: list[str] | None = None,
 ) -> None:
     """Append one campaign row to the registry. Safe to call from any platform arm.
 
@@ -350,6 +359,9 @@ def log_campaign(
         inmail_subject=inmail_subject,
         inmail_body=inmail_body or "",
         gemini_prompt=gemini_prompt,
+        qc_verdict=qc_verdict,
+        qc_attempts=qc_attempts,
+        qc_violations=json.dumps(qc_violations) if qc_violations else "",
         created_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         status="active",
     )

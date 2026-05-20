@@ -3001,6 +3001,9 @@ def _process_static_campaigns(
                     creative_image_path=drive_url or (str(png_path) if png_path else ""),
                     cohort_geo=_cohort_geo_label(cohort, geo_group),
                     gemini_prompt=qc_report.get("gemini_prompt", ""),
+                    qc_verdict=qc_report.get("verdict", "") if qc_report else "",
+                    qc_attempts=qc_report.get("attempts") if qc_report else None,
+                    qc_violations=qc_report.get("violations") if qc_report else None,
                     campaign_name=campaign_name,
                 )
             except Exception as _exc:
@@ -3514,6 +3517,7 @@ def _process_extra_platform_arm(
             angle_label = spec.get("angle_label", "A")
             angle_idx   = spec.get("angle_idx", 0)
             png_path    = spec.get("png_path")
+            qc_report_e = spec.get("qc_report") or {}
             variant     = variants[angle_idx] if angle_idx < len(variants) else {}
             row_id = f"{by_cohort_key}_{angle_label}"
 
@@ -3621,6 +3625,9 @@ def _process_extra_platform_arm(
                     platform=platform,
                     platform_campaign_id=sub_id,
                     platform_creative_id=ad_result.creative_id or "",
+                    qc_verdict=qc_report_e.get("verdict", ""),
+                    qc_attempts=qc_report_e.get("attempts"),
+                    qc_violations=qc_report_e.get("violations"),
                     campaign_name=campaign_name,
                 )
             except Exception as exc:
