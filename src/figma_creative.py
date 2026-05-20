@@ -337,11 +337,31 @@ def build_copy_variants(
     if hourly_rate:
         prompt += (
             f"\n\nPAY RATE FOR THIS GEO GROUP: {hourly_rate} — this is the ACTUAL rate for this "
-            f"specific geographic cluster (computed from base rate × country multiplier). Use this "
-            f"exact figure in ad copy where earnings are mentioned. Do NOT use the US baseline of $50/hr "
-            f"for lower-multiplier markets."
+            f"specific geographic cluster (computed from the job role's US-baseline rate × the highest "
+            f"country pay multiplier in this cluster). Use this exact figure in ad copy where earnings "
+            f"are mentioned. Do NOT round, invent, or extrapolate to a different number."
         )
         log.info("Copy gen using geo-specific hourly rate: %s", hourly_rate)
+    else:
+        # 2026-05-20 SOFT-FAIL PATH: when the pay-rate resolver couldn't find
+        # a rate for this job role (no Smart Ramp field, no Snowflake match),
+        # the LLM must NOT invent one. Wrong rate in ads is a critical risk —
+        # better to ship rate-free copy that leans on flexibility / skill /
+        # social-proof angles than to make up a number.
+        prompt += (
+            "\n\nPAY RATE: UNRESOLVED — the project's hourly rate could not be looked up "
+            "from Smart Ramp or Snowflake. UNDER NO CIRCUMSTANCES may any field "
+            "(headline, subheadline, intro_text, ad_headline, ad_description) "
+            "mention a $/hr figure, a dollar amount, an earnings claim, or any "
+            "specific number tied to pay. Use NON-MONETARY value props only: "
+            "flexibility, remote freedom, AI-experience claim, peer social proof "
+            "without a dollar figure, expertise-match framing. If you must reference "
+            "earnings at all, say 'paid hourly in USD' or 'fully remote, paid hourly' "
+            "with no number attached. This rule supersedes all other guidance."
+        )
+        log.warning(
+            "Copy gen: hourly_rate is empty — instructing LLM to ship rate-free copy"
+        )
     if geo_icp_hint:
         prompt += geo_icp_hint
         log.info("Copy gen injecting geo ICP hint (%d chars)", len(geo_icp_hint))
@@ -717,6 +737,20 @@ No variant ships if ANY of the 5 text fields above violates its length limit. Th
 **Pattern:** Name their specific professional moment → reveal that their exact skill has AI value.
 **Examples of good openers:** "In between DNA sequencing projects?", "Between lab rotations?", "AI needs your metagenomics expertise.", "Get AI experience as a research associate."
 **Never:** "Your expertise is in demand." (too generic) — always name the specific expertise.
+
+**🚫 ANTI-PATTERNS (banned, observed 2026-05-20 in GMR-0021 generic-role ramps):**
+- ❌ "AI needs your <broad skill>" — works ONLY when the skill is genuinely niche (metagenomics, fluid-dynamics, neuropathology). For broad skills (video editing, design, writing, marketing) it sounds desperate and abstract. "AI needs your edit eye" / "AI needs your video expertise" → REJECT.
+- ❌ "Your <skill> has AI value" — abstract value claim with zero specificity. "Your video eye has AI value" / "Video editing has AI value" → REJECT.
+- ❌ "Your <skill> can train AI" — same problem, makes AI sound needy.
+
+**✅ When the skill is broad (video editing, content creation, social-media work, design), rewrite Variant A around CONCRETE TASKS or CONCRETE OUTCOMES instead:**
+- "Score AI video clips, get paid hourly."
+- "Rate AI shorts. From your phone."
+- "Review AI Reels between client gigs."
+- "Get paid to fix AI's bad video cuts."
+- "Edit AI clips on your couch, $25/hr."
+
+**Rule of thumb:** if the headline could appear over a photo of any random professional and still make sense, it's too generic. The headline must mention a concrete TASK (rate, review, score, edit, fix), a concrete OUTPUT (clips, shorts, Reels, thumbnails), or a concrete NUMBER (rate, payout, peer count).
 
 ### Variant B — Earnings / Social Proof Hook
 **Insight:** Proof that people like them are already earning real money.

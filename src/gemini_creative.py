@@ -194,6 +194,44 @@ CRITICAL OUTPUT CONSTRAINTS:
 _REFERENCE_IMAGE_URL = "https://drive.google.com/drive/folders/1EYVpR40lXOiZFPBV-HkZ3Jx0CImjsHvV?usp=drive_link"
 
 
+# Aspect-specific prompt overrides. The base template assumes 1:1 with subject
+# in the LEFT or RIGHT half. Portrait aspects (4:5, 9:16) lose subject pixels
+# under center-crop unless we re-frame Gemini's composition.
+#
+# Added 2026-05-20 for GMR-0021 FB/IG/TikTok secondary creatives.
+_ASPECT_PROMPT_OVERRIDE = {
+    (4, 5): """\
+
+ASPECT RATIO OVERRIDE — 4:5 PORTRAIT (1080×1350 target after center-crop):
+- Subject placement: CENTER the subject horizontally — do NOT push to left or right edge.
+  Gemini's output will be center-cropped to remove ~10% of each side, so off-center subjects
+  get clipped.
+- Vertical framing: subject's hair top sits at the 30-35% line; full upper 30% is pure
+  background for the headline overlay.
+- This is a portrait crop — frame the body waist-up with breathing room above the head.
+""",
+    (9, 16): """\
+
+ASPECT RATIO OVERRIDE — 9:16 VERTICAL (1080×1920 target after center-crop):
+- Subject placement: CENTER horizontally. Gemini outputs a square; we center-crop to 9:16
+  which removes ~44% of horizontal pixels. Anything off-center will be cut.
+- Vertical framing: subject's head/hair sits in the CENTER vertical band — top of head at
+  the 40-45% line. Frame waist-up.
+- TOP 30% must be pure background — TikTok username overlay sits in the top ~7% and the
+  headline lives directly below it.
+- BOTTOM 25% must be safe background OR lower-body — TikTok CTA + username overlay sits
+  in the bottom ~20% and will occlude anything in that band. Do not place faces, hands,
+  or key visual elements in the bottom 25%.
+- Lighting: same warm-amber top-left + cool teal bottom-left palette as 1:1.
+""",
+}
+
+
+def _aspect_prompt_block(aspect: tuple[int, int]) -> str:
+    """Return the prompt override block for non-square aspects, or "" for 1:1."""
+    return _ASPECT_PROMPT_OVERRIDE.get(aspect, "")
+
+
 def _build_imagen_prompt(photo_subject: str, angle: str, tg_label: str = "") -> tuple[str, str]:
     """
     Build Gemini image prompt for a clean lifestyle portrait.
@@ -944,6 +982,66 @@ def generate_imagen_creative(
     ad_image.save(out_path, "PNG", optimize=True)
     log.info("Gemini creative saved: %s (%d bytes)", out_path, out_path.stat().st_size)
     return out_path
+
+
+def generate_imagen_photo(
+    variant: dict,
+    photo_subject: str | None = None,
+    aspect: tuple[int, int] = (1, 1),
+    gemini_api_key: str | None = None,
+    attach_reference_image: bool = True,
+) -> "Image.Image":
+    """
+    Raw Gemini photo generator — no compositing. Returns the PIL Image so
+    callers can route it through `image_adapter.compose_ad_for_platform` for
+    different platforms / aspect ratios without paying for Gemini twice when
+    two platforms share a target aspect (FB + IG both at 4:5).
+
+    Used by `scripts/generate_secondary_creatives.py` (GMR-0021 FB/IG/TikTok
+    pass). The LinkedIn arm continues to use `generate_imagen_creative` which
+    wraps this + the LinkedIn-specific compositor.
+
+    Args:
+        variant:        copy variant dict (must have `angle`; uses `photo_subject` if set)
+        photo_subject:  explicit photo subject; falls back to variant["photo_subject"]
+        aspect:         target output aspect (1,1) | (4,5) | (9,16). Drives the
+                        ASPECT RATIO OVERRIDE block injected into the prompt so
+                        Gemini frames the subject appropriately before center-crop.
+        gemini_api_key: optional override
+        attach_reference_image: pass-through to `_generate_imagen`
+
+    Returns:
+        Raw PIL Image from Gemini (square, ~1024×1024). Caller is responsible
+        for cropping/resizing via `compose_ad_for_platform` or equivalent.
+    """
+    angle   = variant.get("angle", "A")
+    subject = photo_subject or variant.get("photo_subject", "")
+    if not subject:
+        raise RuntimeError(
+            "photo_subject is required — pass the cohort-derived subject description."
+        )
+    validate_photo_subject(subject)
+
+    tg_label = variant.get("tgLabel", "")
+    prompt, ref_img_b64 = _build_imagen_prompt(subject, angle, tg_label=tg_label)
+    aspect_block = _aspect_prompt_block(aspect)
+    if aspect_block:
+        prompt = prompt + aspect_block
+    if not attach_reference_image:
+        ref_img_b64 = ""
+
+    log.info(
+        "Gemini photo-only call — angle=%s aspect=%s subject=%r",
+        angle, aspect, subject[:80],
+    )
+    bg_image = _generate_imagen(
+        prompt,
+        gemini_api_key or config.GEMINI_API_KEY,
+        reference_image_b64=ref_img_b64,
+    )
+    log.info("Imagen photo received (%dx%d) for aspect %s",
+             bg_image.width, bg_image.height, aspect)
+    return bg_image
 
 
 _QC_MAX_RETRIES_DEFAULT = int(os.getenv("QC_MAX_RETRIES", "4"))

@@ -515,7 +515,7 @@ def compute_geo_rate(base_rate_usd: float, country_code: str) -> str:
 
 def group_geos_for_campaigns(
     included_geos: list[str],
-    base_rate_usd: float = 50.0,
+    base_rate_usd: float | None = None,
 ) -> list[GeoCampaignGroup]:
     """
     Split included_geos into per-campaign geo groups.
@@ -524,7 +524,11 @@ def group_geos_for_campaigns(
       1. Filter out G4 blocked geos (strict skip)
       2. If only 1 geo remains: single group, no split
       3. Group remaining geos by ethnic creative cluster
-      4. For each cluster: compute median multiplier → advertised rate
+      4. For each cluster: compute MAX multiplier → advertised rate
+         (picks the highest-paid country in the cluster — the "upper end" per
+         2026-05-20 user direction; previously this used median which under-
+         advertised most clusters and over-advertised the long-tail Global Mix
+         bucket)
       5. Merge clusters whose advertised rate AND cluster are the same (dedup)
 
     Returns a list of GeoCampaignGroup — one LinkedIn campaign per group.
@@ -532,25 +536,43 @@ def group_geos_for_campaigns(
 
     Args:
         included_geos:  ISO country codes from Smart Ramp cohort.included_geos
-        base_rate_usd:  Project base rate at US multiplier (1.0). Defaults to $50.
+        base_rate_usd:  Job-role US-baseline $/hr (T1 of the matching qualification
+                        in `VIEW.QUALIFICATION_PAY_RATES`). When None — meaning the
+                        resolver could not find a rate via Smart Ramp / Snowflake —
+                        every group's `advertised_rate` is empty string and the copy
+                        LLM is instructed to ship rate-free copy. This is the
+                        SOFT-FAIL path; there is intentionally no $50 default
+                        because advertising the wrong rate is a critical risk
+                        (per 2026-05-20 user direction).
     """
     allowed, skipped = filter_blocked_geos(included_geos)
     if not allowed:
         log.warning("No allowed geos after filtering G4 — no campaigns to create")
         return []
 
+    if base_rate_usd is None:
+        log.warning(
+            "group_geos_for_campaigns: base_rate_usd is None — every cluster's "
+            "advertised_rate will be empty. Copy gen must drop rate mentions."
+        )
+
+    def _rate_str(multiplier: float) -> str:
+        """Return formatted rate or '' if base rate is unresolved."""
+        if base_rate_usd is None:
+            return ""
+        return _format_rate(base_rate_usd * multiplier)
+
     # If single geo: simple single-group result
     if len(allowed) == 1:
         cc = allowed[0]
         cluster = GEO_ETHNIC_CLUSTER.get(cc, "global_mix")
         mult = COUNTRY_PAY_MULTIPLIER.get(cc, 0.65)
-        rate_str = _format_rate(base_rate_usd * mult)
         return [GeoCampaignGroup(
             cluster=cluster,
             cluster_label=CLUSTER_LABELS.get(cluster, cluster),
             geos=[cc],
             median_multiplier=mult,
-            advertised_rate=rate_str,
+            advertised_rate=_rate_str(mult),
             campaign_suffix=cluster,
             icp_hint=get_geo_icp_prompt_hint(cluster, [cc]),
         )]
@@ -564,24 +586,49 @@ def group_geos_for_campaigns(
     groups: list[GeoCampaignGroup] = []
     for cluster, geos in clusters.items():
         multipliers = [COUNTRY_PAY_MULTIPLIER.get(g, 0.65) for g in geos]
-        median_mult = _median(multipliers)
-        rate_str = _format_rate(base_rate_usd * median_mult)
+        # 2026-05-20: cluster rate now uses MAX (upper end) — the country with the
+        # highest pay multiplier wins. Previously median, which under-paid the
+        # high-end of every cluster (e.g., Latin American median 0.48 vs. PR's
+        # 0.79). The MAX-multiplier country is named in the geo group log so
+        # ops can sanity-check which country drives the advertised rate.
+        max_mult = max(multipliers)
+        top_country = next((g for g in geos if COUNTRY_PAY_MULTIPLIER.get(g, 0.65) == max_mult), geos[0])
+        rate_str = _rate_str(max_mult)
         groups.append(GeoCampaignGroup(
             cluster=cluster,
             cluster_label=CLUSTER_LABELS.get(cluster, cluster),
             geos=geos,
-            median_multiplier=round(median_mult, 3),
+            median_multiplier=round(max_mult, 3),  # field name kept for back-compat; semantics now = max
             advertised_rate=rate_str,
             campaign_suffix=cluster,
             icp_hint=get_geo_icp_prompt_hint(cluster, geos),
         ))
         log.info(
-            "Geo group: %s → %s (geos=%s, median_mult=%.2f, rate=%s)",
-            cluster, CLUSTER_LABELS.get(cluster, cluster), geos, median_mult, rate_str,
+            "Geo group: %s → %s (geos=%s, max_mult=%.2f from %s, rate=%s)",
+            cluster, CLUSTER_LABELS.get(cluster, cluster), geos, max_mult, top_country, rate_str or "(none)",
         )
 
     # Sort by cluster size descending (largest audience first)
     groups.sort(key=lambda g: len(g.geos), reverse=True)
+
+    # Optional cap — MAX_GEO_CLUSTERS env var (0 / unset = unlimited). Used
+    # for manual / one-off pipeline runs that want to limit blast radius.
+    # The cron path leaves it unset so behaviour is unchanged for scheduled
+    # ramps. Added 2026-05-20 for GMR-0021 (211 geos → 12 clusters → capped
+    # to 3 for the manual Meta-arm trigger).
+    import os as _os
+    _cap_raw = _os.getenv("MAX_GEO_CLUSTERS", "").strip()
+    if _cap_raw.isdigit():
+        _cap = int(_cap_raw)
+        if 0 < _cap < len(groups):
+            log.warning(
+                "MAX_GEO_CLUSTERS=%d → trimming %d clusters down to top %d "
+                "(by geo count): %s",
+                _cap, len(groups), _cap,
+                [g.cluster for g in groups[:_cap]],
+            )
+            groups = groups[:_cap]
+
     log.info(
         "geo_tiers: %d allowed geos → %d campaign groups (%d G4 skipped)",
         len(allowed), len(groups), len(skipped),

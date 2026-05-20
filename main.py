@@ -1164,7 +1164,7 @@ def _process_inmail_campaigns(
     data_driven_exclude_pairs: list[tuple[str, str]] | None = None,
     destination_url_override: str | None = None,
     included_geos: list[str] | None = None,
-    base_rate_usd: float = 50.0,
+    base_rate_usd: float | None = None,
     ramp_id: str | None = None,
     cohort_id_override: str | None = None,
     cohort_description: str = "",
@@ -1216,7 +1216,7 @@ def _process_inmail_campaigns(
     if not geo_groups:
         geo_groups = [GeoCampaignGroup(
             cluster="global_mix", cluster_label="Global", geos=[],
-            median_multiplier=1.0, advertised_rate=f"${int(base_rate_usd)}/hr",
+            median_multiplier=1.0, advertised_rate=(f"${int(base_rate_usd)}/hr" if base_rate_usd is not None else ""),
             campaign_suffix="global",
         )]
     # Experimentation caps: max 3 cohorts per geo cluster, all angles tested
@@ -2126,8 +2126,56 @@ def _resolve_cohorts(
     base_role_cols = title_anchor_cols + [c for c in skill_anchor_cols if c not in title_anchor_cols]
     cohorts_a = stage_a(df_bin, bin_cols, target_col=target_col, base_role_cols=base_role_cols)
     if not cohorts_a:
+        # 2026-05-20: ICP-fallback cohort. Stage A relies on lift over a
+        # binary target — when the screening pass-rate is already high (e.g.
+        # GMR-0021 at 96%), univariate analysis can't find any feature that
+        # lifts further, so the candidate pool collapses to 0. Same when the
+        # LLM-derived base-role anchors (skills__video_editing,
+        # job_titles_norm__Content_Creator) don't appear in the resume corpus
+        # at all because the role is non-standard. Without this fallback the
+        # entire ramp dies — no cohorts, no creatives, no campaigns.
+        #
+        # When that happens AND we have an LLM-derived ICP with anchor
+        # columns that DO exist in the corpus, synthesize a single Cohort
+        # whose rules == the top 3 anchor columns. The pipeline downstream
+        # (Stage B/C, copy gen, campaign creation) treats this just like a
+        # Stage A output.
         log.warning("_resolve_cohorts: Stage A returned no cohorts")
-        return ResolvedCohorts(flow_id=flow_id, location=location, project_id=project_id)
+        if base_role_cols:
+            from src.analysis import Cohort
+            n_pos = int(df_bin[target_col].sum()) if target_col in df_bin.columns else 0
+            n_total = len(df_bin)
+            anchor_cols = base_role_cols[:3]
+            synthetic_rules = [(col, 1) for col in anchor_cols]
+            synthetic_label = (
+                derived_icp.get("derived_tg_label") or
+                derived_icp.get("derived_label") or
+                "ICP fallback cohort"
+            )
+            cohorts_a = [Cohort(
+                name=synthetic_label,
+                rules=synthetic_rules,
+                n=n_total,
+                passes=n_pos,
+                pass_rate=(n_pos / n_total) if n_total else 0.0,
+                lift_pp=0.0,
+                p_value=1.0,
+                score=1.0,
+                support=n_pos,
+                coverage=(n_pos / n_total) if n_total else 0.0,
+            )]
+            log.warning(
+                "_resolve_cohorts: ICP-fallback synthesized 1 cohort %r with "
+                "rules=%s — pipeline will run downstream stages against this. "
+                "Targeting will be looser than a Stage-A-derived cohort.",
+                synthetic_label, [r[0] for r in synthetic_rules],
+            )
+        else:
+            log.warning(
+                "_resolve_cohorts: ICP-fallback unavailable (no LLM-derived "
+                "base-role / skill anchors matched the corpus) — returning empty"
+            )
+            return ResolvedCohorts(flow_id=flow_id, location=location, project_id=project_id)
 
     # Stage B (skip when Stage A came from support mode)
     from_support_mode = any(getattr(c, "support", 0) > 0 for c in cohorts_a)
@@ -2406,7 +2454,7 @@ def _process_static_campaigns(
     ramp_id: str | None = None,
     cohort_id_override: str | None = None,
     cohort_description: str = "",
-    base_rate_usd: float = 50.0,
+    base_rate_usd: float | None = None,
     unique_id: str | None = None,
     naming_meta: dict | None = None,
     seen_keys: set | None = None,
@@ -2445,7 +2493,7 @@ def _process_static_campaigns(
         from src.geo_tiers import GeoCampaignGroup
         geo_groups = [GeoCampaignGroup(
             cluster="global_mix", cluster_label="Global", geos=[],
-            median_multiplier=1.0, advertised_rate=f"${int(base_rate_usd)}/hr",
+            median_multiplier=1.0, advertised_rate=(f"${int(base_rate_usd)}/hr" if base_rate_usd is not None else ""),
             campaign_suffix="global",
         )]
     if not geo_groups:
@@ -2453,7 +2501,7 @@ def _process_static_campaigns(
         from src.geo_tiers import GeoCampaignGroup
         geo_groups = [GeoCampaignGroup(
             cluster="global_mix", cluster_label="Global", geos=[],
-            median_multiplier=1.0, advertised_rate=f"${int(base_rate_usd)}/hr",
+            median_multiplier=1.0, advertised_rate=(f"${int(base_rate_usd)}/hr" if base_rate_usd is not None else ""),
             campaign_suffix="global",
         )]
 
@@ -3118,6 +3166,58 @@ def _process_extra_platform_arm(
         cluster_suffix = getattr(geo_group_e, "campaign_suffix", "") or "geo"
         spec_key = f"{base_id_e}_{cluster_suffix}_{angle_label_e}"
 
+        # 2026-05-20: Meta arm regenerates a fresh 4:5 (1080×1350) photo
+        # instead of reusing the LinkedIn 1:1 composite. Per Meta Help Center
+        # + 2025/2026 ad-performance benchmarks, 4:5 is the highest-converting
+        # static Feed ratio on FB + IG (~33% more vertical screen than 1:1).
+        # The Meta-native compositor (compose_ad_for_platform) renders only
+        # the headline on the image — Meta surfaces description / primary_text
+        # as separate ad fields, so leaving them off the photo avoids
+        # duplication and visual noise.
+        #
+        # Done in Phase 1 (before the Drive upload) so the same 4:5 PNG flows
+        # to BOTH Drive at <ramp>/meta/<cohort_geo>/<angle>.png AND to
+        # client.upload_image() in Phase 2. spec["png_path"] is rewritten so
+        # the Phase 2 loop picks up the new path automatically.
+        #
+        # Cost: +1 Gemini call per (cohort × geo × angle) when meta is in
+        # ENABLED_PLATFORMS. Falls back to the LinkedIn 1:1 PNG on any
+        # Gemini / compose failure so the Meta arm keeps producing campaigns
+        # in a degraded state.
+        if platform == "meta" and variant_e:
+            try:
+                from src.gemini_creative import generate_imagen_photo
+                from src.image_adapter import compose_ad_for_platform, primary_aspect
+                meta_aspect = primary_aspect("meta")  # (4, 5) post 2026-05-20
+                log.info(
+                    "_process_extra_platform_arm[meta]: regenerating photo at "
+                    "aspect=%s for cohort=%s geo=%s angle=%s",
+                    meta_aspect,
+                    str(base_id_e)[:12], cluster_suffix, angle_label_e,
+                )
+                meta_bg = generate_imagen_photo(variant_e, aspect=meta_aspect)
+                meta_png_path = compose_ad_for_platform(
+                    bg_image=meta_bg,
+                    copy_variant=variant_e,
+                    platform="meta",
+                    angle=angle_label_e,
+                    aspect=meta_aspect,
+                )
+                log.info(
+                    "_process_extra_platform_arm[meta]: 4:5 PNG ready %s "
+                    "(replacing LinkedIn 1:1 PNG for Drive + upload_image)",
+                    meta_png_path,
+                )
+                png_path_e = meta_png_path
+                spec["png_path"] = meta_png_path
+            except Exception as _exc:
+                log.warning(
+                    "_process_extra_platform_arm[meta]: 4:5 photo gen FAILED "
+                    "for cohort=%s geo=%s angle=%s — falling back to LinkedIn "
+                    "1:1 PNG: %s",
+                    str(base_id_e)[:12], cluster_suffix, angle_label_e, _exc,
+                )
+
         drive_url_e = ""
         if config.GDRIVE_ENABLED and png_path_e and Path(str(png_path_e)).exists():
             try:
@@ -3596,6 +3696,25 @@ def _process_row_both_modes(
             )
             modes = _override
 
+    # OUTLIER_CHANNELS env override (2026-05-20): comma-separated subset of
+    # {"linkedin","meta","google"}. Mirrors OUTLIER_ARMS but for the platform
+    # axis — lets a manual rerun create only Meta campaigns (no LinkedIn /
+    # Google touch). Used for GMR-0021's Meta-only end-to-end trigger.
+    # When set, overrides the `channels` arg (which normally comes from the
+    # console approval decision); the env var wins so a one-off CLI rerun
+    # doesn't need to fake a console decision.
+    _channels_env = (_os.environ.get("OUTLIER_CHANNELS") or "").strip()
+    if _channels_env:
+        _channels_override = [c.strip().lower() for c in _channels_env.split(",") if c.strip()]
+        _channels_override = [c for c in _channels_override if c in ("linkedin", "meta", "google")]
+        if _channels_override:
+            log.info(
+                "_process_row_both_modes: OUTLIER_CHANNELS env override active — "
+                "channels=%s (default was %s)",
+                _channels_override, channels,
+            )
+            channels = _channels_override
+
     # Phase 2 — per-ramp channel override (from console approval decision).
     # `channels` is a subset of {'linkedin','meta','google'}. Wins over both
     # the OUTLIER_ARMS env var and config.ENABLED_PLATFORMS for this row.
@@ -3620,6 +3739,38 @@ def _process_row_both_modes(
     destination_url_override = row.get("selected_lp_url")
     included_geos = row.get("included_geos", []) or []
     unique_id = row.get("unique_id", f"ROW_{row.get('sheet_row', 'UNKNOWN')}")
+
+    # 2026-05-20: Pay-rate resolution. Priority chain per user direction:
+    #   1. OUTLIER_BASE_RATE_USD env var (manual override for one-off runs)
+    #   2. Smart Ramp cohort form field — NOT YET PRESENT in CohortSpec schema
+    #   3. Snowflake VIEW.QUALIFICATION_PAY_RATES via SIGNUP_FLOW_ID — TODO
+    #   4. Pay-rates Google Sheet (cross-verify only, NOT a source of truth)
+    # When nothing resolves: base_rate_usd stays None and downstream callers
+    # (group_geos_for_campaigns, copy gen) ship rate-free copy. NEVER hardcode
+    # a $50 default — wrong rate in ads is a critical risk.
+    import os as _os
+    base_rate_usd: float | None = None
+    _env_rate = (_os.environ.get("OUTLIER_BASE_RATE_USD") or "").strip()
+    if _env_rate:
+        try:
+            base_rate_usd = float(_env_rate)
+            log.info(
+                "_process_row_both_modes: OUTLIER_BASE_RATE_USD env override → "
+                "base_rate_usd=$%.2f/hr",
+                base_rate_usd,
+            )
+        except ValueError:
+            log.warning(
+                "_process_row_both_modes: OUTLIER_BASE_RATE_USD=%r is not a valid "
+                "float — falling back to None (rate-free copy)",
+                _env_rate,
+            )
+    if base_rate_usd is None:
+        log.warning(
+            "_process_row_both_modes: base_rate_usd unresolved (OUTLIER_BASE_RATE_USD "
+            "unset, Smart Ramp has no rate field, Snowflake resolver not yet wired). "
+            "Copy gen will skip $/hr mentions."
+        )
 
     resolved = _resolve_cohorts(
         row,
@@ -3714,6 +3865,7 @@ def _process_row_both_modes(
                 naming_meta=naming_meta,
                 seen_keys=seen_inmail_keys,
                 daily_budget_cents=linkedin_budget_cents,
+                base_rate_usd=base_rate_usd,
             )
             return r if isinstance(r, dict) else {}
         except Exception:
@@ -3747,6 +3899,7 @@ def _process_row_both_modes(
                 naming_meta=naming_meta,
                 seen_keys=seen_static_keys,
                 daily_budget_cents=linkedin_budget_cents,
+                base_rate_usd=base_rate_usd,
             )
             return r if isinstance(r, dict) else {}
         except Exception:
