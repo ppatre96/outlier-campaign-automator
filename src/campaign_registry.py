@@ -84,6 +84,7 @@ COLUMNS = [
     "angle",                    # A / B / C / F
     "campaign_type",            # "static" | "inmail"
     "advertised_rate",          # e.g. "$50/hr"
+    "audience_size",            # LinkedIn audience estimate at (cohort × geo) — populated 2026-05-20 via per-geo audienceCounts recheck after _apply_geo_overrides
     # ── Ad platform identity ──────────────────────────────────────────────────
     "channel",                  # display alias for platform — "LinkedIn" | "Meta" | "Google"
     "platform",                 # internal lower-case key — "linkedin" | "meta" | "google"
@@ -131,6 +132,7 @@ class CampaignEntry:
     angle:                  str = ""
     campaign_type:          str = ""
     advertised_rate:        str = ""
+    audience_size:          int | None = None  # LinkedIn audience count at (cohort × geo) — None when recheck failed or unavailable
     channel:                str = "LinkedIn"   # mirrors platform, title-cased for the Sheet view
     platform:               str = "linkedin"
     campaign_name:          str = ""    # human-readable campaign name (matches platform UI exactly)
@@ -302,6 +304,7 @@ def log_campaign(
     platform_creative_id: str = "",
     campaign_name: str = "",
     cohort_geo: str = "",
+    audience_size: int | None = None,
 ) -> None:
     """Append one campaign row to the registry. Safe to call from any platform arm.
 
@@ -328,6 +331,7 @@ def log_campaign(
         angle=angle,
         campaign_type=campaign_type,
         advertised_rate=advertised_rate,
+        audience_size=audience_size,
         channel=_channel_label(platform),
         platform=platform,
         campaign_name=campaign_name,

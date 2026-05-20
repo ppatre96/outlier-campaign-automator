@@ -1374,6 +1374,25 @@ def _process_inmail_campaigns(
                 facet_urns = urn_res.resolve_cohort_rules(cohort.rules)
                 if group_geos:
                     facet_urns = _apply_geo_overrides(facet_urns, group_geos, urn_res)
+
+                # Per-geo audience recheck (2026-05-20). See matching block in
+                # _process_static_campaigns. InMail audience reach is gated by
+                # the same audienceCounts API; recording per (cohort × geo)
+                # lets the console flag sub-50k clusters for manual override.
+                geo_audience: int | None
+                try:
+                    geo_audience = li_client.get_audience_count(facet_urns)
+                    log.info(
+                        "Per-geo InMail audience: cohort=%s geo=%s → %d",
+                        cohort.name, geo_group.cluster_label, geo_audience,
+                    )
+                except Exception as _aud_exc:
+                    log.warning(
+                        "Per-geo InMail audience count failed for cohort=%s geo=%s: %s",
+                        cohort.name, geo_group.cluster_label, _aud_exc,
+                    )
+                    geo_audience = None
+
                 cohort_add_urns    = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_add", []) or [])
                 cohort_remove_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_remove", []) or [])
                 cohort_exclude_urns = _subtract_urn_dicts(
@@ -1474,6 +1493,7 @@ def _process_inmail_campaigns(
                         angle=angle_label,
                         campaign_type="inmail",
                         advertised_rate=geo_group.advertised_rate,
+                        audience_size=geo_audience,
                         linkedin_campaign_urn=campaign_urn,
                         creative_urn=creative_urn,
                         inmail_subject=variant.subject,
@@ -2857,6 +2877,26 @@ def _process_static_campaigns(
             if group_geos:
                 facet_urns = _apply_geo_overrides(facet_urns, group_geos, urn_res)
 
+            # Per-geo audience recheck (2026-05-20). Stage C's audience check
+            # used the cohort's facet URNs without geo intersection. A cohort
+            # that passes 50k globally may yield far less in a single-country
+            # cluster (e.g. brazilian). Recheck with the geo-applied facets so
+            # the registry captures the audience the campaign will actually be
+            # served to. None on failure — UI renders an amber/unknown badge.
+            geo_audience: int | None
+            try:
+                geo_audience = li_client.get_audience_count(facet_urns)
+                log.info(
+                    "Per-geo audience: cohort=%s geo=%s → %d",
+                    cohort.name, geo_label, geo_audience,
+                )
+            except Exception as _aud_exc:
+                log.warning(
+                    "Per-geo audience count failed for cohort=%s geo=%s: %s",
+                    cohort.name, geo_label, _aud_exc,
+                )
+                geo_audience = None
+
             # Smart Ramp v2 naming convention — see src/campaign_name.py.
             # Static path: one campaign per (cohort×geo) with 3 creatives, so
             # no angle suffix needed. Falls back to legacy form when naming_meta
@@ -2953,6 +2993,7 @@ def _process_static_campaigns(
                     angle=angle_label,
                     campaign_type="static",
                     advertised_rate=geo_group.advertised_rate,
+                    audience_size=geo_audience,
                     linkedin_campaign_urn=campaign_urn,
                     headline=variant.get("headline", ""),
                     subheadline=variant.get("subheadline", ""),
