@@ -1456,6 +1456,7 @@ def _process_inmail_campaigns(
                 fallback=destination_url_override or config.LINKEDIN_DESTINATION,
                 matched_domain=(naming_meta or {}).get("domain"),
                 sheets_client=sheets,
+                ramp_id=ramp_id,
             )
 
             # Attach one InMail ad per (valid) angle to the same campaign.
@@ -3026,6 +3027,7 @@ def _process_static_campaigns(
                 fallback=destination_url_override or config.LINKEDIN_DESTINATION,
                 matched_domain=(naming_meta or {}).get("domain"),
                 sheets_client=sheets,
+                ramp_id=ramp_id,
             )
             utm_url = build_utm_url(
                 base_url=base_lp, platform="linkedin",
@@ -3567,6 +3569,7 @@ def _process_extra_platform_arm(
                         fallback=destination_url_override or config.LINKEDIN_DESTINATION,
                         matched_domain=(naming_meta or {}).get("domain"),
                         sheets_client=sheets,
+                        ramp_id=ramp_id,
                     )
                     utm_url = build_utm_url(
                         base_url=base_lp, platform=platform,

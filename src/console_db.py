@@ -96,6 +96,38 @@ def classify_violation(violation: str) -> str:
     return "other"
 
 
+def get_lp_url_override(ramp_id: str, platform: str) -> str:
+    """Return the reviewer-set LP URL override for (ramp_id × platform),
+    or "" when no override exists. Read by utm_builder.resolve_base_lp_url
+    BEFORE the Smart Ramp campaign_state lookup so reviewer intent wins.
+
+    Never raises — connection errors / missing table return "".
+    """
+    db_url = os.environ.get("DATABASE_URL", "")
+    if not db_url or not ramp_id or not platform:
+        return ""
+    try:
+        import psycopg
+    except ImportError:
+        return ""
+    try:
+        with psycopg.connect(db_url, connect_timeout=10) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT url FROM lp_url_overrides "
+                    "WHERE ramp_id = %s AND platform = %s",
+                    (ramp_id, platform.lower()),
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    log.info("Using lp_url override for ramp=%s platform=%s", ramp_id, platform)
+                    return str(row[0])
+                return ""
+    except Exception as exc:
+        log.debug("lp_url_overrides read failed (ramp=%s): %s", ramp_id, exc)
+        return ""
+
+
 def filter_violations_by_overrides(
     violations: Iterable[str], skip_rules: set[str]
 ) -> list[str]:

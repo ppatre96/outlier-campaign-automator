@@ -115,10 +115,14 @@ def resolve_base_lp_url(
     fallback: str,
     matched_domain: Optional[str] = None,
     sheets_client=None,
+    ramp_id: Optional[str] = None,
 ) -> str:
     """Pull the per-cohort landing page URL.
 
     Resolution order:
+      0. Postgres `lp_url_overrides` — reviewer-set override via the console's
+         Landing-page URLs section. Per-ramp ONLY (ramp_id × platform). When
+         set, wins over every other path. Skipped when ramp_id is None.
       1. `campaign_state.utm_<channel>.<base_url|url|...>` — when the marketing
          team fills this in via Smart Ramp.
       2. `matched_domain` → slug via `config.LP_URL_BY_DOMAIN`, then slug →
@@ -134,6 +138,16 @@ def resolve_base_lp_url(
     don't construct a SheetsClient), the sheet-lookup leg of path 2 is skipped
     and only `LP_URL_BY_DOMAIN` full-URL values resolve.
     """
+    # 0) Console-side per-ramp override — reviewer wins everything.
+    if ramp_id:
+        try:
+            from src.console_db import get_lp_url_override
+            ov = get_lp_url_override(ramp_id, platform)
+            if ov:
+                return ov
+        except Exception as exc:
+            log.debug("lp_url override read failed (ramp=%s): %s", ramp_id, exc)
+
     # 1) Smart Ramp campaign_state — preferred when filled
     if isinstance(campaign_state, dict):
         channel_key = "utm_joveo" if platform == "google" else f"utm_{platform}"
