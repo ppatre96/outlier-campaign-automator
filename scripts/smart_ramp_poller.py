@@ -543,9 +543,10 @@ def _regen_failed_creatives(ramp_id: str, *, dry_run: bool = False) -> int:
         log.error("Registry not found at %s", reg_path)
         return 1
     records = json.loads(reg_path.read_text())
-    # Regen v2 supports LinkedIn + Meta. Google needs separate handling for
-    # the 1:1 + 1.91:1 RDA variant pair — tracked as a follow-up.
-    supported_platforms = {"linkedin", "meta"}
+    # v3: LinkedIn + Meta + Google all supported. Google reuses the QC'd 1:1
+    # PNG and lets google_ads_api.create_image_ad auto-generate the 1.91:1
+    # pillarboxed variant via the local_png_path passthrough.
+    supported_platforms = {"linkedin", "meta", "google"}
     failed = [
         r for r in records
         if r.get("smart_ramp_id") == ramp_id
@@ -554,16 +555,9 @@ def _regen_failed_creatives(ramp_id: str, *, dry_run: bool = False) -> int:
         and (r.get("angle") or r.get("geo_cluster_label"))
         and (r.get("platform") or "").lower() in supported_platforms
     ]
-    skipped_google = sum(
-        1 for r in records
-        if r.get("smart_ramp_id") == ramp_id
-        and not r.get("creative_image_path")
-        and (r.get("platform") or "").lower() == "google"
-    )
-    log.info("Failed rows for %s: %d (linkedin/meta) + %d google (skipped — v3)",
-             ramp_id, len(failed), skipped_google)
+    log.info("Failed rows for %s: %d (linkedin + meta + google)", ramp_id, len(failed))
     if not failed:
-        log.info("Nothing to regen — every LinkedIn/Meta row has a creative.")
+        log.info("Nothing to regen — every supported-platform row has a creative.")
         return 0
 
     if dry_run:
@@ -579,6 +573,7 @@ def _regen_failed_creatives(ramp_id: str, *, dry_run: bool = False) -> int:
 
     li_client: LinkedInClient | None = None  # lazy-init on first need
     meta_client = None  # lazy-init on first Meta row
+    google_client = None  # lazy-init on first Google row
 
     succeeded = 0
     failed_again = 0
@@ -721,6 +716,28 @@ def _regen_failed_creatives(ramp_id: str, *, dry_run: bool = False) -> int:
                     primary_text=meta_copy.get("primary_text"),
                     cta=meta_copy.get("cta"),
                     destination_url=None,
+                )
+                creative_id = ad_result.creative_id or "" if ad_result.status == "ok" else ""
+            elif platform == "google":
+                if google_client is None:
+                    from src.google_ads_api import GoogleAdsClient
+                    google_client = GoogleAdsClient()
+                from src.copy_adapter import adapt_copy_for_platform
+                google_copy = adapt_copy_for_platform(variant, "google")
+                # Google RDA wants the 1:1 square; create_image_ad auto-builds
+                # the 1.91:1 pillarboxed variant from local_png_path. Pass the
+                # QC'd 1:1 we already have.
+                image_id = google_client.upload_image(png_path)
+                ad_result = google_client.create_image_ad(
+                    campaign_id=campaign_id,
+                    image_id=image_id,
+                    headline=(google_copy.get("headlines") or [variant["headline"]])[0],
+                    description=(google_copy.get("descriptions") or [variant["subheadline"]])[0],
+                    destination_url=None,
+                    headlines=google_copy.get("headlines") or [variant["headline"]],
+                    long_headline=google_copy.get("long_headline") or variant["headline"],
+                    descriptions=google_copy.get("descriptions") or [variant["subheadline"]],
+                    local_png_path=str(png_path),  # auto-generates 1.91:1 variant
                 )
                 creative_id = ad_result.creative_id or "" if ad_result.status == "ok" else ""
         except Exception as exc:
