@@ -284,6 +284,12 @@ class MetaClient(AdPlatformClient):
 
     # ── Reach estimation (pre-campaign audience check) ──────────────────────
 
+    # Meta blocks delivery_estimate calls that include any sanctioned country
+    # (returns 400 #2641 with "remove affected locations"). Strip these from
+    # geo_locations.countries before calling — keeps the rest of the geos and
+    # gets a valid estimate. Sanctioned set from Meta docs (Oct 2025).
+    _META_RESTRICTED_COUNTRIES = {"CU", "IR", "KP", "RU", "SD", "SY"}
+
     def get_reach_estimate(
         self,
         targeting: dict[str, Any],
@@ -306,12 +312,25 @@ class MetaClient(AdPlatformClient):
 
             from facebook_business.adobjects.adaccount import AdAccount
 
+            # Strip sanctioned countries — Meta returns 400 #2641 otherwise.
+            safe_targeting = dict(targeting)
+            geo = (safe_targeting.get("geo_locations") or {}).copy()
+            countries = [c for c in (geo.get("countries") or [])
+                         if c.upper() not in self._META_RESTRICTED_COUNTRIES]
+            if countries != (geo.get("countries") or []):
+                log.debug(
+                    "Meta delivery_estimate: dropped %d restricted countries",
+                    len((geo.get("countries") or [])) - len(countries),
+                )
+            geo["countries"] = countries
+            safe_targeting["geo_locations"] = geo
+
             account = AdAccount(self._ad_account_id)
             # delivery_estimate is exposed as a connection on AdAccount; the
             # SDK paginates it but a single call returns the estimate row.
             estimates = account.get_delivery_estimate(
                 params={
-                    "targeting_spec": _json.dumps(targeting),
+                    "targeting_spec": _json.dumps(safe_targeting),
                     "optimization_goal": optimization_goal,
                 }
             )
