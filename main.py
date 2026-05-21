@@ -622,7 +622,10 @@ def _process_row(
             # in src/figma_creative.py. v1 _process_row doesn't have included_geos
             # in scope, so falls back to None (LLM picks global mix). The Phase 2.6
             # path (_process_static_campaigns) DOES pass it through — see line ~1910.
-            variants = build_copy_variants(cohort, layer_map, geos=None)
+            variants = build_copy_variants(
+                cohort, layer_map, geos=None,
+                icp=getattr(cohort, "_icp", None),
+            )
         except Exception as exc:
             log.warning("Copy generation failed for '%s': %s", cohort.name, exc)
 
@@ -2667,6 +2670,7 @@ def _process_static_campaigns(
                 description_hint=cohort_description,
                 hourly_rate=geo_group.advertised_rate,
                 geo_icp_hint=geo_group.icp_hint,
+                icp=getattr(cohort, "_icp", None),
             )
             # Phase 5 — persist per-angle rationale so the console can render
             # "Angles we'd test" above the timeline. Best-effort: failures
@@ -3333,7 +3337,7 @@ def _process_extra_platform_arm(
                 )
         drive_urls_by_spec[spec_key] = drive_url_e
 
-        platform_copy_e = adapt_copy_for_platform(variant_e, platform) if variant_e else {}
+        platform_copy_e = adapt_copy_for_platform(variant_e, platform, icp=getattr(cohort_e, "_icp", None)) if variant_e else {}
         handoff_entries.append({
             "cohort_name":      getattr(cohort_e, "name", ""),
             "cohort_stg_id":    getattr(cohort_e, "_stg_id", ""),
@@ -3661,7 +3665,7 @@ def _process_extra_platform_arm(
             variant     = variants[angle_idx] if angle_idx < len(variants) else {}
             row_id = f"{by_cohort_key}_{angle_label}"
 
-            platform_copy = adapt_copy_for_platform(variant, platform) if variant else {}
+            platform_copy = adapt_copy_for_platform(variant, platform, icp=getattr(cohort, "_icp", None)) if variant else {}
 
             # Drive URL was uploaded in Phase 1; reuse the cached URL to avoid
             # a duplicate Drive write (idempotent at the filename level — the

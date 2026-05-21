@@ -276,6 +276,7 @@ def build_copy_variants(
     description_hint: str = "",
     hourly_rate: str = "",
     geo_icp_hint: str = "",
+    icp = None,
 ) -> list[dict]:
     """
     Generate 3 A/B/C copy variants fully derived from cohort signals — no fixed TG categories.
@@ -365,6 +366,57 @@ def build_copy_variants(
     if geo_icp_hint:
         prompt += geo_icp_hint
         log.info("Copy gen injecting geo ICP hint (%d chars)", len(geo_icp_hint))
+
+    # ── Cohort ICP injection ────────────────────────────────────────────────
+    # Pulled from cohort_icp (Postgres) via icp_enrichment.enrich(). When
+    # present, anchors the LLM on the audience's actual motivations + content
+    # preferences + creative-liberty tone instead of letting it default to a
+    # generic LinkedIn-shaped angle. Falls back silently when icp is None
+    # (older ramps that predate cohort_icp persistence).
+    icp_obj = icp if icp is not None else getattr(cohort, "_icp", None)
+    if icp_obj is not None:
+        # Accept either the dataclass or a dict — be lenient on shape.
+        def _icp_get(key: str, default=""):
+            if isinstance(icp_obj, dict):
+                return icp_obj.get(key, default)
+            return getattr(icp_obj, key, default)
+
+        cohort_desc = _icp_get("cohort_description", "")
+        motivations = _icp_get("top_motivations", []) or []
+        content_prefs = _icp_get("content_prefs", []) or []
+        liberty = _icp_get("creative_liberty", "medium") or "medium"
+        lang = _icp_get("language_pref", "") or ""
+        decision_drivers = _icp_get("decision_drivers", []) or []
+        skill_priorities = _icp_get("skill_priorities", []) or []
+
+        if any([cohort_desc, motivations, content_prefs, decision_drivers]):
+            prompt += (
+                "\n\n## COHORT ICP (Ideal Customer Profile) — calibrate every variant against this\n"
+                f"- Who they are: {cohort_desc or '(not provided)'}\n"
+                f"- Top motivations: {', '.join(motivations) or '(not provided)'}\n"
+                f"- Content preferences: {', '.join(content_prefs) or '(not provided)'}\n"
+                f"- Decision drivers (what tips interest → apply): {', '.join(decision_drivers) or '(not provided)'}\n"
+                f"- Skill priorities (drives photo_subject + headline specificity): {', '.join(skill_priorities) or '(not provided)'}\n"
+                f"- Creative liberty: {liberty} — see tone rule below\n"
+                f"- Language preference: {lang or '(not provided)'}\n"
+                "\n### How to use this ICP\n"
+                "1. Anchor Variant A's headline on the TOP motivation (don't list all of them).\n"
+                "2. Echo a `content_prefs` format choice. e.g., if 'case studies' is listed, "
+                "drop a peer-specific stat; if 'before/after' is listed, frame the headline as a transformation.\n"
+                "3. Make Variant B's social-proof / earnings claim land against a `decision_drivers` item.\n"
+                "4. Tone calibration by `creative_liberty`:\n"
+                "   - `high` → bold, witty, irreverent OK. Lean into specific scenes; can use playful framing.\n"
+                "   - `medium` → clear value + credible brand. Earnest, specific, no jokes.\n"
+                "   - `low` → corporate-safe, benefits-forward. No humor. No challenger framing. Lead with legitimacy + steady payment.\n"
+                "5. The photo_subject must visibly match a `skill_priorities` item — not a generic role.\n"
+                "6. If `language_pref` is something other than en-US, account for it: pick photo_subject ethnicity + framing that resonates in that locale.\n"
+            )
+            log.info(
+                "Copy gen ICP-aware: liberty=%s lang=%s motivations=%d content_prefs=%d drivers=%d skills=%d",
+                liberty, lang or "?", len(motivations), len(content_prefs),
+                len(decision_drivers), len(skill_priorities),
+            )
+
     if competitor_context:
         prompt += competitor_context
 

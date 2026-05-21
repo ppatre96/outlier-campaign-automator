@@ -58,9 +58,46 @@ RESTRICTED VOCABULARY (BANNED — never use):
 # ── Public API ───────────────────────────────────────────────────────────────
 
 
+def _icp_block(icp) -> str:
+    """
+    Build a short ICP context block to inject into platform-specific copy
+    rewrites. Returns "" when icp is falsy. Mirrors the longer block in
+    figma_creative.build_copy_variants but trimmed because the adapter LLM
+    is doing a constrained rewrite, not generating from scratch.
+    """
+    if not icp:
+        return ""
+
+    def _g(key: str, default=""):
+        if isinstance(icp, dict):
+            return icp.get(key, default)
+        return getattr(icp, key, default)
+
+    cohort_desc = _g("cohort_description", "")
+    motivations = _g("top_motivations", []) or []
+    liberty = _g("creative_liberty", "medium") or "medium"
+    lang = _g("language_pref", "") or ""
+    drivers = _g("decision_drivers", []) or []
+    if not any([cohort_desc, motivations, drivers]):
+        return ""
+    return (
+        "\nCOHORT ICP — preserve this when rewriting:\n"
+        f"- Audience: {cohort_desc or '(unknown)'}\n"
+        f"- Top motivations: {', '.join(motivations) or '(none)'}\n"
+        f"- Decision drivers: {', '.join(drivers) or '(none)'}\n"
+        f"- Creative liberty: {liberty} "
+        "(high=bold/witty allowed; medium=clear+credible; low=corporate-safe, no humor)\n"
+        f"- Language: {lang or '(default en-US)'}\n"
+        "Keep the rewrite faithful to the canonical copy's angle but recalibrate "
+        "tone + emphasis against the ICP above.\n"
+    )
+
+
 def adapt_copy_for_platform(
     variant: dict,
     platform: str,
+    *,
+    icp = None,
 ) -> dict:
     """Return a platform-shaped copy dict ready for that platform's
     `create_image_ad()` call.
@@ -98,16 +135,16 @@ def adapt_copy_for_platform(
 
     constraints = get_constraints(platform)
     if platform == "meta":
-        return _adapt_for_meta(variant, constraints)
+        return _adapt_for_meta(variant, constraints, icp=icp)
     if platform == "google":
-        return _adapt_for_google(variant, constraints)
+        return _adapt_for_google(variant, constraints, icp=icp)
     raise ValueError(f"adapt_copy_for_platform: unknown platform {platform!r}")
 
 
 # ── Meta ─────────────────────────────────────────────────────────────────────
 
 
-def _adapt_for_meta(variant: dict, c: PlatformConstraints) -> dict:
+def _adapt_for_meta(variant: dict, c: PlatformConstraints, *, icp = None) -> dict:
     """LLM-rewrite the canonical variant into Meta's headline + primary_text +
     description fields. Falls back to deterministic truncation on LLM failure."""
     headline_in    = (variant.get("headline") or "").strip()
@@ -134,7 +171,7 @@ CANONICAL COPY (rewrite preserving angle + specificity):
 - intro_text:     {intro_in!r}
 - ad_headline:    {ad_headline_in!r}
 - ad_description: {ad_desc_in!r}
-
+{_icp_block(icp)}
 Return ONLY this JSON shape:
 {{"headline": "...", "primary_text": "...", "description": "...", "cta": "..."}}
 """
@@ -169,7 +206,7 @@ Return ONLY this JSON shape:
 # ── Google ───────────────────────────────────────────────────────────────────
 
 
-def _adapt_for_google(variant: dict, c: PlatformConstraints) -> dict:
+def _adapt_for_google(variant: dict, c: PlatformConstraints, *, icp = None) -> dict:
     """LLM-rewrite the canonical variant into Google RDA (Responsive Display
     Ads) fields: 3 short headlines, 1 long headline, 3 descriptions."""
     headline_in    = (variant.get("headline") or "").strip()
@@ -201,7 +238,7 @@ CANONICAL COPY (rewrite preserving angle + specificity):
 - intro_text:     {intro_in!r}
 - ad_headline:    {ad_headline_in!r}
 - ad_description: {ad_desc_in!r}
-
+{_icp_block(icp)}
 Return ONLY this JSON shape:
 {{"headlines": ["...", "...", "..."], "long_headline": "...", "descriptions": ["...", "...", "..."]}}
 """
