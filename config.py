@@ -246,6 +246,14 @@ MAX_CAMPAIGNS               = int(os.getenv("MAX_CAMPAIGNS", 5))
 # Feedback agent surfaces winners/losers; losers get deprecated and replaced.
 MAX_COHORTS_PER_GEO_CLUSTER = int(os.getenv("MAX_COHORTS_PER_GEO_CLUSTER", 3))
 ANGLES_PER_COHORT           = int(os.getenv("ANGLES_PER_COHORT", 3))
+# Cap on natural geo clusters formed by group_geos_for_campaigns. Without this,
+# a ramp with many countries (GMR-0021 had 211 geos → 12 clusters) spawns
+# MAX_COHORTS × ANGLES × N_clusters campaigns per channel — 108+ for that ramp's
+# Meta arm. Default 3 enforces the experimentation cap (3 cohorts × 3 angles
+# × 3 geo clusters = 27 campaigns per channel, matching MAX_COHORTS/ANGLES).
+# Was an opt-in env-only flag pre-2026-05-22; surfacing the default here so
+# new ramps automatically inherit the cap. Set to 0 to disable the cap.
+MAX_GEO_CLUSTERS            = int(os.getenv("MAX_GEO_CLUSTERS", 3))
 # Phase 3.1 — image-gen concurrency. Each (cohort × geo × angle) Gemini call
 # is independent; running them in a thread pool collapses ~27 sequential
 # calls (~40 min worst case with QC reroll) to ~10 min at workers=4.

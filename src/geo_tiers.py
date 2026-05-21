@@ -611,23 +611,22 @@ def group_geos_for_campaigns(
     # Sort by cluster size descending (largest audience first)
     groups.sort(key=lambda g: len(g.geos), reverse=True)
 
-    # Optional cap — MAX_GEO_CLUSTERS env var (0 / unset = unlimited). Used
-    # for manual / one-off pipeline runs that want to limit blast radius.
-    # The cron path leaves it unset so behaviour is unchanged for scheduled
-    # ramps. Added 2026-05-20 for GMR-0021 (211 geos → 12 clusters → capped
-    # to 3 for the manual Meta-arm trigger).
-    import os as _os
-    _cap_raw = _os.getenv("MAX_GEO_CLUSTERS", "").strip()
-    if _cap_raw.isdigit():
-        _cap = int(_cap_raw)
-        if 0 < _cap < len(groups):
-            log.warning(
-                "MAX_GEO_CLUSTERS=%d → trimming %d clusters down to top %d "
-                "(by geo count): %s",
-                _cap, len(groups), _cap,
-                [g.cluster for g in groups[:_cap]],
-            )
-            groups = groups[:_cap]
+    # Cap natural clusters to config.MAX_GEO_CLUSTERS (default 3 per Pranav
+    # rule 2026-05-22). Pre-2026-05-22 this read MAX_GEO_CLUSTERS straight
+    # from env with no default — GMR-0021's Meta arm spawned 71 campaigns
+    # because 12 natural clusters survived. Default is now 3 so the
+    # experimentation cap is enforced automatically (3 cohorts × 3 angles
+    # × 3 geo clusters = 27 per channel). Set MAX_GEO_CLUSTERS=0 to disable.
+    import config as _config
+    _cap = int(getattr(_config, "MAX_GEO_CLUSTERS", 0) or 0)
+    if 0 < _cap < len(groups):
+        log.warning(
+            "MAX_GEO_CLUSTERS=%d → trimming %d clusters down to top %d "
+            "(by geo count): %s",
+            _cap, len(groups), _cap,
+            [g.cluster for g in groups[:_cap]],
+        )
+        groups = groups[:_cap]
 
     log.info(
         "geo_tiers: %d allowed geos → %d campaign groups (%d G4 skipped)",
