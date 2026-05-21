@@ -125,6 +125,19 @@ COLUMNS = [
     "qc_verdict",               # PASS | FAIL | "" — final QC verdict for this angle's creative
     "qc_attempts",              # int — gen attempts before final verdict
     "qc_violations",            # JSON list of violation strings — empty unless verdict=FAIL. Powers failure-analysis UI + per-rule skip overrides.
+    # ── 2026-05-21 additions (APPEND ONLY) ───────────────────────────────────
+    # Per-platform audience estimates from each channel's reach API. LinkedIn's
+    # estimate stays in the existing `audience_size` column (back-compat); Meta
+    # + Google get their own columns since estimate semantics differ per API.
+    # Powers the per-channel AudienceBadge in the console.
+    "meta_audience_size",
+    "google_audience_size",
+    "audience_check_status",    # "pass" | "denarrowed" | "below_floor" | "skipped" — outcome of audience_check.denarrow_for_platform
+    # Funnel metrics joined nightly from Snowflake by feedback agent — null
+    # until that join lands. Powers per-campaign cost-per-activation +
+    # cost-per-worker-skill columns in the console's drilldown.
+    "activations",              # count of contributors who completed onboarding for this campaign
+    "skill_passes",             # count of contributors who passed at least one skill screen via this campaign
 ]
 
 
@@ -162,6 +175,11 @@ class CampaignEntry:
     qc_verdict:             str = ""           # "PASS" | "FAIL" | "" when QC didn't run
     qc_attempts:            int | None = None  # gen attempts before final verdict
     qc_violations:          str = ""           # JSON-encoded list of violation strings
+    meta_audience_size:     int | None = None  # Meta delivery_estimate midpoint at (cohort × geo)
+    google_audience_size:   int | None = None  # Google audience-segment size sum at (cohort × geo)
+    audience_check_status:  str = ""           # pass | denarrowed | below_floor | skipped
+    activations:            int | None = None  # filled nightly from Snowflake
+    skill_passes:           int | None = None  # filled nightly from Snowflake
     # metrics — empty until feedback agent runs
     impressions:            int | None = None
     clicks:                 int | None = None
@@ -318,6 +336,9 @@ def log_campaign(
     qc_verdict: str = "",
     qc_attempts: int | None = None,
     qc_violations: list[str] | None = None,
+    meta_audience_size: int | None = None,
+    google_audience_size: int | None = None,
+    audience_check_status: str = "",
 ) -> None:
     """Append one campaign row to the registry. Safe to call from any platform arm.
 
@@ -345,6 +366,9 @@ def log_campaign(
         campaign_type=campaign_type,
         advertised_rate=advertised_rate,
         audience_size=audience_size,
+        meta_audience_size=meta_audience_size,
+        google_audience_size=google_audience_size,
+        audience_check_status=audience_check_status,
         channel=_channel_label(platform),
         platform=platform,
         campaign_name=campaign_name,

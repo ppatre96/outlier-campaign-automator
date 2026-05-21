@@ -103,6 +103,65 @@ _BANNED_PHRASES = [
 ]
 
 
+# ── Rule-name registry ────────────────────────────────────────────────────────
+# Every violation string the pipeline emits should map to a stable rule_name
+# here. The console (`failure-analysis.tsx`) groups violations by rule_name and
+# lets reviewers toggle a "skip this rule" override per (ramp_id, rule_name).
+# Free-text strings that don't map fall to "other" and show as "Uncategorized"
+# in the UI — keep this in sync with new emit sites.
+#
+# Order matters: patterns earlier in the list win. Mirrors the regex list in
+# outlier-campaign-console/app/ramps/[id]/sections/failure-analysis.tsx so the
+# two sides classify violations identically.
+_RULE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"headline.*words", re.I),         "headline_word_count"),
+    (re.compile(r"headline.*chars", re.I),         "headline_char_count"),
+    (re.compile(r"headline.*wraps?", re.I),        "headline_line_wrap"),
+    (re.compile(r"subheadline.*words", re.I),      "subheadline_word_count"),
+    (re.compile(r"subheadline.*chars", re.I),      "subheadline_char_count"),
+    (re.compile(r"subheadline.*wraps?", re.I),     "subheadline_line_wrap"),
+    (re.compile(r"intro_text.*chars", re.I),       "intro_text_char_count"),
+    (re.compile(r"ad_headline.*chars", re.I),      "ad_headline_char_count"),
+    (re.compile(r"ad_description.*chars", re.I),   "ad_description_char_count"),
+    (re.compile(r"brand.?voice|banned|hashtag|em dash|all caps", re.I), "brand_voice"),
+    (re.compile(r"cta_button|cta_label", re.I),    "cta_enum"),
+    (re.compile(r"rendered.text|text.in.photo|words.*image|letters.*image|visible_text", re.I), "image_text"),
+    (re.compile(r"duplicate.?logo|second outlier", re.I), "image_duplicate_logo"),
+    (re.compile(r"matches_reference|mimic|reference.person", re.I), "image_mimicry"),
+    (re.compile(r"headroom|crop|gap|fills.frame|photo.fills", re.I), "image_layout"),
+    (re.compile(r"contrast|overlap|text.zone", re.I), "image_contrast"),
+    (re.compile(r"logo.correct|logo.shape|logo renders|outlier wordmark", re.I), "image_logo_shape"),
+    (re.compile(r"subject.looks|subject.differs|subject.authentic|authentic|ai-generated|uncanny", re.I), "image_subject"),
+    (re.compile(r"professional.quality|amateur|magazine.quality", re.I), "image_quality"),
+    # InMail-specific
+    (re.compile(r"subject is .* chars", re.I),     "inmail_subject_length"),
+    (re.compile(r"body is .* chars|body is .* words", re.I), "inmail_body_length"),
+    (re.compile(r"body contains bullet|markdown headers", re.I), "inmail_body_format"),
+    # QC infrastructure (vision call / response failures)
+    (re.compile(r"vision call failed|qc.infrastructure", re.I), "qc_infrastructure"),
+    (re.compile(r"vision response malformed|missing check keys", re.I), "qc_response_malformed"),
+]
+
+
+def classify_violation(violation: str) -> str:
+    """
+    Map a free-text violation string to a stable rule_name.
+
+    Used by:
+      - `QCReport.to_dict()` to attach rule_names alongside the violation strings
+        so the console can group failures without regex matching.
+      - the console's failure-analysis card (mirrored regex list — keep in sync).
+
+    Returns "other" when nothing matches. New emission sites should EITHER
+    extend `_RULE_PATTERNS` here AND the mirror in the console, OR phrase the
+    new violation so it matches an existing pattern.
+    """
+    for pat, name in _RULE_PATTERNS:
+        if pat.search(violation):
+            return name
+    return "other"
+
+
 def scan_brand_voice(text: str, field_name: str = "field") -> list[str]:
     """
     Scan a copy field for banned vocabulary and phrases. Returns a list of
@@ -174,11 +233,23 @@ class QCReport:
             "verdict": self.verdict,
             "checks": self.checks,
             "violations": self.violations,
+            "violations_structured": self.violations_structured(),
             "retry_instruction": self.retry_instruction,
             "retry_target": self.retry_target,
             "copy_violations": self.copy_violations,
             "feedback_crop_paths": [str(p) for p in self.feedback_crop_paths],
         }
+
+    def violations_structured(self) -> list[dict]:
+        """
+        Same content as `violations` but each entry is `{rule_name, message}`.
+        Consumers that want stable categorization (e.g. the console's failure
+        analysis card) should read this and ignore the free-text list.
+        """
+        return [
+            {"rule_name": classify_violation(v), "message": v}
+            for v in self.violations
+        ]
 
 
 def _count_rendered_lines(text: str, font_size_frac: float, canvas_size: int = 1200, bold: bool = False) -> int:

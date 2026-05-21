@@ -282,6 +282,53 @@ class MetaClient(AdPlatformClient):
 
     # ── Image upload ─────────────────────────────────────────────────────────
 
+    # ── Reach estimation (pre-campaign audience check) ──────────────────────
+
+    def get_reach_estimate(
+        self,
+        targeting: dict[str, Any],
+        *,
+        optimization_goal: str = "REACH",
+    ) -> Optional[int]:
+        """Return a Meta-reported audience estimate for the given targeting spec.
+
+        Calls `/act_{id}/delivery_estimate` which Meta exposes for the active
+        ad account. Returns the midpoint of the (lower_bound, upper_bound)
+        range, or None on any failure — None signals to `audience_check` that
+        the gate should be skipped rather than blocking campaign creation.
+
+        `optimization_goal` matches the campaign's objective; REACH is the
+        broadest estimate and what Stage C-equivalents typically want.
+        """
+        self._ensure_init()
+        try:
+            import json as _json
+
+            from facebook_business.adobjects.adaccount import AdAccount
+
+            account = AdAccount(self._ad_account_id)
+            # delivery_estimate is exposed as a connection on AdAccount; the
+            # SDK paginates it but a single call returns the estimate row.
+            estimates = account.get_delivery_estimate(
+                params={
+                    "targeting_spec": _json.dumps(targeting),
+                    "optimization_goal": optimization_goal,
+                }
+            )
+            row = next(iter(estimates), None)
+            if not row:
+                return None
+            # SDK returns AbstractObject — coerce to dict and pull bounds.
+            row_dict = dict(row)
+            lo = int(row_dict.get("estimate_mau_lower_bound") or row_dict.get("users_lower_bound") or 0)
+            hi = int(row_dict.get("estimate_mau_upper_bound") or row_dict.get("users_upper_bound") or 0)
+            if lo == 0 and hi == 0:
+                return None
+            return (lo + hi) // 2
+        except Exception as exc:
+            log.warning("Meta delivery_estimate failed: %s — skipping audience gate", exc)
+            return None
+
     def upload_image(self, image_path: str | Path) -> str:
         """Upload a PNG; return the image_hash that AdCreative.link_data references."""
         self._ensure_init()

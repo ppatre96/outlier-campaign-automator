@@ -2315,6 +2315,57 @@ def _resolve_cohorts(
             cohort._facet = facet
             cohort._criteria = criteria
 
+    # ── ICP enrichment (LLM step) ────────────────────────────────────────────
+    # For each selected cohort, derive a structured ICP (motivations, content
+    # prefs, creative_liberty, decision_drivers) from the cohort rules + a
+    # resume sample matching those rules. Persisted to Postgres `cohort_icp`
+    # so the brief agent + console can consume it. Best-effort: any failure
+    # logs and continues — never blocks cohort selection.
+    ramp_id_for_icp = (row or {}).get("ramp_id") or ""
+    if ramp_id_for_icp and selected:
+        try:
+            from src.icp_enrichment import enrich as enrich_icp
+            from src.ui_decisions import upsert_cohort_icp
+            for cohort in selected:
+                # Sample df_bin rows matching this cohort's rules. df_bin has
+                # one column per (feature__value) pair set to True/False; the
+                # rules list is the same shape so filtering is a row-wise AND.
+                mask = None
+                for feat, val in (getattr(cohort, "rules", []) or []):
+                    if feat in df_bin.columns:
+                        col_mask = df_bin[feat].fillna(False).astype(bool) == bool(val)
+                        mask = col_mask if mask is None else (mask & col_mask)
+                sample_rows: list[dict] = []
+                if mask is not None and "user_id" in df_bin.columns:
+                    matched_ids = df_bin.loc[mask, "user_id"].dropna().astype(str).tolist()[:10]
+                    if matched_ids and hasattr(snowflake, "fetch_resume_summary"):
+                        try:
+                            sample_df = snowflake.fetch_resume_summary(matched_ids)
+                            if sample_df is not None and not sample_df.empty:
+                                sample_rows = sample_df.to_dict(orient="records")
+                        except Exception as exc:
+                            log.debug("ICP resume sample fetch failed: %s", exc)
+                locale_hint = None
+                if location:
+                    locale_hint = f"en-{location.upper()[:2]}" if len(location) >= 2 else None
+                icp = enrich_icp(cohort, resume_sample=sample_rows, locale_hint=locale_hint)
+                cohort._icp = icp  # stash on the cohort for downstream consumers (brief agent)
+                upsert_cohort_icp(
+                    ramp_id=ramp_id_for_icp,
+                    cohort_id=getattr(cohort, "_stg_id", "") or "",
+                    cohort_signature=getattr(cohort, "name", "") or "",
+                    icp_dict=icp.to_dict(),
+                )
+                log.info(
+                    "_resolve_cohorts: ICP persisted ramp=%s cohort=%s liberty=%s lang=%s motivations=%d",
+                    ramp_id_for_icp,
+                    getattr(cohort, "name", "?"),
+                    icp.creative_liberty, icp.language_pref,
+                    len(icp.top_motivations),
+                )
+        except Exception as exc:
+            log.warning("_resolve_cohorts: ICP enrichment block failed (non-fatal): %s", exc)
+
     group_name = f"Outlier {flow_id} {location}".strip()
     return ResolvedCohorts(
         selected=list(selected),
@@ -3490,6 +3541,93 @@ def _process_extra_platform_arm(
                 if extras:
                     campaign_name = f"{campaign_name} | {extras}"
             targeting = resolver.resolve_cohort(cohort, geos=group_geos)
+
+            # ── Pre-campaign audience check (parity with LinkedIn Stage C). ─
+            # Same 50k floor; same de-narrow loop. On below_floor we skip THIS
+            # (cohort × geo) for THIS platform only — other platforms run
+            # independently. On skipped (API failure / unsupported account)
+            # we ship without gating, with a null audience_size in the sheet.
+            from src.audience_check import denarrow_for_platform
+
+            def _meta_drop_rule(t: dict) -> dict | None:
+                flex = (t.get("flexible_spec") or [])
+                if flex:
+                    head = flex[0] or {}
+                    interests = (head.get("interests") or [])[:]
+                    if interests:
+                        interests.pop()
+                        new_head = {**head, "interests": interests}
+                        # Empty interests block — remove it altogether
+                        new_flex = ([new_head] if interests else []) + flex[1:]
+                        return {**t, "flexible_spec": new_flex}
+                # No interests left to drop — try removing an age band
+                if t.get("age_min") and t.get("age_max"):
+                    new_t = dict(t)
+                    new_t.pop("age_min", None)
+                    new_t.pop("age_max", None)
+                    return new_t
+                return None
+
+            def _google_drop_rule(t: dict) -> dict | None:
+                segs = list(t.get("audience_segments") or [])
+                if segs:
+                    segs.pop()
+                    return {**t, "audience_segments": segs}
+                return None
+
+            audience_count: int | None = None
+            audience_status = "skipped"
+            if platform == "meta" and hasattr(client, "get_reach_estimate"):
+                audience_count, targeting, audience_status = denarrow_for_platform(
+                    platform="meta",
+                    targeting=targeting,
+                    get_reach_fn=lambda t: client.get_reach_estimate(t),
+                    drop_rule_fn=_meta_drop_rule,
+                    cohort_label=f"{getattr(cohort, '_stg_id', '?')}|{geo_group.cluster_label}",
+                )
+            elif platform == "google" and hasattr(client, "get_reach_estimate"):
+                audience_count, targeting, audience_status = denarrow_for_platform(
+                    platform="google",
+                    targeting=targeting,
+                    get_reach_fn=lambda t: client.get_reach_estimate(t),
+                    drop_rule_fn=_google_drop_rule,
+                    cohort_label=f"{getattr(cohort, '_stg_id', '?')}|{geo_group.cluster_label}",
+                )
+
+            if audience_status == "below_floor":
+                log.info(
+                    "_process_extra_platform_arm[%s]: audience=%s below floor — skipping "
+                    "cohort=%s geo=%s for this channel (other channels unaffected)",
+                    platform, audience_count,
+                    getattr(cohort, "name", "?"),
+                    getattr(geo_group, "cluster_label", "?"),
+                )
+                # Log a registry row so the reviewer sees WHY this slot is empty.
+                try:
+                    _reg_log(
+                        smart_ramp_id=ramp_id or "",
+                        cohort_id=base_id,
+                        cohort_signature=cohort.name,
+                        geo_cluster=geo_group.cluster,
+                        geo_cluster_label=geo_group.cluster_label,
+                        geos=group_geos,
+                        angle="",
+                        campaign_type="static",
+                        advertised_rate=geo_group.advertised_rate,
+                        cohort_geo=_cohort_geo_label(cohort, geo_group),
+                        platform=platform,
+                        meta_audience_size=audience_count if platform == "meta" else None,
+                        google_audience_size=audience_count if platform == "google" else None,
+                        audience_check_status=audience_status,
+                        campaign_name=campaign_name,
+                    )
+                except Exception as exc:
+                    log.warning(
+                        "_process_extra_platform_arm[%s]: registry log of below-floor skip failed: %s",
+                        platform, exc,
+                    )
+                continue
+
             _extra_budget_kwargs = (
                 {"daily_budget_cents": daily_budget_cents}
                 if daily_budget_cents is not None else {}
@@ -3631,6 +3769,9 @@ def _process_extra_platform_arm(
                     qc_verdict=qc_report_e.get("verdict", ""),
                     qc_attempts=qc_report_e.get("attempts"),
                     qc_violations=qc_report_e.get("violations"),
+                    meta_audience_size=audience_count if platform == "meta" else None,
+                    google_audience_size=audience_count if platform == "google" else None,
+                    audience_check_status=audience_status,
                     campaign_name=campaign_name,
                 )
             except Exception as exc:

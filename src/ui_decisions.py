@@ -196,6 +196,62 @@ def update_status(
         conn.commit()
 
 
+def upsert_cohort_icp(
+    *,
+    ramp_id: str,
+    cohort_id: str,
+    cohort_signature: str,
+    icp_dict: dict,
+) -> None:
+    """Phase 6 — persist the LLM-enriched ICP for a (ramp × cohort).
+
+    `icp_dict` is the output of icp_enrichment.CohortIcp.to_dict().
+    Idempotent on (ramp_id, cohort_signature). Best-effort: swallows
+    UIDecisionsUnavailable so enrichment outages don't block cohort
+    selection.
+    """
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO cohort_icp (
+                    ramp_id, cohort_id, cohort_signature,
+                    cohort_description, top_motivations, content_prefs,
+                    creative_liberty, language_pref, decision_drivers,
+                    skill_priorities, sample_size_n, model_version
+                ) VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s::jsonb, %s::jsonb, %s, %s)
+                ON CONFLICT (ramp_id, cohort_signature) DO UPDATE SET
+                    cohort_id          = EXCLUDED.cohort_id,
+                    cohort_description = EXCLUDED.cohort_description,
+                    top_motivations    = EXCLUDED.top_motivations,
+                    content_prefs      = EXCLUDED.content_prefs,
+                    creative_liberty   = EXCLUDED.creative_liberty,
+                    language_pref      = EXCLUDED.language_pref,
+                    decision_drivers   = EXCLUDED.decision_drivers,
+                    skill_priorities   = EXCLUDED.skill_priorities,
+                    sample_size_n      = EXCLUDED.sample_size_n,
+                    model_version      = EXCLUDED.model_version,
+                    updated_at         = NOW()
+                """,
+                (
+                    ramp_id, cohort_id, cohort_signature,
+                    icp_dict.get("cohort_description", ""),
+                    json.dumps(icp_dict.get("top_motivations", []) or []),
+                    json.dumps(icp_dict.get("content_prefs", []) or []),
+                    icp_dict.get("creative_liberty", "medium"),
+                    icp_dict.get("language_pref", ""),
+                    json.dumps(icp_dict.get("decision_drivers", []) or []),
+                    json.dumps(icp_dict.get("skill_priorities", []) or []),
+                    icp_dict.get("sample_size_n"),
+                    icp_dict.get("model_version", ""),
+                ),
+            )
+            conn.commit()
+    except UIDecisionsUnavailable as exc:
+        log.debug("upsert_cohort_icp skipped (%s/%s): %s",
+                  ramp_id, cohort_signature, exc)
+
+
 def upsert_cohort_brief_rationale(
     *,
     ramp_id: str,

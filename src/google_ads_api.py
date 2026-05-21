@@ -369,6 +369,63 @@ class GoogleAdsClient(AdPlatformClient):
             # defaults still produce a reachable audience without them.
             log.warning("Google audience criteria attach failed (non-fatal): %s", exc)
 
+    # ── Reach estimation (pre-campaign audience check) ──────────────────────
+
+    def get_reach_estimate(self, targeting: dict[str, Any]) -> Optional[int]:
+        """Return a Google-reported audience estimate for the given targeting.
+
+        Google Ads' Reach Planner (ReachPlanService.GenerateReachForecast) is
+        the canonical API but requires a prepared CampaignDuration + product
+        list and isn't trivially callable mid-pipeline. As a pragmatic
+        substitute we estimate via segment sizes pulled from the
+        GoogleAdsService — summing `user_list.size_for_display` across the
+        targeting's audience_segments. Returns None on any failure to signal
+        `audience_check` should skip the gate (rather than blocking creation).
+
+        Caveats:
+          - Sums are upper-bound and double-count overlapping segments.
+          - Geo filters aren't applied — Google segment sizes are usually
+            country-agnostic anyway.
+          - Returns None on the typical "Standard Access required" auth
+            error so the gate doesn't block live runs while access is pending.
+        """
+        try:
+            client = self._ensure_client()
+        except Exception as exc:
+            log.warning("Google get_reach_estimate: client init failed: %s", exc)
+            return None
+
+        segs = (targeting or {}).get("audience_segments") or []
+        if not segs:
+            return None
+
+        total = 0
+        try:
+            ga_service = client.get_service("GoogleAdsService")
+            # Resource names look like `customers/{cid}/userLists/{id}` or
+            # `customers/{cid}/audiences/{id}`. We query UserList for the
+            # in-market / affinity / custom segments the pipeline attaches.
+            ids = []
+            for s in segs:
+                if isinstance(s, str) and "/userLists/" in s:
+                    ids.append(s.rsplit("/", 1)[-1])
+            if not ids:
+                return None
+            query = (
+                "SELECT user_list.size_for_display "
+                "FROM user_list "
+                f"WHERE user_list.id IN ({','.join(ids)})"
+            )
+            for row in ga_service.search(
+                customer_id=self._customer_id_str, query=query,
+            ):
+                size = getattr(row.user_list, "size_for_display", 0) or 0
+                total += int(size)
+            return total or None
+        except Exception as exc:
+            log.warning("Google get_reach_estimate failed: %s — skipping gate", exc)
+            return None
+
     # ── Image asset ──────────────────────────────────────────────────────────
 
     def upload_image(self, image_path: str | Path) -> str:
