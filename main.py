@@ -2125,6 +2125,8 @@ def _resolve_cohorts(
     # and revert to the unfiltered df_bin so Stage A still has signal to work
     # with. Disable entirely via STAGE1_BRIEF_FILTER_ENABLED=false.
     if os.getenv("STAGE1_BRIEF_FILTER_ENABLED", "true").lower() == "true":
+        # Build keyword set from the brief: LLM-derived required_skills,
+        # derived_tg_label tokens, and Smart Ramp brief tokens.
         keywords: list[str] = []
         for s in (derived_icp.get("required_skills") or []):
             if s and len(s.strip()) >= 3:
@@ -2139,32 +2141,46 @@ def _resolve_cohorts(
             if len(t) >= 5 and t not in {"with", "from", "have", "their", "they", "this", "that", "want", "those", "looking"}:
                 keywords.append(t)
         # Dedupe while preserving order.
-        seen: set[str] = set()
-        keywords = [k for k in keywords if not (k in seen or seen.add(k))]
+        _seen: set[str] = set()
+        keywords = [k for k in keywords if not (k in _seen or _seen.add(k))]
 
+        # df_raw is the Redash screening query result — has identity columns
+        # only, NOT free-text resume fields. The free-text was already encoded
+        # into df_bin's binary features (skills__video_editing,
+        # job_titles_norm__editor, fields_of_study__media, etc.) by
+        # binary_features() above. Match keywords against the suffix of each
+        # binary column and OR-join the masks.
         if keywords:
-            import pandas as _pd
-            text_cols = [c for c in ("resume_job_skills", "resume_job_title",
-                                     "resume_field", "resume_job_company")
-                         if c in df_raw.columns]
-            if text_cols:
-                # Build a single lowercase blob per row to match against.
-                blob = df_raw[text_cols].fillna("").astype(str).agg(" ".join, axis=1).str.lower()
-                pattern = "|".join(_pd.Series(keywords).str.replace(r"[^\w\s]", " ", regex=True).str.strip().tolist())
-                # NOTE: keywords are short tokens, regex pattern stays small.
-                mask = blob.str.contains(pattern, regex=True, na=False)
+            anchor_cols: list[str] = []
+            for col in bin_cols:
+                # Column shape: <facet>__<value>, e.g. "skills__video_editing".
+                suffix = col.split("__", 1)[-1].lower().replace("_", " ")
+                if len(suffix) < 3:
+                    continue  # avoid 1-char suffixes spuriously matching
+                # Match if ANY keyword is a substring of the value suffix.
+                # Direction is one-way (keyword ⊆ suffix) so "video" matches
+                # "skills__video_editing" but the reverse direction is dropped
+                # to prevent tiny tokens swallowing every column.
+                if any(k in suffix for k in keywords if len(k) >= 3):
+                    anchor_cols.append(col)
+            log.info(
+                "_resolve_cohorts: Stage 1 brief filter — keywords=%s matched %d binary anchors: %s",
+                keywords[:6], len(anchor_cols), anchor_cols[:8],
+            )
+            if anchor_cols:
+                # Row keeps if ANY anchor binary feature is True.
+                mask = df_bin[anchor_cols].fillna(False).astype(bool).any(axis=1)
                 n_match = int(mask.sum())
                 log.info(
-                    "_resolve_cohorts: Stage 1 brief filter — %d/%d rows match keywords=%s",
-                    n_match, len(df_raw), keywords[:8],
+                    "_resolve_cohorts: Stage 1 brief filter — %d/%d rows match at least one anchor",
+                    n_match, len(df_bin),
                 )
                 if n_match >= MIN_POSITIVES_FOR_STATS:
-                    # df_bin shares the row index with df_raw — apply same mask.
-                    matched_idx = df_raw.index[mask]
-                    df_bin = df_bin.loc[df_bin.index.intersection(matched_idx)]
-                    df_raw = df_raw.loc[matched_idx]
+                    matched_idx = df_bin.index[mask]
+                    df_bin = df_bin.loc[matched_idx]
+                    df_raw = df_raw.loc[df_raw.index.intersection(matched_idx)]
                     log.info(
-                        "_resolve_cohorts: brief filter applied — df_bin=%d rows (Stage A will mine within this pool)",
+                        "_resolve_cohorts: brief filter APPLIED — df_bin=%d rows (Stage A mines within this pool)",
                         len(df_bin),
                     )
                 else:
@@ -2172,6 +2188,10 @@ def _resolve_cohorts(
                         "_resolve_cohorts: brief filter would shrink pool to %d (<%d) — keeping unfiltered pool",
                         n_match, MIN_POSITIVES_FOR_STATS,
                     )
+            else:
+                log.info(
+                    "_resolve_cohorts: brief filter — no binary anchor columns matched keywords; keeping unfiltered pool"
+                )
         else:
             log.info("_resolve_cohorts: no usable brief keywords — skipping Stage 1 filter")
 
