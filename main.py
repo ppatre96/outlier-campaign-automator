@@ -2369,6 +2369,47 @@ def _resolve_cohorts(
         except Exception as exc:
             log.warning("_resolve_cohorts: ICP enrichment block failed (non-fatal): %s", exc)
 
+    # ── Per-channel audience measurement (prep-time) ─────────────────────────
+    # Measures LinkedIn (already done by Stage C), Meta, and Google audience
+    # size for each selected cohort and persists to Postgres cohort_audience.
+    # Lets the console show per-channel AudienceBadge BEFORE approval. Without
+    # this, only LinkedIn's number survives prep (in memory, then discarded);
+    # Meta + Google audiences only get measured during launch.
+    if ramp_id_for_icp and selected:
+        try:
+            from src.prep_audience import measure_audience_for_cohort
+            from src.ui_decisions import upsert_cohort_audience
+            enabled = [p.strip().lower() for p in (config.ENABLED_PLATFORMS or "").split(",") if p.strip()]
+            if not enabled:
+                enabled = ["linkedin", "meta", "google"]
+            included_geos = list((row or {}).get("included_geos") or [])
+            for cohort in selected:
+                rows = measure_audience_for_cohort(
+                    cohort,
+                    included_geos=included_geos,
+                    enabled_platforms=enabled,
+                    li_audience_size=getattr(cohort, "audience_size", None),
+                )
+                for ca in rows:
+                    upsert_cohort_audience(
+                        ramp_id=ramp_id_for_icp,
+                        cohort_id=getattr(cohort, "_stg_id", "") or "",
+                        cohort_signature=getattr(cohort, "name", "") or "",
+                        platform=ca.platform,
+                        audience_size=ca.audience_size,
+                        status=ca.status,
+                        geos_used=ca.geos_used,
+                        rules_dropped=ca.rules_dropped,
+                    )
+                log.info(
+                    "_resolve_cohorts: audience persisted ramp=%s cohort=%s %s",
+                    ramp_id_for_icp,
+                    getattr(cohort, "name", "?"),
+                    " ".join(f"{r.platform}={r.audience_size}({r.status})" for r in rows),
+                )
+        except Exception as exc:
+            log.warning("_resolve_cohorts: per-channel audience block failed (non-fatal): %s", exc)
+
     group_name = f"Outlier {flow_id} {location}".strip()
     return ResolvedCohorts(
         selected=list(selected),

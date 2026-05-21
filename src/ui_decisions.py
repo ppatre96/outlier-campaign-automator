@@ -196,6 +196,51 @@ def update_status(
         conn.commit()
 
 
+def upsert_cohort_audience(
+    *,
+    ramp_id: str,
+    cohort_id: str,
+    cohort_signature: str,
+    platform: str,
+    audience_size: Optional[int],
+    status: str,
+    geos_used: Optional[list[str]] = None,
+    rules_dropped: int = 0,
+) -> None:
+    """Persist a per-channel audience estimate for a (ramp × cohort × platform).
+
+    Idempotent on (ramp_id, cohort_signature, platform). Best-effort: swallows
+    UIDecisionsUnavailable so a Postgres outage never blocks cohort selection.
+    """
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO cohort_audience (
+                    ramp_id, cohort_id, cohort_signature, platform,
+                    audience_size, status, geos_used, rules_dropped
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                ON CONFLICT (ramp_id, cohort_signature, platform) DO UPDATE SET
+                    cohort_id     = EXCLUDED.cohort_id,
+                    audience_size = EXCLUDED.audience_size,
+                    status        = EXCLUDED.status,
+                    geos_used     = EXCLUDED.geos_used,
+                    rules_dropped = EXCLUDED.rules_dropped,
+                    measured_at   = NOW()
+                """,
+                (
+                    ramp_id, cohort_id, cohort_signature, platform,
+                    audience_size, status,
+                    json.dumps(geos_used or []),
+                    rules_dropped,
+                ),
+            )
+            conn.commit()
+    except UIDecisionsUnavailable as exc:
+        log.debug("upsert_cohort_audience skipped (%s/%s/%s): %s",
+                  ramp_id, cohort_signature, platform, exc)
+
+
 def upsert_cohort_icp(
     *,
     ramp_id: str,
