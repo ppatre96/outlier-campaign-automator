@@ -2106,6 +2106,75 @@ def _resolve_cohorts(
         except Exception as exc:
             log.warning("_resolve_cohorts: derive_icp_from_job_post failed: %s", exc)
 
+    # ── Stage 1 brief-pool filter ────────────────────────────────────────────
+    # Constrain df_bin (and the matching df_raw rows) to contributors whose
+    # resume free-text overlaps with the brief's keywords. Without this,
+    # Stage A mines features that predict screening pass across the ENTIRE
+    # T1 pool — surfacing off-brief cohorts (e.g. "phd_student" for a
+    # video-creator ramp because phds pass screening at high rates).
+    #
+    # Keywords come from:
+    #   1. derived_icp.required_skills          (LLM-extracted must-haves)
+    #   2. derived_icp.derived_tg_label tokens  (the LLM's role label)
+    #   3. smart_ramp_brief tokens              (requester's verbatim ask)
+    #
+    # Matched against resume_job_skills, resume_job_title, resume_field,
+    # and resume_job_company on a case-insensitive substring basis.
+    #
+    # Soft-fail: if filtered pool shrinks below MIN_POSITIVES_FOR_STATS, log
+    # and revert to the unfiltered df_bin so Stage A still has signal to work
+    # with. Disable entirely via STAGE1_BRIEF_FILTER_ENABLED=false.
+    if os.getenv("STAGE1_BRIEF_FILTER_ENABLED", "true").lower() == "true":
+        keywords: list[str] = []
+        for s in (derived_icp.get("required_skills") or []):
+            if s and len(s.strip()) >= 3:
+                keywords.append(s.strip().lower())
+        tg_label = (derived_icp.get("derived_tg_label") or "").strip()
+        for tok in tg_label.replace("(", " ").replace(")", " ").replace(",", " ").split():
+            t = tok.strip().lower()
+            if len(t) >= 4 and t not in {"with", "from", "have", "their", "they", "this", "that", "want", "and", "the"}:
+                keywords.append(t)
+        for tok in smart_ramp_brief.replace(",", " ").split():
+            t = tok.strip().strip(".:;").lower()
+            if len(t) >= 5 and t not in {"with", "from", "have", "their", "they", "this", "that", "want", "those", "looking"}:
+                keywords.append(t)
+        # Dedupe while preserving order.
+        seen: set[str] = set()
+        keywords = [k for k in keywords if not (k in seen or seen.add(k))]
+
+        if keywords:
+            import pandas as _pd
+            text_cols = [c for c in ("resume_job_skills", "resume_job_title",
+                                     "resume_field", "resume_job_company")
+                         if c in df_raw.columns]
+            if text_cols:
+                # Build a single lowercase blob per row to match against.
+                blob = df_raw[text_cols].fillna("").astype(str).agg(" ".join, axis=1).str.lower()
+                pattern = "|".join(_pd.Series(keywords).str.replace(r"[^\w\s]", " ", regex=True).str.strip().tolist())
+                # NOTE: keywords are short tokens, regex pattern stays small.
+                mask = blob.str.contains(pattern, regex=True, na=False)
+                n_match = int(mask.sum())
+                log.info(
+                    "_resolve_cohorts: Stage 1 brief filter — %d/%d rows match keywords=%s",
+                    n_match, len(df_raw), keywords[:8],
+                )
+                if n_match >= MIN_POSITIVES_FOR_STATS:
+                    # df_bin shares the row index with df_raw — apply same mask.
+                    matched_idx = df_raw.index[mask]
+                    df_bin = df_bin.loc[df_bin.index.intersection(matched_idx)]
+                    df_raw = df_raw.loc[matched_idx]
+                    log.info(
+                        "_resolve_cohorts: brief filter applied — df_bin=%d rows (Stage A will mine within this pool)",
+                        len(df_bin),
+                    )
+                else:
+                    log.warning(
+                        "_resolve_cohorts: brief filter would shrink pool to %d (<%d) — keeping unfiltered pool",
+                        n_match, MIN_POSITIVES_FOR_STATS,
+                    )
+        else:
+            log.info("_resolve_cohorts: no usable brief keywords — skipping Stage 1 filter")
+
     base_role_titles = extract_base_role_candidates(
         job_post_meta=job_post_meta,
         project_meta=project_meta,

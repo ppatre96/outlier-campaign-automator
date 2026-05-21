@@ -43,7 +43,7 @@ def save_hypotheses(hypotheses: list[str]) -> None:
     log.info("Saved %d competitor hypotheses to %s", len(hypotheses), _HYPOTHESES_PATH)
 
 
-def save_intel_json(intel: CompetitorIntel, tg_label: str = "") -> None:
+def save_intel_json(intel: "CompetitorIntel", tg_label: str = "") -> None:
     """
     Persist structured competitor intelligence to JSON for consumption by brief generator.
     Includes experiment ideas, competitor hooks, and avoid patterns.
