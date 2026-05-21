@@ -3009,6 +3009,26 @@ def _process_static_campaigns(
             "campaign_specs":       campaign_specs,  # multi-platform arms reuse these
         }
 
+    # Meta-only / Google-only escape hatch — skip LinkedIn Campaign Manager
+    # API calls entirely but still hand campaign_specs (PNGs + variants +
+    # cohort metadata) to downstream extras so the Meta + Google arms can
+    # ship campaigns without creating LinkedIn drafts that the reviewer would
+    # then have to archive manually. Set when running a smoke test or a
+    # Meta-only push for a ramp.
+    if os.getenv("LINKEDIN_CAMPAIGN_CREATE_DISABLED", "").lower() == "true":
+        log.info(
+            "LINKEDIN_CAMPAIGN_CREATE_DISABLED=true — skipping LinkedIn create_campaign_group/campaign/creative "
+            "calls. campaign_specs (%d) still produced for Meta + Google arms.",
+            len(campaign_specs),
+        )
+        return {
+            "campaigns":            [],
+            "campaigns_by_cohort":  {},
+            "creative_paths":       {},
+            "campaign_specs":       campaign_specs,
+            "campaign_groups":      [],
+        }
+
     # Create campaign group + campaigns — one per (cohort × geo_group) spec.
     # Group-level name: Smart Ramp v2 spec when naming_meta is available;
     # legacy "Outlier <flow_id> <location> Static" otherwise.
@@ -4063,13 +4083,32 @@ def _process_row_both_modes(
     # 'linkedin' implies both InMail + Static; absence → drop both LI arms.
     # Meta/Google filtering happens later in the extras loop.
     linkedin_enabled = channels is None or "linkedin" in channels
+    linkedin_creates_disabled = (
+        os.environ.get("LINKEDIN_CAMPAIGN_CREATE_DISABLED", "").lower() == "true"
+    )
     if not linkedin_enabled and modes:
-        log.info(
-            "_process_row_both_modes: channels=%s excludes linkedin — "
-            "dropping LinkedIn arms (modes was %s)",
-            channels, modes,
-        )
-        modes = tuple()
+        # When LinkedIn campaign creates are disabled but we still need the
+        # static arm to run (so Meta/Google can pick up campaign_specs +
+        # PNGs), keep "static" in modes and drop only "inmail" (which has no
+        # way to skip LinkedIn). Without this branch the channels=["meta"]
+        # case would clear modes entirely and the Meta arm would have no
+        # specs to consume.
+        if linkedin_creates_disabled:
+            kept = tuple(m for m in modes if m == "static")
+            log.info(
+                "_process_row_both_modes: channels=%s excludes linkedin, "
+                "LINKEDIN_CAMPAIGN_CREATE_DISABLED=true — keeping static for "
+                "Meta/Google reuse (was %s, now %s)",
+                channels, modes, kept,
+            )
+            modes = kept
+        else:
+            log.info(
+                "_process_row_both_modes: channels=%s excludes linkedin — "
+                "dropping LinkedIn arms (modes was %s)",
+                channels, modes,
+            )
+            modes = tuple()
 
     # Per-channel budget cents (None → platform client uses its PLACEHOLDER).
     linkedin_budget_cents = (budgets or {}).get("linkedin")
