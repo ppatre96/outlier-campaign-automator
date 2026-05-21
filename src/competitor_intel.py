@@ -45,30 +45,129 @@ def save_hypotheses(hypotheses: list[str]) -> None:
 
 def save_intel_json(intel: "CompetitorIntel", tg_label: str = "") -> None:
     """
-    Persist structured competitor intelligence to JSON for consumption by brief generator.
-    Includes experiment ideas, competitor hooks, and avoid patterns.
+    Persist structured competitor intelligence to JSON for the brief
+    generator + the console's "Competitor landscape" card.
+
+    Schema includes BOTH the original lightweight fields (experiment_ideas,
+    competitor_hooks, top_differentiators) AND the richer per-ad +
+    voice-of-user blocks the console's CompetitorCard renders:
+      - competitor_ads:    [{competitor, hook, body, earnings_claim,
+                            dominant_angle, format, source, url,
+                            profession_mention}]
+      - voice_of_user:     {top_complaints_competitors, top_complaints_outlier,
+                            top_praise_outlier, recurring_questions}
+      - trustpilot_ratings: {<competitor>: {rating, review_count}}
+      - task_listings:     [{platform, title, domain, geography, pay_rate, url}]
+      - role_demand_signals: {matches, queried_role}  ← role-aware proxy hits
+
+    Backwards compatible: the older brief-agent loader keys
+    (experiment_ideas, competitor_hooks, etc.) keep their shape so existing
+    consumers don't break.
     """
     from datetime import datetime
 
     _INTEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    # Rich competitor_ads — one row per scraped AdCreative. The CompetitorCard
+    # renders these with hook/earnings_claim/profession_mention so reviewers
+    # see WHAT each competitor is saying, not just hook substrings.
+    ads_rich: list[dict] = []
+    for ad in intel.competitor_ads or []:
+        if not ad or not getattr(ad, "hook", "") or "Fetch" in (ad.hook or ""):
+            # Skip empty + "fetch via..." placeholder hooks.
+            continue
+        ads_rich.append({
+            "competitor":         ad.competitor,
+            "hook":               ad.hook,
+            "top_hook":           ad.hook,              # alias for the card
+            "body":               (ad.body or "")[:280],
+            "earnings_claim":     ad.earnings_claim,
+            "profession_mention": ad.profession_mention,
+            "dominant_angle":     ad.angle,             # A | B | C inferred
+            "format":             ad.format,
+            "source":             ad.source,
+            "url":                ad.url,
+        })
+
+    # Voice of user — pull deduped themes from the analysed review signals.
+    vou = {
+        "top_complaints_competitors": list(intel.top_user_pain_points or []),
+        "top_complaints_outlier":     list(intel.outlier_complaint_themes or []),
+        "top_praise_outlier":         list(intel.outlier_praise_themes or []),
+        "recurring_questions":        [],   # not yet computed in run_competitor_intel
+    }
+
+    # Trustpilot ratings, shaped how the card expects.
+    tp_snapshot: dict[str, dict] = {}
+    for name, data in (intel.trustpilot_ratings or {}).items():
+        if isinstance(data, dict):
+            tp_snapshot[name] = {
+                "rating":       data.get("rating"),
+                "review_count": data.get("review_count"),
+            }
+
+    # Task listings — only carry the fields the UI needs. Trim raw_description
+    # since it can be multi-KB.
+    listings: list[dict] = []
+    for tl in (intel.task_listings or [])[:40]:
+        listings.append({
+            "platform":   tl.platform,
+            "title":      tl.title,
+            "domain":     tl.domain,
+            "geography":  tl.geography,
+            "pay_rate":   tl.pay_rate,
+            "volume":     tl.volume_signal,
+            "url":        tl.url,
+            "skills":     tl.skills_required[:6] if tl.skills_required else [],
+        })
+
+    # Role-demand proxy — match task listings against the TG label so the
+    # card can show "did any competitor list this role?" Even a no-hit answer
+    # is useful: "0 listings for 'video editor' across Turing/Surge/Handshake
+    # = mostly Outlier territory."
+    role_hits: list[dict] = []
+    role_terms = [t.strip().lower() for t in (tg_label or "").replace("(", " ").replace(")", " ").replace(",", " ").split() if len(t.strip()) >= 4]
+    if role_terms and listings:
+        for tl in listings:
+            haystack = " ".join(str(v).lower() for v in (tl.get("title"), tl.get("domain"), " ".join(tl.get("skills") or [])) if v)
+            if any(term in haystack for term in role_terms):
+                role_hits.append(tl)
+
     output = {
-        "updated_at": datetime.utcnow().isoformat(),
-        "tg_label": tg_label,
-        "experiment_ideas": intel.copy_recommendations,
-        "competitor_hooks": [ad.hook for ad in intel.competitor_ads if ad.hook and "Fetch" not in ad.hook],
+        "updated_at":         datetime.utcnow().isoformat(),
+        "tg_label":           tg_label,
+        # legacy compact view (kept for brief-agent backwards-compat)
+        "experiment_ideas":   intel.copy_recommendations,
+        "competitor_hooks":   [ad.hook for ad in intel.competitor_ads if ad.hook and "Fetch" not in ad.hook],
         "avoid": [
             f"Angle {intel.dominant_competitor_angle}" if intel.dominant_competitor_angle else "",
         ],
-        "hot_domains": intel.hot_domains,
-        "hot_tgs": intel.hot_tgs,
+        "hot_domains":        intel.hot_domains,
+        "hot_tgs":            intel.hot_tgs,
         "underserved_domains": intel.underserved_domains,
         "top_differentiators": intel.differentiators,
+        # rich view for the console card
+        "competitor_ads":     ads_rich,
+        "voice_of_user":      vou,
+        "trustpilot_ratings": tp_snapshot,
+        "task_listings":      listings,
+        "role_demand_signals": {
+            "queried_role":  tg_label or "",
+            "role_terms":    role_terms,
+            "matches":       role_hits,
+            "match_count":   len(role_hits),
+            "platforms_searched": sorted({tl.get("platform") for tl in listings if tl.get("platform")}),
+        },
+        "dominant_competitor_angle": intel.dominant_competitor_angle,
+        "whitespace_angle":   intel.whitespace_angle,
     }
-    # Remove empty avoid entries
     output["avoid"] = [a for a in output["avoid"] if a]
 
     _INTEL_PATH.write_text(json.dumps(output, ensure_ascii=False, indent=2))
-    log.info("Saved structured competitor intel to %s", _INTEL_PATH)
+    log.info(
+        "Saved structured competitor intel to %s — ads=%d, listings=%d, role_hits=%d",
+        _INTEL_PATH, len(ads_rich), len(listings), len(role_hits),
+    )
 
 
 def load_pending_hypotheses() -> list[str]:

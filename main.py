@@ -2415,18 +2415,24 @@ def _resolve_cohorts(
     # logs and continues — never blocks cohort selection.
     ramp_id_for_icp = (row or {}).get("ramp_id") or ""
 
-    # Wipe any prior cohort_icp + cohort_audience rows for this ramp BEFORE
-    # writing the current run's cohorts. Without this, stale signatures from
-    # earlier prep runs accumulate in the UI (the ICP card shows cohorts that
-    # were mined yesterday but aren't part of today's selection).
+    # Wipe any prior cohort_icp + cohort_audience + cohort_brief_rationale
+    # rows for this ramp BEFORE writing the current run's cohorts. Without
+    # this, stale cohort signatures from earlier prep runs accumulate in the
+    # UI — the ICP card shows ghost cohorts, AnglesCard shows duplicate
+    # angles (each historical cohort_signature × 3 angles).
     if ramp_id_for_icp:
         try:
             from src.ui_decisions import _connect, UIDecisionsUnavailable
             with _connect() as conn, conn.cursor() as cur:
                 cur.execute("DELETE FROM cohort_icp WHERE ramp_id = %s", (ramp_id_for_icp,))
                 cur.execute("DELETE FROM cohort_audience WHERE ramp_id = %s", (ramp_id_for_icp,))
+                cur.execute("DELETE FROM cohort_brief_rationale WHERE ramp_id = %s", (ramp_id_for_icp,))
                 conn.commit()
-                log.info("_resolve_cohorts: cleared prior cohort_icp + cohort_audience for ramp=%s", ramp_id_for_icp)
+                log.info(
+                    "_resolve_cohorts: cleared prior cohort_icp + cohort_audience + "
+                    "cohort_brief_rationale for ramp=%s",
+                    ramp_id_for_icp,
+                )
         except Exception as exc:
             log.warning("_resolve_cohorts: prior-row cleanup skipped (non-fatal): %s", exc)
 
