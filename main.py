@@ -2837,14 +2837,55 @@ def _process_static_campaigns(
                 figma_client.get_text_layer_map(figma_file, figma_node)
                 if has_figma else {}
             )
-            variants = build_copy_variants(
-                cohort, layer_map,
-                geos=group_geos,
-                description_hint=cohort_description,
-                hourly_rate=geo_group.advertised_rate,
-                geo_icp_hint=geo_group.icp_hint,
-                icp=getattr(cohort, "_icp", None),
-            )
+            variants: list[dict] = []
+            # 2026-05-22 brief-review path: if Postgres has cohort_briefs rows
+            # for this (ramp × cohort × geo_cluster × linkedin), use the
+            # Phase-2 builder so reviewer comments get honored. Falls through
+            # to the legacy single-phase build_copy_variants when no briefs
+            # exist (older ramps, dry-runs, prep_only=False CLI path).
+            if ramp_id:
+                try:
+                    from src.ui_decisions import list_briefs_for_ramp
+                    from src.brief_generator import build_copy_from_brief
+                    all_briefs = list_briefs_for_ramp(ramp_id, channel="linkedin")
+                    matching = [
+                        b for b in all_briefs
+                        if b.cohort_signature == cohort.name
+                        and b.geo_cluster == (geo_group.cluster or "global_mix")
+                    ]
+                    if matching:
+                        log.info(
+                            "Static copy: %d brief(s) found in Postgres for "
+                            "cohort=%s geo=%s — running Phase-2 (build_copy_from_brief)",
+                            len(matching), cohort.name, geo_group.cluster,
+                        )
+                        for b in matching:
+                            v = build_copy_from_brief(
+                                b.brief,
+                                layer_map=layer_map,
+                                cohort=cohort,
+                                geos=group_geos,
+                                hourly_rate=geo_group.advertised_rate,
+                                reviewer_comment=b.reviewer_comment or "",
+                            )
+                            if v:
+                                variants.append(v)
+                except Exception as exc:
+                    log.warning(
+                        "Brief-based copy gen failed for cohort=%s geo=%s: %s — "
+                        "falling back to legacy build_copy_variants",
+                        cohort.name, geo_group.cluster, exc,
+                    )
+                    variants = []
+            if not variants:
+                variants = build_copy_variants(
+                    cohort, layer_map,
+                    geos=group_geos,
+                    description_hint=cohort_description,
+                    hourly_rate=geo_group.advertised_rate,
+                    geo_icp_hint=geo_group.icp_hint,
+                    icp=getattr(cohort, "_icp", None),
+                )
             # Phase 5 — persist per-angle rationale so the console can render
             # "Angles we'd test" above the timeline. Best-effort: failures
             # never abort copy gen.
@@ -4204,18 +4245,94 @@ def _process_row_both_modes(
     # the Triggers Sheet by _resolve_cohorts; that's enough for the UI to show
     # the ramp as "ready for review". The arms (which generate copy, images,
     # and call platform create_campaign) are gated until Diego/Bryan approve
-    # via outlier-campaign-console. Phase 5 will move brief + image generation
-    # into prep so the UI can preview them; for now the timeline shows cohorts
-    # + targeting only until launch fires.
+    # via outlier-campaign-console.
+    #
+    # 2026-05-22 — Brief-review gate: ALSO generate Phase-1 briefs here for
+    # LinkedIn so the console can show them in the BriefReviewCard. The poller
+    # then transitions the ramp to 'awaiting_brief_review' when briefs were
+    # persisted (or falls back to 'awaiting_approval' on failure). The actual
+    # ad copy / image generation still runs only after launch fires — Phase 2
+    # (build_copy_from_brief) reads the (possibly reviewer-edited) brief at
+    # launch time.
     if prep_only:
+        briefs_generated = 0
+        try:
+            from src.brief_generator import build_briefs
+            from src.ui_decisions import upsert_brief
+            from src.geo_tiers import group_geos_for_campaigns, GeoCampaignGroup
+            import config as _cfg
+
+            raw_geos = included_geos or []
+            geo_groups = group_geos_for_campaigns(raw_geos, base_rate_usd)
+            if not geo_groups:
+                # Mirror the static arm's fallback so brief gen still happens
+                # even when the geo grouper returns empty.
+                geo_groups = [GeoCampaignGroup(
+                    cluster="global_mix", cluster_label="Global", geos=raw_geos,
+                    median_multiplier=1.0,
+                    advertised_rate=(f"${int(base_rate_usd)}/hr" if base_rate_usd is not None else ""),
+                    campaign_suffix="global",
+                )]
+
+            capped_cohorts = resolved.selected[:_cfg.MAX_COHORTS_PER_GEO_CLUSTER]
+            log.info(
+                "_process_row_both_modes[prep_only]: generating briefs for "
+                "%d cohort(s) × %d geo cluster(s) × 3 angles = %d briefs (linkedin only)",
+                len(capped_cohorts), len(geo_groups),
+                len(capped_cohorts) * len(geo_groups) * 3,
+            )
+
+            for cohort in capped_cohorts:
+                for geo_group in geo_groups:
+                    try:
+                        briefs = build_briefs(
+                            cohort,
+                            geos=geo_group.geos or raw_geos,
+                            description_hint=row.get("description_hint", "") or "",
+                            hourly_rate=geo_group.advertised_rate or "",
+                            geo_icp_hint="",  # geo ICP hints not yet wired into prep path
+                            icp=getattr(cohort, "_icp", None),
+                        )
+                    except Exception as exc:
+                        log.warning(
+                            "Brief gen failed for cohort=%s geo=%s: %s — skipping",
+                            cohort.name, geo_group.cluster, exc,
+                        )
+                        continue
+                    for brief in briefs:
+                        upsert_brief(
+                            ramp_id=ramp_id,
+                            cohort_id=cohort_id_override or getattr(cohort, "_stg_id", "") or cohort.name,
+                            cohort_signature=cohort.name,
+                            geo_cluster=geo_group.cluster or "global_mix",
+                            channel="linkedin",
+                            angle=brief.get("angle", "A"),
+                            brief=brief,
+                        )
+                        briefs_generated += 1
+            log.info(
+                "_process_row_both_modes[prep_only]: %d brief(s) persisted to cohort_briefs",
+                briefs_generated,
+            )
+        except Exception as exc:
+            # Best-effort: brief gen failure must NOT block the prep return —
+            # the poller will fall back to upsert_awaiting_approval (no brief
+            # gate) if briefs_generated == 0.
+            log.warning(
+                "_process_row_both_modes[prep_only]: brief generation surface — "
+                "continuing without briefs (%s)", exc,
+            )
+
         log.info(
             "_process_row_both_modes[prep_only]: %d cohort(s) mined for row %s — "
-            "skipping arms; awaiting approval",
+            "skipping arms; awaiting approval (briefs_generated=%d)",
             len(resolved.selected), cohort_id_override or flow_id or "?",
+            briefs_generated,
         )
         return {
             "ok": True,
             "prep_only": True,
+            "briefs_generated": briefs_generated,
             "cohorts_mined": [
                 {
                     "name": c.name,
@@ -4575,6 +4692,7 @@ def run_launch_for_ramp(
     if prep_only:
         aggregated["prep_only"] = True
         aggregated["cohorts_mined"] = []
+        aggregated["briefs_generated"] = 0
 
     # Phase 5 — snapshot the competitor intel JSON against this ramp so the
     # console renders the intel that informed THIS run's brief. Best-effort:
@@ -4669,6 +4787,7 @@ def run_launch_for_ramp(
             aggregated["per_cohort"].extend(outcome.get("per_cohort", []) or [])
             if prep_only:
                 aggregated["cohorts_mined"].extend(outcome.get("cohorts_mined", []) or [])
+                aggregated["briefs_generated"] += int(outcome.get("briefs_generated", 0) or 0)
         except Exception:
             log.exception(
                 "run_launch_for_ramp: row failed for ramp=%s cohort=%s — continuing with next row",

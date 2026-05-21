@@ -277,11 +277,21 @@ def build_copy_variants(
     hourly_rate: str = "",
     geo_icp_hint: str = "",
     icp = None,
+    use_two_phase: bool | None = None,
 ) -> list[dict]:
     """
-    Generate 3 A/B/C copy variants fully derived from cohort signals — no fixed TG categories.
-    The LLM infers the professional identity from the cohort name + rules and writes copy
-    and photo_subject specific to that exact audience.
+    Generate 3 A/B/C copy variants fully derived from cohort signals.
+
+    Two-phase mode (default for new ramps): call brief_generator.build_briefs()
+    then build_copy_from_brief() per angle. Single-phase mode (legacy CLI path):
+    call the monolithic prompt directly. Set `use_two_phase=False` to force
+    legacy behavior (used by the back-compat path inside _launch_ramp when no
+    cohort_briefs row exists for this combination).
+
+    Default is the legacy single-phase path. The brief-review gate calls
+    build_briefs + build_copy_from_brief directly from `main._prep_ramp` /
+    `main._launch_ramp`, so build_copy_variants is only invoked by older
+    CLI paths or by _launch_ramp's fallback when Postgres has no brief row.
 
     `geos` (optional, ISO country codes from Smart Ramp `included_geos`) drives the
     photo_subject ethnicity choice. When set, the LLM is told which ethnicities are
@@ -297,6 +307,36 @@ def build_copy_variants(
 
     Returns: [{angle, angleLabel, headline, subheadline, cta, photo_subject, tgLabel, layerUpdates}, ...]
     """
+    # Two-phase path — runs brief gen + per-angle copy gen. Used when an
+    # explicit caller asks for it (tests, future paths) but NOT the default
+    # because the legacy CLI behaviour must remain bit-for-bit identical until
+    # _prep_ramp / _launch_ramp opt in.
+    if use_two_phase:
+        from src.brief_generator import build_briefs, build_copy_from_brief
+        briefs = build_briefs(
+            cohort,
+            geos=geos,
+            description_hint=description_hint,
+            hourly_rate=hourly_rate,
+            geo_icp_hint=geo_icp_hint,
+            icp=icp,
+        )
+        variants: list[dict] = []
+        for b in briefs:
+            v = build_copy_from_brief(
+                b,
+                layer_map=layer_map,
+                cohort=cohort,
+                geos=geos,
+                hourly_rate=hourly_rate,
+                reviewer_comment="",  # no reviewer in this path
+            )
+            if v:
+                variants.append(v)
+        log.info("Generated %d copy variants for '%s' via two-phase path",
+                 len(variants), cohort.name)
+        return variants
+    # Legacy single-phase path follows.
     from src.linkedin_urn import _col_to_human
     from src.analysis import _feature_to_facet
 

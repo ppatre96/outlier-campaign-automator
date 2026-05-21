@@ -254,6 +254,13 @@ ANGLES_PER_COHORT           = int(os.getenv("ANGLES_PER_COHORT", 3))
 # Was an opt-in env-only flag pre-2026-05-22; surfacing the default here so
 # new ramps automatically inherit the cap. Set to 0 to disable the cap.
 MAX_GEO_CLUSTERS            = int(os.getenv("MAX_GEO_CLUSTERS", 3))
+# Brief-review gate (2026-05-22). After prep writes the cohort_briefs rows
+# and flips ramp_status='awaiting_brief_review', the reviewer (Diego/Bryan)
+# has this many hours to add comments + confirm. If they don't, the poller's
+# sweep auto-confirms (flips to 'awaiting_approval' with an audit event so
+# the existing channels+budget gate takes over). Set to 0 to disable the
+# auto-confirm (briefs would then block forever until manually confirmed).
+BRIEF_REVIEW_AUTO_CONFIRM_HOURS = int(os.getenv("BRIEF_REVIEW_AUTO_CONFIRM_HOURS", 4))
 # Phase 3.1 — image-gen concurrency. Each (cohort × geo × angle) Gemini call
 # is independent; running them in a thread pool collapses ~27 sequential
 # calls (~40 min worst case with QC reroll) to ~10 min at workers=4.

@@ -277,6 +277,7 @@ def run_ramp_pipeline(record: RampRecord, dry_run: bool = False, version: int = 
             get_decision,
             claim_ramp,
             upsert_awaiting_approval,
+            upsert_awaiting_brief_review,
             update_status,
         )
     except ImportError as exc:
@@ -295,29 +296,50 @@ def run_ramp_pipeline(record: RampRecord, dry_run: bool = False, version: int = 
                 "static_campaigns": [], "creative_paths": {}, "per_cohort": []}
 
     # No prior decision → first time we've seen this ramp post-submission.
-    # Run prep (cohort mining + Triggers Sheet rows) + write awaiting_approval.
+    # Run prep (cohort mining + Triggers Sheet rows + LinkedIn briefs).
+    # If briefs were generated, transition to awaiting_brief_review (new gate);
+    # otherwise fall back to awaiting_approval (legacy gate, no brief review).
     if decision is None:
-        log.info("UI gate: ramp %s has no decision — running prep + awaiting approval", record.id)
+        log.info("UI gate: ramp %s has no decision — running prep", record.id)
         prep_result = _prep_ramp(record.id)
+        briefs_n = int(prep_result.get("briefs_generated", 0) or 0)
+        prep_summary = {
+            "cohorts_mined": prep_result.get("cohorts_mined", []),
+            "rows_processed": len(_ramp_to_rows(record)),
+            "briefs_generated": briefs_n,
+        }
         try:
-            upsert_awaiting_approval(
-                record.id,
-                matched_domain=(record.cohorts[0].matched_domain
-                                if record.cohorts else "") or "",
-                requester_name=getattr(record, "requester_name", "") or "",
-                summary=getattr(record, "summary", "") or "",
-                submitted_at=getattr(record, "submitted_at", "") or None,
-                prep_summary={
-                    "cohorts_mined": prep_result.get("cohorts_mined", []),
-                    "rows_processed": len(_ramp_to_rows(record)),
-                },
-            )
+            if briefs_n > 0:
+                log.info("Prep wrote %d brief(s) — transitioning to awaiting_brief_review", briefs_n)
+                upsert_awaiting_brief_review(
+                    record.id,
+                    matched_domain=(record.cohorts[0].matched_domain
+                                    if record.cohorts else "") or "",
+                    requester_name=getattr(record, "requester_name", "") or "",
+                    summary=getattr(record, "summary", "") or "",
+                    submitted_at=getattr(record, "submitted_at", "") or None,
+                    prep_summary=prep_summary,
+                )
+            else:
+                log.info("Prep wrote 0 briefs — falling back to awaiting_approval (legacy gate)")
+                upsert_awaiting_approval(
+                    record.id,
+                    matched_domain=(record.cohorts[0].matched_domain
+                                    if record.cohorts else "") or "",
+                    requester_name=getattr(record, "requester_name", "") or "",
+                    summary=getattr(record, "summary", "") or "",
+                    submitted_at=getattr(record, "submitted_at", "") or None,
+                    prep_summary=prep_summary,
+                )
         except UIDecisionsUnavailable as exc:
             log.warning("Prep finished for %s but upsert failed: %s — UI won't see it until next poll", record.id, exc)
         return prep_result
 
-    # Terminal / in-flight states — nothing to do this tick.
-    if decision.status in ("awaiting_approval", "prep_running", "launching",
+    # Terminal / in-flight states — nothing to do this tick. awaiting_brief_review
+    # is included so the poller doesn't repeatedly re-run prep on ramps still
+    # waiting for reviewer comments / auto-confirm.
+    if decision.status in ("awaiting_brief_review", "awaiting_approval",
+                            "prep_running", "launching",
                             "completed", "failed"):
         log.info("UI gate: ramp %s status=%s — skipping (UI controls)",
                  record.id, decision.status)
@@ -778,6 +800,21 @@ def run_once(args: argparse.Namespace) -> int:
     state = _read_state()
     state.setdefault("ramps", {})
     state.setdefault("ramp_versions", {})
+
+    # 2026-05-22 — brief-review auto-confirm sweep. Before the main poll loop,
+    # check for ramps stuck in 'awaiting_brief_review' longer than
+    # config.BRIEF_REVIEW_AUTO_CONFIRM_HOURS and flip them to
+    # 'awaiting_approval'. Best-effort: a DB outage doesn't block the rest of
+    # the tick (the next tick will retry).
+    try:
+        from src.ui_decisions import auto_confirm_stale_brief_reviews
+        threshold_h = int(getattr(config, "BRIEF_REVIEW_AUTO_CONFIRM_HOURS", 4))
+        confirmed = auto_confirm_stale_brief_reviews(threshold_hours=threshold_h)
+        if confirmed:
+            log.info("Auto-confirmed %d stale brief-review ramp(s): %s",
+                     len(confirmed), confirmed)
+    except Exception as exc:
+        log.warning("brief-review auto-confirm sweep skipped: %s", exc)
 
     client = SmartRampClient()
 

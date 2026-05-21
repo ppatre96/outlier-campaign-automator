@@ -353,6 +353,250 @@ def upsert_cohort_brief_rationale(
                   ramp_id, cohort_id, angle, exc)
 
 
+# ── Brief-review gate (2026-05-22) ───────────────────────────────────────────
+#
+# Schema lives in scripts/sql/006_cohort_briefs.sql. The pipeline writes one
+# row per (ramp × cohort × geo_cluster × channel × angle) at the END of prep,
+# then flips ramp_decisions.status='awaiting_brief_review'. Reviewer drops a
+# free-text comment per row in the console; clicking Confirm flips status to
+# 'awaiting_approval'. Auto-confirm sweep flips stale rows after
+# config.BRIEF_REVIEW_AUTO_CONFIRM_HOURS.
+
+
+@dataclass
+class CohortBrief:
+    id:                int
+    ramp_id:           str
+    cohort_id:         str
+    cohort_signature:  str
+    geo_cluster:       str
+    channel:           str
+    angle:             str
+    brief:             dict
+    reviewer_comment:  str = ""
+    reviewed_by:       Optional[str] = None
+    reviewed_at:       Optional[str] = None
+    generated_at:      Optional[str] = None
+    updated_at:        Optional[str] = None
+
+
+_BRIEF_COLS = (
+    "id, ramp_id, cohort_id, cohort_signature, geo_cluster, channel, angle, "
+    "brief, reviewer_comment, reviewed_by, reviewed_at, generated_at, updated_at"
+)
+
+
+def _row_to_brief(row) -> CohortBrief:
+    return CohortBrief(
+        id=row[0],
+        ramp_id=row[1],
+        cohort_id=row[2],
+        cohort_signature=row[3],
+        geo_cluster=row[4],
+        channel=row[5],
+        angle=row[6],
+        brief=dict(row[7] or {}),
+        reviewer_comment=row[8] or "",
+        reviewed_by=row[9],
+        reviewed_at=row[10].isoformat() if row[10] else None,
+        generated_at=row[11].isoformat() if row[11] else None,
+        updated_at=row[12].isoformat() if row[12] else None,
+    )
+
+
+def upsert_awaiting_brief_review(
+    ramp_id: str,
+    *,
+    matched_domain: str = "",
+    requester_name: str = "",
+    summary: str = "",
+    submitted_at=None,
+    prep_summary: Optional[dict] = None,
+) -> None:
+    """Pipeline calls this at the END of prep — AFTER the cohort_briefs rows
+    have been written. Behaves like upsert_awaiting_approval but transitions
+    to 'awaiting_brief_review' instead. Idempotent + status-downgrade-safe.
+
+    A `brief_review_pending` audit-log row is appended in the same
+    transaction so the console's audit log shows the gate opened."""
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO ramp_decisions (
+                ramp_id, status, matched_domain, requester_name,
+                summary, submitted_at
+            )
+            VALUES (%s, 'awaiting_brief_review'::ramp_status, %s, %s, %s, %s)
+            ON CONFLICT (ramp_id) DO UPDATE SET
+                matched_domain = EXCLUDED.matched_domain,
+                requester_name = EXCLUDED.requester_name,
+                summary        = EXCLUDED.summary,
+                submitted_at   = EXCLUDED.submitted_at,
+                status = CASE
+                    WHEN ramp_decisions.status = 'prep_running'::ramp_status
+                        THEN 'awaiting_brief_review'::ramp_status
+                    ELSE ramp_decisions.status
+                END
+            """,
+            (ramp_id, matched_domain, requester_name, summary, submitted_at),
+        )
+        cur.execute(
+            "INSERT INTO ramp_audit_log (ramp_id, event_type, payload, by_user) "
+            "VALUES (%s, %s, %s::jsonb, %s)",
+            (ramp_id, "brief_review_pending", json.dumps(prep_summary or {}), None),
+        )
+        conn.commit()
+
+
+def upsert_brief(
+    *,
+    ramp_id: str,
+    cohort_id: str,
+    cohort_signature: str,
+    geo_cluster: str,
+    channel: str,
+    angle: str,
+    brief: dict,
+) -> None:
+    """Persist ONE structured brief (Phase-1 output) for review. Idempotent on
+    (ramp_id, cohort_id, geo_cluster, channel, angle). The ON CONFLICT branch
+    overwrites `brief` + `generated_at` but PRESERVES `reviewer_comment`,
+    `reviewed_by`, `reviewed_at` so a re-prep doesn't wipe reviewer edits.
+
+    Best-effort: swallows UIDecisionsUnavailable so a DB outage doesn't block
+    prep — the brief survives in logs and can be replayed."""
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO cohort_briefs (
+                    ramp_id, cohort_id, cohort_signature, geo_cluster,
+                    channel, angle, brief
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
+                ON CONFLICT (ramp_id, cohort_id, geo_cluster, channel, angle) DO UPDATE SET
+                    brief        = EXCLUDED.brief,
+                    generated_at = NOW()
+                    -- reviewer_comment, reviewed_by, reviewed_at preserved
+                """,
+                (
+                    ramp_id, cohort_id, cohort_signature, geo_cluster,
+                    channel, angle, json.dumps(brief),
+                ),
+            )
+            conn.commit()
+    except UIDecisionsUnavailable as exc:
+        log.debug("upsert_brief skipped (%s/%s/%s/%s/%s): %s",
+                  ramp_id, cohort_id, geo_cluster, channel, angle, exc)
+
+
+def list_briefs_for_ramp(
+    ramp_id: str,
+    *,
+    channel: Optional[str] = None,
+) -> list[CohortBrief]:
+    """Read all briefs for a ramp, optionally filtered by channel. Used by
+    `_launch_ramp` to feed Phase 2 (build_copy_from_brief) and by the console
+    UI via the parallel TS reader in lib/db.ts."""
+    with _connect() as conn, conn.cursor() as cur:
+        if channel is None:
+            cur.execute(
+                f"SELECT {_BRIEF_COLS} FROM cohort_briefs "
+                "WHERE ramp_id = %s ORDER BY cohort_signature, geo_cluster, angle",
+                (ramp_id,),
+            )
+        else:
+            cur.execute(
+                f"SELECT {_BRIEF_COLS} FROM cohort_briefs "
+                "WHERE ramp_id = %s AND channel = %s "
+                "ORDER BY cohort_signature, geo_cluster, angle",
+                (ramp_id, channel),
+            )
+        return [_row_to_brief(r) for r in cur.fetchall()]
+
+
+def confirm_briefs(ramp_id: str, *, by_user: Optional[str] = None) -> Optional[Decision]:
+    """Atomic CAS: flip ramp_decisions.status from 'awaiting_brief_review' to
+    'awaiting_approval'. Returns the updated Decision on success, None if
+    the row wasn't in awaiting_brief_review (already confirmed / wrong state).
+
+    Writes a 'briefs_confirmed' audit-log row in the same transaction. The
+    console's confirm-briefs API route calls this from the UI."""
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            UPDATE ramp_decisions
+               SET status = 'awaiting_approval'::ramp_status,
+                   version = version + 1
+             WHERE ramp_id = %s
+               AND status = 'awaiting_brief_review'::ramp_status
+         RETURNING {_DECISION_COLS}
+            """,
+            (ramp_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            conn.rollback()
+            return None
+        cur.execute(
+            "INSERT INTO ramp_audit_log (ramp_id, event_type, payload, by_user) "
+            "VALUES (%s, 'briefs_confirmed', %s::jsonb, %s)",
+            (ramp_id, json.dumps({"trigger": "manual"}), by_user),
+        )
+        conn.commit()
+        return _row_to_decision(row)
+
+
+def auto_confirm_stale_brief_reviews(
+    *,
+    threshold_hours: int = 4,
+) -> list[str]:
+    """Sweep ramps stuck in 'awaiting_brief_review' for longer than
+    `threshold_hours` and flip them to 'awaiting_approval'. Called from the
+    poller (scripts/smart_ramp_poller.py) on every tick.
+
+    Threshold uses the latest cohort_briefs.generated_at for the ramp (or
+    ramp_decisions.updated_at if no briefs exist — defensive). Returns the
+    list of ramp_ids that were auto-confirmed so the caller can log them.
+
+    Pass threshold_hours <= 0 to disable (ramps then block indefinitely)."""
+    if threshold_hours <= 0:
+        return []
+    confirmed: list[str] = []
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                WITH stale AS (
+                    SELECT d.ramp_id
+                      FROM ramp_decisions d
+                     WHERE d.status = 'awaiting_brief_review'::ramp_status
+                       AND d.updated_at < NOW() - (%s || ' hours')::INTERVAL
+                )
+                UPDATE ramp_decisions
+                   SET status = 'awaiting_approval'::ramp_status,
+                       version = version + 1
+                 WHERE ramp_id IN (SELECT ramp_id FROM stale)
+             RETURNING ramp_id
+                """,
+                (str(threshold_hours),),
+            )
+            for r in cur.fetchall():
+                confirmed.append(r[0])
+            for rid in confirmed:
+                cur.execute(
+                    "INSERT INTO ramp_audit_log (ramp_id, event_type, payload, by_user) "
+                    "VALUES (%s, 'brief_review_auto_confirmed', %s::jsonb, %s)",
+                    (rid, json.dumps({"threshold_hours": threshold_hours}), None),
+                )
+            conn.commit()
+            if confirmed:
+                log.info("Auto-confirmed %d stale brief-review ramp(s): %s",
+                         len(confirmed), confirmed)
+    except UIDecisionsUnavailable as exc:
+        log.debug("auto_confirm_stale_brief_reviews skipped: %s", exc)
+    return confirmed
+
+
 def upsert_competitor_role_ads(
     ramp_id: str, role_query: str, ads: list[dict]
 ) -> None:
