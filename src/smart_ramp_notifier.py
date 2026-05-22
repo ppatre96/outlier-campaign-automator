@@ -319,31 +319,43 @@ def build_escalation_message(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _send_to_target(client: WebClient, target: tuple[str, str], text: str) -> bool:
+def _send_to_target(
+    client: WebClient,
+    target: tuple[str, str],
+    text: str,
+    thread_ts: Optional[str] = None,
+) -> tuple[bool, Optional[str]]:
     """Send `text` to a single target tuple (kind, id).
 
     For kind == "user":   two-step conversations_open → chat_postMessage
     For kind == "channel": direct chat_postMessage(channel=id)
 
-    Returns True on success, False on Slack API error (logged but NOT raised —
-    per-target isolation per CONTEXT.md / RESEARCH §Pattern 6).
+    When `thread_ts` is set, posts as a reply in that thread instead of
+    top-level. Used by lifecycle pings (briefs_ready, launched) so all
+    ramp-scoped Slack chatter lives under one parent message in the
+    channel.
+
+    Returns (ok, posted_ts). `posted_ts` is Slack's message timestamp for
+    the new post — used by notify_new_ramp to capture the parent ts the
+    FIRST time, so subsequent pings can reply in-thread.
     """
     kind, target_id = target
+    extra_kw: dict = {"thread_ts": thread_ts} if thread_ts else {}
     try:
         if kind == "user":
             # Two-step: get the IM channel ID, then post (RESEARCH §Q4)
             open_resp = client.conversations_open(users=[target_id])
             channel_id = open_resp["channel"]["id"]
-            client.chat_postMessage(channel=channel_id, text=text)
-            log.info("Slack DM sent to user %s", target_id)
-            return True
+            resp = client.chat_postMessage(channel=channel_id, text=text, **extra_kw)
+            log.info("Slack DM sent to user %s%s", target_id, " (threaded)" if thread_ts else "")
+            return True, resp.get("ts") if hasattr(resp, "get") else None
         elif kind == "channel":
-            client.chat_postMessage(channel=target_id, text=text)
-            log.info("Slack channel post sent to %s", target_id)
-            return True
+            resp = client.chat_postMessage(channel=target_id, text=text, **extra_kw)
+            log.info("Slack channel post sent to %s%s", target_id, " (threaded)" if thread_ts else "")
+            return True, resp.get("ts") if hasattr(resp, "get") else None
         else:
             log.warning("Unknown target kind %r for id %s — skipping", kind, target_id)
-            return False
+            return False, None
     except SlackApiError as e:
         err_code = "unknown"
         try:
@@ -354,13 +366,13 @@ def _send_to_target(client: WebClient, target: tuple[str, str], text: str) -> bo
             "Slack send to %s=%s failed: %s — continuing with other targets",
             kind, target_id, err_code,
         )
-        return False
+        return False, None
     except Exception as e:
         log.warning(
             "Slack send to %s=%s raised %s: %s — continuing with other targets",
             kind, target_id, type(e).__name__, e,
         )
-        return False
+        return False, None
 
 
 def _post_via_webhook(text: str) -> bool:
@@ -401,12 +413,20 @@ def _post_via_webhook(text: str) -> bool:
         return False
 
 
-def _enqueue_via_drive(text: str, ramp_id: str = "") -> bool:
+def _enqueue_via_drive(
+    text: str, ramp_id: str = "", thread_ts: Optional[str] = None
+) -> bool:
     """Primary delivery path (2026-05-13+): drop the summary into a Drive
     queue folder. A companion RemoteTrigger cron polls the folder every 5
     minutes and posts each file to Slack via the Claude.ai-inherited Slack
     MCP connector — no bot token required, and the same OAuth identity
     Diego/Bryan/Tuan see on Pranav's hourly heartbeat trigger.
+
+    `thread_ts` (added 2026-05-22): when set, the queued JSON includes a
+    thread_ts field that the RemoteTrigger reads + passes to chat_postMessage
+    so the message replies in-thread instead of top-level. Trigger-side
+    support is required for this to actually thread; falls back to top-level
+    silently when the trigger ignores the field.
 
     Returns True if the queue write succeeded.
     """
@@ -416,11 +436,17 @@ def _enqueue_via_drive(text: str, ramp_id: str = "") -> bool:
             {"kind": kind, "id": tid}
             for kind, tid in (getattr(config, "SLACK_RAMP_NOTIFY_TARGETS", []) or [])
         ]
-        url = enqueue_slack_summary(
-            ramp_id=ramp_id, summary_text=text, targets=targets,
-        )
+        # gdrive.enqueue_slack_summary takes **extra kwargs through to the JSON
+        # payload; older trigger versions ignore unknown fields.
+        kwargs: dict = {"ramp_id": ramp_id, "summary_text": text, "targets": targets}
+        if thread_ts:
+            kwargs["thread_ts"] = thread_ts
+        url = enqueue_slack_summary(**kwargs)
         if url:
-            log.info("Slack delivery: queued via Drive (RemoteTrigger will post) → %s", url)
+            log.info(
+                "Slack delivery: queued via Drive%s → %s",
+                " (threaded)" if thread_ts else "", url,
+            )
             return True
         log.warning("Slack delivery: Drive queue write returned empty URL")
         return False
@@ -432,7 +458,9 @@ def _enqueue_via_drive(text: str, ramp_id: str = "") -> bool:
         return False
 
 
-def _send_to_all_targets(text: str, ramp_id: str = "") -> dict:
+def _send_to_all_targets(
+    text: str, ramp_id: str = "", thread_ts: Optional[str] = None
+) -> dict:
     """Send `text` to every target in config.SLACK_RAMP_NOTIFY_TARGETS.
 
     Delivery order (2026-05-13 — bot-tokenless preferred):
@@ -446,27 +474,36 @@ def _send_to_all_targets(text: str, ramp_id: str = "") -> dict:
       - `drive_queue`        — Drive queue write outcome (primary)
       - `webhook_fallback`   — only populated when bot+queue both failed
     """
-    outcomes: dict[str, bool] = {}
+    outcomes: dict = {}
+    channel_ts: Optional[str] = None  # captured from the channel post for threading
 
     # 1) Drive queue — primary path
-    outcomes["drive_queue"] = _enqueue_via_drive(text, ramp_id=ramp_id)
+    outcomes["drive_queue"] = _enqueue_via_drive(text, ramp_id=ramp_id, thread_ts=thread_ts)
 
-    # 2) Opportunistic bot-token send (kept for back-compat; many runs
-    # won't have a valid token, that's fine — the queue is the real path).
+    # 2) Opportunistic bot-token send (kept for back-compat). When threading
+    # is requested, this is the path that actually returns a usable parent_ts.
     if config.SLACK_BOT_TOKEN:
         client = WebClient(token=config.SLACK_BOT_TOKEN)
         for target in config.SLACK_RAMP_NOTIFY_TARGETS:
             kind, tid = target
-            outcomes[f"{kind}:{tid}"] = _send_to_target(client, target, text)
+            ok, posted_ts = _send_to_target(client, target, text, thread_ts=thread_ts)
+            outcomes[f"{kind}:{tid}"] = ok
+            # Capture the channel post's ts as the thread parent. DMs aren't
+            # used for threading (one DM channel per recipient already).
+            if ok and kind == "channel" and posted_ts and channel_ts is None:
+                channel_ts = posted_ts
     else:
         for kind, tid in config.SLACK_RAMP_NOTIFY_TARGETS:
             outcomes[f"{kind}:{tid}"] = False
 
+    if channel_ts is not None:
+        outcomes["channel_ts"] = channel_ts
+
     # 3) Webhook fallback only if BOTH primary (drive queue) AND all bot
-    # targets failed. The webhook only reaches Pranav DM by design, so
-    # we don't want to fire it as long as the queue path succeeded.
+    # targets failed.
     bot_targets_ok = any(
-        v for k, v in outcomes.items() if k != "drive_queue"
+        v for k, v in outcomes.items()
+        if k not in ("drive_queue", "channel_ts") and isinstance(v, bool)
     )
     if not outcomes["drive_queue"] and not bot_targets_ok:
         outcomes["webhook_fallback"] = _post_via_webhook(text)
@@ -480,8 +517,7 @@ def _send_to_all_targets(text: str, ramp_id: str = "") -> dict:
 
 
 def notify_success(ramp_record, result: dict, version: int = 1) -> dict:
-    """Send the success Slack message via the Drive queue (primary) + bot/webhook
-    fallback. Returns per-target outcomes."""
+    """Launch-done summary. Threaded under notify_new_ramp's parent."""
     text = build_success_message(
         ramp_id=ramp_record.id,
         project_name=ramp_record.project_name or "—",
@@ -491,23 +527,51 @@ def notify_success(ramp_record, result: dict, version: int = 1) -> dict:
         extra_platform_campaigns=result.get("extra_platform_campaigns") or {},
         manual_handoff_urls=result.get("manual_handoff_urls") or {},
     )
-    return _send_to_all_targets(text, ramp_id=ramp_record.id)
+    return _send_to_all_targets(
+        text, ramp_id=ramp_record.id, thread_ts=_lookup_thread_ts(ramp_record.id),
+    )
 
 
 def notify_new_ramp(ramp_record) -> dict:
-    """Slack ping fired when the poller first sees a Smart Ramp (no decision
-    row yet in Postgres). Sent via the Drive queue (primary) so it lands
-    even on a runner with no Slack bot token. Returns per-target outcomes.
+    """Slack ping fired when the poller first sees a Smart Ramp.
 
-    Safe to call even when the Drive queue is unreachable — _send_to_all_targets
-    has its own fallback chain (bot → webhook → silent drop)."""
+    Threading (2026-05-22): this is the PARENT message of the per-ramp
+    thread. If notify_new_ramp has already fired once for this ramp (and a
+    thread_ts is in Postgres), we still post fresh — that's OK; the only
+    side-effect of re-posting is two parents in the channel, which is rare
+    in practice since notify_new_ramp only fires on the first poller tick.
+    """
     text = build_new_ramp_message(
         ramp_id=ramp_record.id,
         project_name=ramp_record.project_name or "—",
         requester_name=getattr(ramp_record, "requester_name", "") or "—",
         summary=getattr(ramp_record, "summary", "") or "",
     )
-    return _send_to_all_targets(text, ramp_id=ramp_record.id)
+    out = _send_to_all_targets(text, ramp_id=ramp_record.id)
+    # Persist the channel ts so notify_briefs_ready + notify_success thread
+    # under it. Best-effort: Postgres outage just means later pings post
+    # top-level instead of replying.
+    posted_ts = out.get("channel_ts")
+    if posted_ts:
+        try:
+            from src.ui_decisions import set_slack_thread_ts
+            set_slack_thread_ts(ramp_record.id, posted_ts)
+            log.info("Slack thread parent ts=%s persisted for ramp=%s", posted_ts, ramp_record.id)
+        except Exception as exc:
+            log.warning("set_slack_thread_ts failed (non-fatal): %s", exc)
+    return out
+
+
+def _lookup_thread_ts(ramp_id: str) -> Optional[str]:
+    """Read the per-ramp Slack thread ts from Postgres so lifecycle pings
+    after the parent (new_ramp) post can reply in-thread instead of
+    top-level. Returns None on miss → caller posts top-level."""
+    try:
+        from src.ui_decisions import get_slack_thread_ts
+        return get_slack_thread_ts(ramp_id)
+    except Exception as exc:
+        log.debug("get_slack_thread_ts failed: %s", exc)
+        return None
 
 
 def notify_briefs_ready(
@@ -517,9 +581,8 @@ def notify_briefs_ready(
     cohorts_count: int,
     fell_back_to_legacy: bool = False,
 ) -> dict:
-    """Slack ping fired after prep finishes and the decision row is written.
-    Action-required: asks Diego/Bryan to open the console, review briefs,
-    confirm, then pick channels + budget + launch."""
+    """Slack ping fired after prep finishes. Threaded under notify_new_ramp's
+    channel post when a parent ts exists."""
     text = build_briefs_ready_message(
         ramp_id=ramp_record.id,
         project_name=ramp_record.project_name or "—",
@@ -528,7 +591,9 @@ def notify_briefs_ready(
         cohorts_count=cohorts_count,
         fell_back_to_legacy=fell_back_to_legacy,
     )
-    return _send_to_all_targets(text, ramp_id=ramp_record.id)
+    return _send_to_all_targets(
+        text, ramp_id=ramp_record.id, thread_ts=_lookup_thread_ts(ramp_record.id),
+    )
 
 
 def notify_escalation(

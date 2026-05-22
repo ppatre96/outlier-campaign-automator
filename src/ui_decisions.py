@@ -597,6 +597,40 @@ def auto_confirm_stale_brief_reviews(
     return confirmed
 
 
+def get_slack_thread_ts(ramp_id: str) -> Optional[str]:
+    """Return the channel-post ts for this ramp's Slack thread, or None.
+    First-time callers see None → notify_new_ramp posts top-level, captures
+    ts, persists via set_slack_thread_ts. Subsequent callers (briefs_ready,
+    launched) get the ts and reply-in-thread."""
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT slack_thread_ts FROM ramp_decisions WHERE ramp_id = %s",
+                (ramp_id,),
+            )
+            row = cur.fetchone()
+            return row[0] if row and row[0] else None
+    except UIDecisionsUnavailable:
+        return None
+
+
+def set_slack_thread_ts(ramp_id: str, ts: str) -> None:
+    """Persist the channel-post ts so later lifecycle pings can thread under
+    it. Idempotent — re-running notify_new_ramp for the same ramp overwrites
+    the ts (rare but possible if the first thread was deleted on Slack)."""
+    if not ts:
+        return
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE ramp_decisions SET slack_thread_ts = %s WHERE ramp_id = %s",
+                (ts, ramp_id),
+            )
+            conn.commit()
+    except UIDecisionsUnavailable as exc:
+        log.debug("set_slack_thread_ts skipped (%s): %s", ramp_id, exc)
+
+
 def upsert_competitor_role_ads(
     ramp_id: str, role_query: str, ads: list[dict]
 ) -> None:

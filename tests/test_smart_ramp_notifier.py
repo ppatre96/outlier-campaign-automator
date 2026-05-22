@@ -99,14 +99,19 @@ def test_dm_to_pranav_diego_and_channel(monkeypatch, fake_ramp):
     monkeypatch.setattr(N, "WebClient", lambda token=None: fake_client)
     monkeypatch.setattr(config, "SLACK_BOT_TOKEN", "xoxb-fake")
     # Stub the Drive queue write so the test doesn't touch real Drive auth.
-    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="": True)
+    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="", thread_ts=None: True)
 
     outcomes = N.notify_success(fake_ramp, _fake_result(n_cohorts=2), version=1)
 
     # 4 outcomes: drive_queue (primary) + 3 bot targets — all True
     assert "drive_queue" in outcomes
     assert outcomes["drive_queue"] is True
-    bot_outcomes = {k: v for k, v in outcomes.items() if k != "drive_queue"}
+    # channel_ts is a 2026-05-22 bookkeeping key for the Slack-thread-per-ramp
+    # feature; exclude it from the bot-target count.
+    bot_outcomes = {
+        k: v for k, v in outcomes.items()
+        if k not in ("drive_queue", "channel_ts")
+    }
     assert len(bot_outcomes) == 3, f"expected 3 bot targets, got {len(bot_outcomes)}"
     assert all(bot_outcomes.values()), f"all 3 bot targets should succeed: {bot_outcomes}"
 
@@ -132,7 +137,7 @@ def test_two_step_conversations_open_for_dms(monkeypatch, fake_ramp):
 
     fake_client, calls = _make_fake_webclient()
     monkeypatch.setattr(N, "WebClient", lambda token=None: fake_client)
-    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="": True)
+    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="", thread_ts=None: True)
     monkeypatch.setattr(config, "SLACK_BOT_TOKEN", "xoxb-fake")
 
     N.notify_success(fake_ramp, _fake_result(), version=1)
@@ -224,7 +229,7 @@ def test_one_target_failure_does_not_block_others(monkeypatch, fake_ramp):
     fake_client, calls = _make_fake_webclient(open_fail_for_uid="U08AW9FCP27")
     monkeypatch.setattr(N, "WebClient", lambda token=None: fake_client)
     monkeypatch.setattr(config, "SLACK_BOT_TOKEN", "xoxb-fake")
-    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="": True)
+    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="", thread_ts=None: True)
 
     outcomes = N.notify_success(fake_ramp, _fake_result(), version=1)
 
@@ -253,7 +258,7 @@ def test_webhook_fallback_when_all_targets_fail(monkeypatch, fake_ramp):
     from slack_sdk.errors import SlackApiError
 
     # Drive queue also fails
-    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="": False)
+    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="", thread_ts=None: False)
 
     # Make every bot-token call fail with token_expired
     instance = MagicMock()
@@ -305,7 +310,7 @@ def test_webhook_fallback_skipped_when_any_target_succeeds(monkeypatch, fake_ram
     monkeypatch.setattr(N, "WebClient", lambda token=None: fake_client)
     monkeypatch.setattr(config, "SLACK_BOT_TOKEN", "xoxb-fake")
     monkeypatch.setattr(config, "SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/T/B/X")
-    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="": True)
+    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="", thread_ts=None: True)
 
     webhook_calls = []
     monkeypatch.setattr(N.requests, "post",
@@ -406,7 +411,7 @@ def test_notify_new_ramp_calls_send_to_all_targets(monkeypatch, fake_ramp):
     Drive or Slack."""
     from src import smart_ramp_notifier as N
     captured = {}
-    def fake_send(text, ramp_id=""):
+    def fake_send(text, ramp_id="", thread_ts=None):
         captured["text"] = text
         captured["ramp_id"] = ramp_id
         return {"drive_queue": True}
@@ -422,7 +427,7 @@ def test_notify_briefs_ready_passes_counts(monkeypatch, fake_ramp):
     captured = {}
     monkeypatch.setattr(
         N, "_send_to_all_targets",
-        lambda text, ramp_id="": captured.update(text=text, ramp_id=ramp_id) or {"drive_queue": True},
+        lambda text, ramp_id="", thread_ts=None: captured.update(text=text, ramp_id=ramp_id) or {"drive_queue": True},
     )
     N.notify_briefs_ready(
         fake_ramp, briefs_generated=9, cohorts_count=1, fell_back_to_legacy=False,
