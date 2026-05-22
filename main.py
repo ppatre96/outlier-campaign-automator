@@ -4721,20 +4721,71 @@ def run_launch_for_ramp(
         aggregated["cohorts_mined"] = []
         aggregated["briefs_generated"] = 0
 
-    # Phase 5 — snapshot the competitor intel JSON against this ramp so the
-    # console renders the intel that informed THIS run's brief. Best-effort:
-    # missing file or Postgres outage → log + continue.
+    # Phase 5 — refresh + snapshot competitor intel per ramp.
+    # Pre-2026-05-22 this only SNAPSHOTTED the shared latest.json file, which
+    # was refreshed manually via scripts/refresh_competitor_intel.py. That
+    # meant every ramp got the same generic intel regardless of the actual
+    # role being recruited. Now we ALSO refresh in-line, scoped to this
+    # ramp's brief, so the snapshot carries role-specific listings + Reddit
+    # signals. Disable via COMPETITOR_INTEL_AUTO_REFRESH=false when running
+    # batch reruns to avoid duplicate scrapes per (tg_label, day).
     try:
         from pathlib import Path as _Path
         from src.ui_decisions import upsert_competitor_intel_snapshot
         _intel_path = _Path("data/competitor_intel/latest.json")
+        _auto_refresh = os.getenv("COMPETITOR_INTEL_AUTO_REFRESH", "true").lower() in ("1", "true", "yes")
+        # Pull the ramp's brief once — it's the cohort-shared tg_label seed.
+        # ramp.summary is the verbatim requester ask (e.g. "Short-Form Video
+        # Creators"). Fall back to project_name if summary is empty.
+        try:
+            from src.smart_ramp_client import SmartRampClient
+            _ramp_record = SmartRampClient().fetch_ramp(ramp_id)
+        except Exception as _exc:
+            log.warning("Phase5: could not fetch ramp record for tg_label: %s", _exc)
+            _ramp_record = None
+        _tg_label = ""
+        if _ramp_record is not None:
+            _tg_label = (
+                (getattr(_ramp_record, "summary", "") or "").strip()
+                or (getattr(_ramp_record, "project_name", "") or "").strip()
+            )
+        if _auto_refresh and _tg_label:
+            try:
+                from src.competitor_intel import run_competitor_intel, save_intel_json
+                log.info(
+                    "Phase5: auto-refreshing competitor intel for ramp=%s tg_label=%r",
+                    ramp_id, _tg_label[:80],
+                )
+                _intel = run_competitor_intel(
+                    tg_label=_tg_label,
+                    include_reddit=True,
+                    include_trustpilot=False,  # ~1 min slowest source; skip in pipeline
+                    include_seo=True,
+                    include_task_listings=True,
+                )
+                save_intel_json(_intel, tg_label=_tg_label)
+            except Exception as _exc:
+                log.warning(
+                    "Phase5: competitor intel auto-refresh failed (%s) — "
+                    "falling back to the existing latest.json snapshot",
+                    _exc,
+                )
+        elif not _auto_refresh:
+            log.info("Phase5: COMPETITOR_INTEL_AUTO_REFRESH=false — using existing latest.json")
+        else:
+            log.info("Phase5: no tg_label resolved for ramp=%s — skipping auto-refresh", ramp_id)
+
         if _intel_path.exists():
             import json as _json_mod
             _intel_data = _json_mod.loads(_intel_path.read_text())
             upsert_competitor_intel_snapshot(ramp_id, _intel_data)
             log.info(
-                "Phase5: snapshotted competitor_intel for ramp=%s (%d top-level keys)",
-                ramp_id, len(_intel_data),
+                "Phase5: snapshotted competitor_intel for ramp=%s tg_label=%r "
+                "(%d top-level keys, listings=%d, role_hits=%d)",
+                ramp_id, (_intel_data.get("tg_label") or "")[:60],
+                len(_intel_data),
+                len(_intel_data.get("task_listings") or []),
+                (_intel_data.get("role_demand_signals") or {}).get("match_count") or 0,
             )
     except Exception as _exc:
         log.warning("Phase5: competitor_intel snapshot skipped: %s", _exc)
