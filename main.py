@@ -4736,13 +4736,13 @@ def run_launch_for_ramp(
         _auto_refresh = os.getenv("COMPETITOR_INTEL_AUTO_REFRESH", "true").lower() in ("1", "true", "yes")
         # Pull the ramp's brief once — it's the cohort-shared tg_label seed.
         # ramp.summary is the verbatim requester ask (e.g. "Short-Form Video
-        # Creators"). Fall back to project_name if summary is empty.
-        try:
-            from src.smart_ramp_client import SmartRampClient
-            _ramp_record = SmartRampClient().fetch_ramp(ramp_id)
-        except Exception as _exc:
-            log.warning("Phase5: could not fetch ramp record for tg_label: %s", _exc)
-            _ramp_record = None
+        # Creators"). Fall back to project_name if summary is empty. We
+        # reuse the `client` + `ramp` already fetched at the top of
+        # run_launch_for_ramp via the outer scope rather than re-instantiating
+        # SmartRampClient locally (a local import here would scope-shadow the
+        # top-of-function `client = SmartRampClient()` and raise
+        # UnboundLocalError before this block ever runs).
+        _ramp_record = ramp
         _tg_label = ""
         if _ramp_record is not None:
             _tg_label = (
