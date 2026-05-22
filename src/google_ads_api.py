@@ -6,8 +6,9 @@ Google Display alongside LinkedIn and Meta.
 
 Mapping of pipeline concepts to Google Ads entities:
   - `create_campaign_group` → Google Ads Campaign (advertising_channel_type
-    DISPLAY, status PAUSED, MANUAL_CPC bidding to avoid conversion-tracking
-    pre-reqs).
+    DISPLAY, status PAUSED, MAXIMIZE_CONVERSIONS bidding — Diego confirmed
+    2026-05-22 that conversion tracking is configured on customer
+    8840244968. Override via GOOGLE_BID_STRATEGY=MANUAL_CPC env var.).
   - `create_campaign`       → Google Ads Ad Group under that Campaign, with
     audience + geo criteria.
   - `upload_image`          → Asset of type IMAGE.
@@ -48,13 +49,13 @@ class GoogleAdsClient(AdPlatformClient):
 
     AGENT_NAME_PREFIX = config.AGENT_NAME_PREFIX  # "agent_"
 
-    # Placeholder daily budget + per-click cap. Google Ads requires both for
-    # a Display campaign + ad group — but the pipeline only creates
-    # PAUSED/DRAFT entities. The reviewer sets real values in the Ads UI
-    # before un-pausing. Use $1/day budget + $0.10 cap so no real spend
-    # can occur even if accidentally activated.
-    PLACEHOLDER_DAILY_BUDGET_MICROS = 1_000_000     # $1/day
-    PLACEHOLDER_CPC_BID_MICROS      =   100_000     # $0.10 max-CPC
+    # Default daily budget when no console override is supplied. Per Diego
+    # (2026-05-22): $100/day for new campaigns. Pipeline still creates
+    # PAUSED/DRAFT entities, so this only takes effect once the reviewer
+    # un-pauses in the Ads UI. Override per-campaign via decision.budgets
+    # in the console UI.
+    PLACEHOLDER_DAILY_BUDGET_MICROS = 100_000_000   # $100/day
+    PLACEHOLDER_CPC_BID_MICROS      =     100_000   # $0.10 max-CPC (Manual CPC fallback only)
 
     def __init__(
         self,
@@ -106,7 +107,7 @@ class GoogleAdsClient(AdPlatformClient):
     # ── Campaign (one per cohort×geo) ────────────────────────────────────────
 
     def create_campaign_group(self, name: str, *, geos: list[str] | None = None) -> str:
-        """Create a Google Ads Campaign (Display channel, PAUSED, MANUAL_CPC).
+        """Create a Google Ads Campaign (Display channel, PAUSED, MAXIMIZE_CONVERSIONS).
 
         Returns the Google Ads campaign resource name (e.g.
         `customers/1234567890/campaigns/9876543210`).
@@ -143,7 +144,21 @@ class GoogleAdsClient(AdPlatformClient):
         c.advertising_channel_type = client.enums.AdvertisingChannelTypeEnum.DISPLAY
         c.status = client.enums.CampaignStatusEnum.PAUSED
         c.campaign_budget = budget_resource
-        c.manual_cpc.enhanced_cpc_enabled = False
+        # Bidding strategy. Default: MAXIMIZE_CONVERSIONS (Diego, 2026-05-22:
+        # "Google Ads default bidding should be maximize conversions with no
+        # more restrictions"). Requires conversion tracking on the customer
+        # account — Diego confirmed it's set up on 8840244968. To roll back
+        # to the pre-2026-05-22 placeholder behavior set
+        # GOOGLE_BID_STRATEGY=MANUAL_CPC in the env.
+        import os as _os
+        _bid_strategy = (_os.getenv("GOOGLE_BID_STRATEGY") or "MAXIMIZE_CONVERSIONS").upper()
+        if _bid_strategy == "MANUAL_CPC":
+            c.manual_cpc.enhanced_cpc_enabled = False
+        else:
+            # Setting any sub-field of the maximize_conversions oneof
+            # activates that strategy. target_cpa_micros=0 = no target
+            # CPA, pure conversion maximization.
+            c.maximize_conversions.target_cpa_micros = 0
         # EU political advertising declaration — required field in Google
         # Ads v21+ (2026-05-08 verified). Outlier's tasking ads are not
         # political; explicitly declare DOES_NOT_CONTAIN.
@@ -222,9 +237,12 @@ class GoogleAdsClient(AdPlatformClient):
         ag.campaign = campaign_group_id
         ag.status = client.enums.AdGroupStatusEnum.PAUSED
         ag.type_ = client.enums.AdGroupTypeEnum.DISPLAY_STANDARD
-        # MANUAL_CPC ad groups need a max-CPC; placeholder $0.10 so no real
-        # spend can occur even if the ad group is accidentally activated.
-        ag.cpc_bid_micros = self.PLACEHOLDER_CPC_BID_MICROS
+        # Ad-group max-CPC is only set when the parent campaign uses
+        # MANUAL_CPC. MAXIMIZE_CONVERSIONS manages bids automatically and
+        # rejects ad groups that pin cpc_bid_micros.
+        import os as _os
+        if (_os.getenv("GOOGLE_BID_STRATEGY") or "MAXIMIZE_CONVERSIONS").upper() == "MANUAL_CPC":
+            ag.cpc_bid_micros = self.PLACEHOLDER_CPC_BID_MICROS
 
         try:
             resp = ad_group_service.mutate_ad_groups(
