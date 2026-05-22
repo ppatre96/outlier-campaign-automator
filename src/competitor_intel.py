@@ -133,6 +133,58 @@ def save_intel_json(intel: "CompetitorIntel", tg_label: str = "") -> None:
             if any(term in haystack for term in role_terms):
                 role_hits.append(tl)
 
+    # 2026-05-22 — role-keyed Reddit fallback. When task_listings produced
+    # zero role hits (competitors don't list this exact role on their
+    # job/task pages), search Reddit for the role itself instead of for
+    # competitor names. Surfaces what real people say about doing this
+    # kind of AI training work — pay rates, complaints, peer experiences —
+    # which the brief agent then leans on instead of generic competitor
+    # signals. Best-effort: scrape failures degrade silently to an empty
+    # list; the existing "Outlier may own this niche" framing still fires
+    # in the console card when the new field is also empty.
+    role_specific_reviews: list[dict] = []
+    if role_terms and not role_hits:
+        # Build 3-4 targeted queries combining role + AI training context.
+        # The first query reuses the verbatim tg_label so an exact-phrase
+        # match wins when it exists. Subsequent queries pair each role
+        # token with AI-training intent words to broaden recall without
+        # losing relevance.
+        role_phrase = tg_label.strip() if tg_label else " ".join(role_terms)
+        queries = [
+            role_phrase,
+            *[f"{t} ai training" for t in role_terms[:2] if len(t) >= 4],
+            *[f"{t} remote gig pay" for t in role_terms[:1] if len(t) >= 4],
+        ]
+        # Dedupe while preserving order.
+        seen_q: set[str] = set()
+        queries = [q for q in queries if not (q.lower() in seen_q or seen_q.add(q.lower()))]
+        log.info(
+            "Role-keyed Reddit fallback (role_hits=0 task listings): running %d queries: %s",
+            len(queries), queries,
+        )
+        for q in queries:
+            try:
+                sigs = fetch_reddit_signals(q, platform_name="role_query")
+            except Exception as exc:
+                log.warning("Role-keyed Reddit query %r failed: %s", q, exc)
+                continue
+            for sig in sigs[:5]:  # 5 per query keeps the payload small
+                role_specific_reviews.append({
+                    "source":     sig.source,
+                    "query":      q,
+                    "url":        sig.url,
+                    "title":      (sig.title or "")[:200],
+                    "snippet":    (sig.text or "")[:400],
+                    "sentiment":  sig.sentiment,
+                    "theme":      sig.theme,
+                })
+            if len(role_specific_reviews) >= 12:
+                break  # cap total payload — the card only renders the top few
+        log.info(
+            "Role-keyed Reddit fallback collected %d signals across %d queries",
+            len(role_specific_reviews), len(queries),
+        )
+
     output = {
         "updated_at":         datetime.utcnow().isoformat(),
         "tg_label":           tg_label,
@@ -157,6 +209,11 @@ def save_intel_json(intel: "CompetitorIntel", tg_label: str = "") -> None:
             "matches":       role_hits,
             "match_count":   len(role_hits),
             "platforms_searched": sorted({tl.get("platform") for tl in listings if tl.get("platform")}),
+            # 2026-05-22 — role-keyed Reddit fallback. Populated ONLY when
+            # task_listings filter returned 0 role hits. Empty list →
+            # console falls back to the existing "Outlier may own this
+            # niche" framing.
+            "role_specific_reviews": role_specific_reviews,
         },
         "dominant_competitor_angle": intel.dominant_competitor_angle,
         "whitespace_angle":   intel.whitespace_angle,
