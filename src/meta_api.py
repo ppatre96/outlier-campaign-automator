@@ -77,12 +77,12 @@ class MetaClient(AdPlatformClient):
     # Override via META_DEFAULT_OBJECTIVE env var if needed.
     DEFAULT_OBJECTIVE = os.getenv("META_DEFAULT_OBJECTIVE", "OUTCOME_LEADS")
 
-    # Placeholder daily budget. The Meta ABO ad-set creation API requires a
-    # daily_budget value, but our pipeline only creates DRAFT/PAUSED entities
-    # — the human reviewer sets the real budget in Ads Manager before
-    # un-pausing. Use the API-allowed minimum ($1.00 = 100 cents) so no
-    # real spend can occur even if a campaign is accidentally activated.
-    PLACEHOLDER_DAILY_BUDGET_CENTS = 100
+    # Default daily budget when no console override is supplied. Per Diego
+    # (2026-05-22): $100/day for new campaigns. Pipeline still creates
+    # DRAFT/PAUSED entities, so this only takes effect once the reviewer
+    # un-pauses in Ads Manager. Override per-campaign via decision.budgets
+    # in the console UI.
+    PLACEHOLDER_DAILY_BUDGET_CENTS = 10000
 
     def __init__(
         self,

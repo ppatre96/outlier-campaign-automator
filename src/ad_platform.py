@@ -256,7 +256,7 @@ class AdPlatformClient(ABC):
         name: str,
         campaign_group_id: str,
         targeting: dict[str, Any],
-        daily_budget_cents: int = 5000,
+        daily_budget_cents: int = 10000,
     ) -> str:
         """Create a campaign within the given group with platform-specific
         targeting. `targeting` is the dict returned by the platform's

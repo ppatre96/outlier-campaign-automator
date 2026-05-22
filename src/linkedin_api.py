@@ -501,7 +501,7 @@ class LinkedInClient(AdPlatformClient):
         source = self.get_campaign(source_urn)
         targeting    = source.get("targetingCriteria") or {}
         group_urn    = source.get("campaignGroup") or ""
-        daily_budget = source.get("dailyBudget") or {"currencyCode": "USD", "amount": "50.00"}
+        daily_budget = source.get("dailyBudget") or {"currencyCode": "USD", "amount": "100.00"}
         unit_cost    = source.get("unitCost")    or {"currencyCode": "USD", "amount": "10.00"}
         locale       = source.get("locale")      or {"country": "US", "language": "en"}
         obj_type     = source.get("objectiveType") or "WEBSITE_VISIT"
@@ -541,7 +541,7 @@ class LinkedInClient(AdPlatformClient):
         name: str,
         campaign_group_urn: str,
         facet_urns: dict[str, list[str]],
-        daily_budget_cents: int = 5000,
+        daily_budget_cents: int = 10000,
         exclude_facet_urns: dict[str, list[str]] | None = None,
     ) -> str:
         """
@@ -632,7 +632,7 @@ class LinkedInClient(AdPlatformClient):
         name: str,
         campaign_group_urn: str,
         facet_urns: dict[str, list[str]],
-        daily_budget_cents: int = 5000,
+        daily_budget_cents: int = 10000,
         exclude_facet_urns: dict[str, list[str]] | None = None,
     ) -> str:
         """
