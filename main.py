@@ -2211,88 +2211,115 @@ def _resolve_cohorts(
     target_tier, target_col, n_icp = pick_target_tier(df_bin)
     log.info("_resolve_cohorts: target tier=%s col=%s n_icp=%d", target_tier, target_col, n_icp)
 
-    if n_icp == 0:
-        log.warning("_resolve_cohorts: zero positives — no cohorts to resolve")
-        return ResolvedCohorts(flow_id=flow_id, location=location, project_id=project_id)
-
-    # Mode = stats vs sparse
-    if n_icp < MIN_POSITIVES_FOR_STATS:
-        log.warning(
-            "_resolve_cohorts: only %d positives (< %d) — sparse mode; no cohorts mined.",
-            n_icp, MIN_POSITIVES_FOR_STATS,
-        )
-        return ResolvedCohorts(flow_id=flow_id, location=location, project_id=project_id)
-
-    # Data-driven exclusions (negative signal)
-    data_driven_exclude_pairs: list = []
-    neg_hits = stage_a_negative(df_bin, bin_cols, target_col)
-    for h in neg_hits:
-        pair = feature_col_to_exclude_pair(h["feature"])
-        if pair:
-            data_driven_exclude_pairs.append(pair)
-
-    # Stage A
+    # Compute LLM-derived anchor columns up front so the ICP-fallback path
+    # (zero-positives, sparse mode, post-Stage-A-empty) can synthesize a
+    # cohort even when statistical Stage A can't run.
     title_anchor_cols = base_role_feature_columns(base_role_titles, list(df_bin.columns))
     skill_anchor_cols = required_skill_feature_columns(
         derived_icp.get("required_skills", []), list(df_bin.columns),
     )
     base_role_cols = title_anchor_cols + [c for c in skill_anchor_cols if c not in title_anchor_cols]
-    cohorts_a = stage_a(df_bin, bin_cols, target_col=target_col, base_role_cols=base_role_cols)
-    if not cohorts_a:
-        # 2026-05-20: ICP-fallback cohort. Stage A relies on lift over a
-        # binary target — when the screening pass-rate is already high (e.g.
-        # GMR-0021 at 96%), univariate analysis can't find any feature that
-        # lifts further, so the candidate pool collapses to 0. Same when the
-        # LLM-derived base-role anchors (skills__video_editing,
-        # job_titles_norm__Content_Creator) don't appear in the resume corpus
-        # at all because the role is non-standard. Without this fallback the
-        # entire ramp dies — no cohorts, no creatives, no campaigns.
-        #
-        # When that happens AND we have an LLM-derived ICP with anchor
-        # columns that DO exist in the corpus, synthesize a single Cohort
-        # whose rules == the top 3 anchor columns. The pipeline downstream
-        # (Stage B/C, copy gen, campaign creation) treats this just like a
-        # Stage A output.
-        log.warning("_resolve_cohorts: Stage A returned no cohorts")
-        if base_role_cols:
-            from src.analysis import Cohort
-            n_pos = int(df_bin[target_col].sum()) if target_col in df_bin.columns else 0
-            n_total = len(df_bin)
-            anchor_cols = base_role_cols[:3]
-            synthetic_rules = [(col, 1) for col in anchor_cols]
-            synthetic_label = (
-                derived_icp.get("derived_tg_label") or
-                derived_icp.get("derived_label") or
-                "ICP fallback cohort"
-            )
-            cohorts_a = [Cohort(
-                name=synthetic_label,
-                rules=synthetic_rules,
-                n=n_total,
-                passes=n_pos,
-                pass_rate=(n_pos / n_total) if n_total else 0.0,
-                lift_pp=0.0,
-                p_value=1.0,
-                score=1.0,
-                support=n_pos,
-                coverage=(n_pos / n_total) if n_total else 0.0,
-            )]
-            log.warning(
-                "_resolve_cohorts: ICP-fallback synthesized 1 cohort %r with "
-                "rules=%s — pipeline will run downstream stages against this. "
-                "Targeting will be looser than a Stage-A-derived cohort.",
-                synthetic_label, [r[0] for r in synthetic_rules],
-            )
-        else:
+
+    def _try_icp_fallback(reason: str) -> list:
+        """Synthesize a single Cohort from the LLM-derived ICP's anchor
+        columns. Used when statistical Stage A is unavailable (zero positives,
+        sparse mode, or Stage A produced no cohorts). Returns [Cohort] when
+        the LLM gave us anchors that exist in the corpus; [] otherwise.
+
+        Originally added 2026-05-20 for the GMR-0021 post-Stage-A-empty path.
+        Extended 2026-05-22 to also fire on the zero-positives and sparse-mode
+        branches — previously those paths returned empty without ever calling
+        the fallback, leaving ramps stuck at 0 cohorts whenever 1-29
+        contributors had passed screening."""
+        if not base_role_cols:
             log.warning(
                 "_resolve_cohorts: ICP-fallback unavailable (no LLM-derived "
-                "base-role / skill anchors matched the corpus) — returning empty"
+                "base-role / skill anchors matched the corpus) — reason=%s",
+                reason,
             )
-            return ResolvedCohorts(flow_id=flow_id, location=location, project_id=project_id)
+            return []
+        from src.analysis import Cohort
+        n_pos = (
+            int(df_bin[target_col].sum())
+            if target_col in df_bin.columns else 0
+        )
+        n_total = len(df_bin)
+        anchor_cols = base_role_cols[:3]
+        synthetic_rules = [(col, 1) for col in anchor_cols]
+        synthetic_label = (
+            derived_icp.get("derived_tg_label") or
+            derived_icp.get("derived_label") or
+            "ICP fallback cohort"
+        )
+        log.warning(
+            "_resolve_cohorts: ICP-fallback synthesized 1 cohort %r with "
+            "rules=%s — reason=%s. Targeting will be looser than a Stage-A-"
+            "derived cohort.",
+            synthetic_label, [r[0] for r in synthetic_rules], reason,
+        )
+        return [Cohort(
+            name=synthetic_label,
+            rules=synthetic_rules,
+            n=n_total,
+            passes=n_pos,
+            pass_rate=(n_pos / n_total) if n_total else 0.0,
+            lift_pp=0.0,
+            p_value=1.0,
+            score=1.0,
+            support=n_pos,
+            coverage=(n_pos / n_total) if n_total else 0.0,
+        )]
 
-    # Stage B (skip when Stage A came from support mode)
+    # ── Branch: stats mode vs sub-threshold ICP fallback ──────────────────
+    # Pre-2026-05-22: n_icp==0 returned empty; 0<n_icp<30 returned empty.
+    # Both branches now call the ICP-fallback so the LLM-derived cohort
+    # carries the ramp through Stage C → copy gen → campaign creation.
+    # When the fallback also can't help (no LLM anchors), still return empty.
+    data_driven_exclude_pairs: list = []
+    skip_stage_b = False
+
+    if n_icp < MIN_POSITIVES_FOR_STATS:
+        # Covers BOTH n_icp == 0 (cold start) and 0 < n_icp < 30 (sparse).
+        # Stats Stage A wouldn't find statistically valid signal in either
+        # case, so jump straight to the fallback.
+        reason = "zero_positives" if n_icp == 0 else "sparse_mode"
+        log.warning(
+            "_resolve_cohorts: n_icp=%d (<%d) — %s; attempting ICP-fallback",
+            n_icp, MIN_POSITIVES_FOR_STATS, reason,
+        )
+        cohorts_a = _try_icp_fallback(reason=reason)
+        if not cohorts_a:
+            return ResolvedCohorts(flow_id=flow_id, location=location, project_id=project_id)
+        # The synthetic cohort has no statistical lift signal; Stage B (which
+        # computes additional lift facets) would produce nonsense. Skip it.
+        skip_stage_b = True
+    else:
+        # Stats mode — original path.
+        neg_hits = stage_a_negative(df_bin, bin_cols, target_col)
+        for h in neg_hits:
+            pair = feature_col_to_exclude_pair(h["feature"])
+            if pair:
+                data_driven_exclude_pairs.append(pair)
+        cohorts_a = stage_a(df_bin, bin_cols, target_col=target_col, base_role_cols=base_role_cols)
+    if not cohorts_a:
+        # Stage A produced nothing — try the same LLM-derived ICP-fallback
+        # the sub-threshold branches use. Originally surfaced 2026-05-20 for
+        # GMR-0021 (96% pass-rate → univariate analysis finds no further lift).
+        # Skip Stage B too, since the synthetic cohort has no statistical
+        # lift signal for stage_b to enrich.
+        log.warning("_resolve_cohorts: Stage A returned no cohorts — attempting ICP-fallback")
+        cohorts_a = _try_icp_fallback(reason="stage_a_empty")
+        if not cohorts_a:
+            return ResolvedCohorts(flow_id=flow_id, location=location, project_id=project_id)
+        skip_stage_b = True
+
+    # Stage B (skip when Stage A came from support mode OR was bypassed via
+    # the ICP-fallback path for zero-positives / sparse / Stage-A-empty).
     from_support_mode = any(getattr(c, "support", 0) > 0 for c in cohorts_a)
-    cohorts_b = cohorts_a if from_support_mode else stage_b(df_bin, cohorts_a, target_col=target_col)
+    cohorts_b = (
+        cohorts_a if (from_support_mode or skip_stage_b)
+        else stage_b(df_bin, cohorts_a, target_col=target_col)
+    )
 
     # Stage C with graceful bypass
     try:
