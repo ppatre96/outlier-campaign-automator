@@ -301,8 +301,18 @@ def run_ramp_pipeline(record: RampRecord, dry_run: bool = False, version: int = 
     # otherwise fall back to awaiting_approval (legacy gate, no brief review).
     if decision is None:
         log.info("UI gate: ramp %s has no decision — running prep", record.id)
+
+        # Slack ping #1 — fired BEFORE prep starts so Diego/Bryan know a new
+        # ramp is in flight. Best-effort; failures never block the pipeline.
+        try:
+            from src.smart_ramp_notifier import notify_new_ramp
+            notify_new_ramp(record)
+        except Exception as exc:
+            log.warning("notify_new_ramp failed (non-fatal): %s", exc)
+
         prep_result = _prep_ramp(record.id)
         briefs_n = int(prep_result.get("briefs_generated", 0) or 0)
+        cohorts_n = len(prep_result.get("cohorts_mined", []) or [])
         prep_summary = {
             "cohorts_mined": prep_result.get("cohorts_mined", []),
             "rows_processed": len(_ramp_to_rows(record)),
@@ -320,6 +330,7 @@ def run_ramp_pipeline(record: RampRecord, dry_run: bool = False, version: int = 
                     submitted_at=getattr(record, "submitted_at", "") or None,
                     prep_summary=prep_summary,
                 )
+                fell_back_to_legacy = False
             else:
                 log.info("Prep wrote 0 briefs — falling back to awaiting_approval (legacy gate)")
                 upsert_awaiting_approval(
@@ -331,8 +342,26 @@ def run_ramp_pipeline(record: RampRecord, dry_run: bool = False, version: int = 
                     submitted_at=getattr(record, "submitted_at", "") or None,
                     prep_summary=prep_summary,
                 )
+                fell_back_to_legacy = True
         except UIDecisionsUnavailable as exc:
             log.warning("Prep finished for %s but upsert failed: %s — UI won't see it until next poll", record.id, exc)
+            return prep_result
+
+        # Slack ping #2 — action-required: prep done, asks Diego/Bryan to
+        # open the console, review briefs, then approve + launch. Sent
+        # AFTER the decision row is written so the link in the message
+        # lands the reviewer on an interactive page.
+        try:
+            from src.smart_ramp_notifier import notify_briefs_ready
+            notify_briefs_ready(
+                record,
+                briefs_generated=briefs_n,
+                cohorts_count=cohorts_n,
+                fell_back_to_legacy=fell_back_to_legacy,
+            )
+        except Exception as exc:
+            log.warning("notify_briefs_ready failed (non-fatal): %s", exc)
+
         return prep_result
 
     # Terminal / in-flight states — nothing to do this tick. awaiting_brief_review

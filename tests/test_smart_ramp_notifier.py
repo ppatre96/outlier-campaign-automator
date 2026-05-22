@@ -318,3 +318,114 @@ def test_webhook_fallback_skipped_when_any_target_succeeds(monkeypatch, fake_ram
     assert outcomes["channel:C0B0NBB986L"] is True
     assert "webhook_fallback" not in outcomes
     assert len(webhook_calls) == 0, "webhook must NOT fire when any primary target succeeds"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Brief-review gate lifecycle pings (2026-05-22)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_new_ramp_message_format(fake_ramp):
+    """build_new_ramp_message: header + console link + brief blurb. Banned-
+    vocab clean."""
+    from src import smart_ramp_notifier as N
+    msg = N.build_new_ramp_message(
+        ramp_id=fake_ramp.id,
+        project_name=fake_ramp.project_name,
+        requester_name=fake_ramp.requester_name,
+        summary="Recruit Bengali speakers in India for AI training tasks",
+    )
+    assert "GMR-0010" in msg
+    assert fake_ramp.project_name in msg
+    assert "Prep is running" in msg
+    assert "/ramps/GMR-0010" in msg
+    # Banned tokens scan — same regex notify_success uses.
+    banned = re.compile(
+        r"\b(compensation|project rate|interview|bonus|promote|assign|"
+        r"job|role|position|team|required)\b",
+        re.IGNORECASE,
+    )
+    m = banned.search(msg)
+    assert not m, f"banned vocab in new_ramp message: {m and m.group(0)!r} in: {msg!r}"
+
+
+def test_briefs_ready_message_briefs_path(fake_ramp):
+    """Brief-review path: surfaces brief + cohort counts, links to console."""
+    from src import smart_ramp_notifier as N
+    msg = N.build_briefs_ready_message(
+        ramp_id=fake_ramp.id,
+        project_name=fake_ramp.project_name,
+        requester_name=fake_ramp.requester_name,
+        briefs_generated=27,
+        cohorts_count=3,
+        fell_back_to_legacy=False,
+    )
+    assert "27" in msg, "brief count missing"
+    assert "Cohorts mined: 3" in msg
+    assert "Confirm briefs" in msg, "must reference the BriefReviewCard CTA"
+    assert "/ramps/GMR-0010" in msg
+    # Should NOT pitch the legacy 'awaiting_approval' framing on the brief path.
+    assert "No briefs persisted" not in msg
+
+
+def test_briefs_ready_message_legacy_fallback(fake_ramp):
+    """Sparse-mode fallback: brief count is 0 → message uses the legacy
+    awaiting_approval framing."""
+    from src import smart_ramp_notifier as N
+    msg = N.build_briefs_ready_message(
+        ramp_id=fake_ramp.id,
+        project_name=fake_ramp.project_name,
+        requester_name=fake_ramp.requester_name,
+        briefs_generated=0,
+        cohorts_count=0,
+        fell_back_to_legacy=True,
+    )
+    assert "No briefs persisted" in msg
+    assert "awaiting_approval" in msg
+    assert "Confirm briefs" not in msg, "no BriefReviewCard on the legacy path"
+    assert "/ramps/GMR-0010" in msg
+
+
+def test_success_message_carries_console_link(fake_ramp):
+    """After launch completes, the summary message should also link to the
+    console alongside the LinkedIn Campaign Manager URL."""
+    from src import smart_ramp_notifier as N
+    msg = N.build_success_message(
+        ramp_id=fake_ramp.id,
+        project_name=fake_ramp.project_name,
+        requester_name=fake_ramp.requester_name,
+        per_cohort=_fake_result()["per_cohort"],
+    )
+    assert "/ramps/GMR-0010" in msg
+    assert "campaignmanager" in msg  # existing LinkedIn link still present
+
+
+def test_notify_new_ramp_calls_send_to_all_targets(monkeypatch, fake_ramp):
+    """notify_new_ramp routes through _send_to_all_targets (Drive queue +
+    bot/webhook fallbacks). Mock everything so the test never touches
+    Drive or Slack."""
+    from src import smart_ramp_notifier as N
+    captured = {}
+    def fake_send(text, ramp_id=""):
+        captured["text"] = text
+        captured["ramp_id"] = ramp_id
+        return {"drive_queue": True}
+    monkeypatch.setattr(N, "_send_to_all_targets", fake_send)
+    out = N.notify_new_ramp(fake_ramp)
+    assert out == {"drive_queue": True}
+    assert captured["ramp_id"] == fake_ramp.id
+    assert "New Smart Ramp detected" in captured["text"]
+
+
+def test_notify_briefs_ready_passes_counts(monkeypatch, fake_ramp):
+    from src import smart_ramp_notifier as N
+    captured = {}
+    monkeypatch.setattr(
+        N, "_send_to_all_targets",
+        lambda text, ramp_id="": captured.update(text=text, ramp_id=ramp_id) or {"drive_queue": True},
+    )
+    N.notify_briefs_ready(
+        fake_ramp, briefs_generated=9, cohorts_count=1, fell_back_to_legacy=False,
+    )
+    assert "9" in captured["text"]
+    assert "Cohorts mined: 1" in captured["text"]

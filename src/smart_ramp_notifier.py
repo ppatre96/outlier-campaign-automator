@@ -155,7 +155,113 @@ def build_success_message(
     lines.append("")
     lines.append(LINKEDIN_CAMPAIGN_MANAGER_URL)
     lines.append("")
+    # Console deep-link added 2026-05-22 for consistency with the new-ramp +
+    # briefs-ready lifecycle pings — operators land on the same page across
+    # the whole flow.
+    console_url = _console_ramp_url(ramp_id)
+    if console_url:
+        lines.append("Console:")
+        lines.append("")
+        lines.append(console_url)
+        lines.append("")
     lines.append("Full per-creative breakdown in the Triggers sheet → Campaign Registry tab.")
+    return "\n".join(lines)
+
+
+def _console_ramp_url(ramp_id: str) -> str:
+    """Deep-link to the ramp detail page in outlier-campaign-console.
+    Used by every lifecycle notification (new_ramp / briefs_ready / shipped)
+    so Diego + Bryan can click straight through from Slack."""
+    base = getattr(config, "OUTLIER_CONSOLE_URL", "").rstrip("/")
+    return f"{base}/ramps/{ramp_id}" if base else ""
+
+
+def build_new_ramp_message(
+    ramp_id: str,
+    project_name: str,
+    requester_name: str,
+    summary: str = "",
+) -> str:
+    """Slack body fired when the poller first sees a new Smart Ramp.
+
+    The poller's cron tick auto-kicks prep right after sending this, so the
+    message frames it as "prep is running" rather than asking Diego/Bryan to
+    click anything yet. The action-required ping comes after prep finishes
+    (build_briefs_ready_message). Reviewers can also force-rerun prep via
+    the Run prep button if the auto-prep failed.
+    """
+    mention = _build_mention_prefix()
+    url = _console_ramp_url(ramp_id)
+    lines = []
+    if mention:
+        lines.append(mention)
+    lines += [
+        f"*New Smart Ramp detected: {ramp_id}* — {project_name}",
+        f"Requester: {requester_name or '—'}",
+    ]
+    if summary:
+        lines.append(f"Brief: {summary[:200]}")
+    lines += [
+        "",
+        "Prep is running now — Stage A → B → C → ICP enrichment → competitor intel + brief generation (~2-5 min).",
+        "You'll get a follow-up ping once briefs are ready for review.",
+        "",
+        "Track progress in the console:",
+        "",
+        url,
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def build_briefs_ready_message(
+    ramp_id: str,
+    project_name: str,
+    requester_name: str,
+    briefs_generated: int,
+    cohorts_count: int,
+    fell_back_to_legacy: bool = False,
+) -> str:
+    """Slack body fired after prep completes and the decision row is written.
+
+    Two flavors:
+      - briefs_generated > 0 → "Briefs ready for review" (awaiting_brief_review)
+      - fell_back_to_legacy → "Prep done, no briefs persisted" (awaiting_approval)
+        — happens when ICP-fallback couldn't synthesize a cohort. Reviewer
+        still picks channels + budget but has no brief gate.
+    """
+    mention = _build_mention_prefix()
+    url = _console_ramp_url(ramp_id)
+    lines = []
+    if mention:
+        lines.append(mention)
+    lines += [
+        f"*Smart Ramp prep complete: {ramp_id}* — {project_name}",
+        f"Requester: {requester_name or '—'}",
+    ]
+    if fell_back_to_legacy:
+        lines += [
+            f"Cohorts mined: {cohorts_count}",
+            "",
+            "No briefs persisted (sparse-mode ICP fallback unavailable). "
+            "Status: awaiting_approval — pick channels + budget and click Launch in the console.",
+        ]
+    else:
+        lines += [
+            f"Cohorts mined: {cohorts_count}",
+            f"Briefs ready for review: {briefs_generated}",
+            "",
+            "Open the ramp detail page and review each brief. Drop a comment "
+            "per row if you want the copy/design writer to redirect, then "
+            "click *Confirm briefs* to flip to channels + budget approval.",
+        ]
+    lines += [
+        "",
+        "Console:",
+        "",
+        url,
+        "",
+    ]
     return "\n".join(lines)
 
 
@@ -384,6 +490,43 @@ def notify_success(ramp_record, result: dict, version: int = 1) -> dict:
         version=version,
         extra_platform_campaigns=result.get("extra_platform_campaigns") or {},
         manual_handoff_urls=result.get("manual_handoff_urls") or {},
+    )
+    return _send_to_all_targets(text, ramp_id=ramp_record.id)
+
+
+def notify_new_ramp(ramp_record) -> dict:
+    """Slack ping fired when the poller first sees a Smart Ramp (no decision
+    row yet in Postgres). Sent via the Drive queue (primary) so it lands
+    even on a runner with no Slack bot token. Returns per-target outcomes.
+
+    Safe to call even when the Drive queue is unreachable — _send_to_all_targets
+    has its own fallback chain (bot → webhook → silent drop)."""
+    text = build_new_ramp_message(
+        ramp_id=ramp_record.id,
+        project_name=ramp_record.project_name or "—",
+        requester_name=getattr(ramp_record, "requester_name", "") or "—",
+        summary=getattr(ramp_record, "summary", "") or "",
+    )
+    return _send_to_all_targets(text, ramp_id=ramp_record.id)
+
+
+def notify_briefs_ready(
+    ramp_record,
+    *,
+    briefs_generated: int,
+    cohorts_count: int,
+    fell_back_to_legacy: bool = False,
+) -> dict:
+    """Slack ping fired after prep finishes and the decision row is written.
+    Action-required: asks Diego/Bryan to open the console, review briefs,
+    confirm, then pick channels + budget + launch."""
+    text = build_briefs_ready_message(
+        ramp_id=ramp_record.id,
+        project_name=ramp_record.project_name or "—",
+        requester_name=getattr(ramp_record, "requester_name", "") or "—",
+        briefs_generated=briefs_generated,
+        cohorts_count=cohorts_count,
+        fell_back_to_legacy=fell_back_to_legacy,
     )
     return _send_to_all_targets(text, ramp_id=ramp_record.id)
 

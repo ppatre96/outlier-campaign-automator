@@ -64,7 +64,16 @@ jobs:
           cache-dependency-path: requirements.txt
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          # actions/setup-python's pip cache restores certifi METADATA from
+          # cache but occasionally not the cacert.pem payload, so
+          # certifi.where() points at a missing file → httpx's SSL setup
+          # raises FileNotFoundError inside Anthropic client construction.
+          # Force-reinstall certifi after the main install to guarantee the
+          # PEM bundle is on disk. Cheap (~1s) and bypasses the cache.
+          pip install --force-reinstall --no-deps --no-cache-dir certifi
+          python -c "import certifi, os; p = certifi.where(); print('certifi:', p, 'exists:', os.path.exists(p))"
 
       - name: Restore processed_ramps state
         id: cache-state

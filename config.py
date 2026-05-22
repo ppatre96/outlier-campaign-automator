@@ -193,6 +193,11 @@ AGENT_NAME_PREFIX    = os.getenv("AGENT_NAME_PREFIX", "agent_")
 # `src/ui_decisions.py` for the Postgres wrapper and
 # `scripts/sql/001_ramp_decisions.sql` for the schema.
 UI_GATE_ENABLED      = os.getenv("UI_GATE_ENABLED", "false").lower() in ("1", "true", "yes")
+# Public URL of the outlier-campaign-console. Used in Slack notifications so
+# Diego/Bryan can deep-link to the ramp detail page (Run prep / Review briefs
+# / Launch CTAs). Override via OUTLIER_CONSOLE_URL when the domain alias
+# changes. Trailing slash is stripped at use time.
+OUTLIER_CONSOLE_URL  = os.getenv("OUTLIER_CONSOLE_URL", "https://project-4ec1m.vercel.app").rstrip("/")
 # Vercel Postgres connection string. Doppler-injected in dev + prd. Used by
 # both the pipeline (src/ui_decisions.py) and any local script that reads
 # decision rows. Empty string → UIDecisionsUnavailable on first DB call.
