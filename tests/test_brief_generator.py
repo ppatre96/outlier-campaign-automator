@@ -210,10 +210,97 @@ class TestBuildCopyFromBrief:
     def test_competitor_signal_carried_through_from_brief(self):
         brief = dict(self._BRIEF, competitor_signal="Surge Q1 layoff narrative")
         # Phase 2 response omits competitor_signal — code should backfill from brief.
-        resp_without_signal = json.dumps({**json.loads(_PHASE2_JSON_RESPONSE.strip("` json\n")), "competitor_signal": ""})
+        resp_without_signal = json.dumps(
+            {**json.loads(_PHASE2_JSON_RESPONSE.strip("` json\n")), "competitor_signal": ""}
+        )
         with patch("src.brief_generator.call_claude", return_value=resp_without_signal):
             v = build_copy_from_brief(
                 brief, layer_map=self._LAYER_MAP, cohort=_FakeCohort(),
                 geos=["US"], hourly_rate="$45/hr",
             )
         assert v.get("competitor_signal") == "Surge Q1 layoff narrative"
+
+
+class TestRetryOnTransientErrors:
+    """The brief gate fallback fires when build_briefs returns 0. Rate-limit
+    bursts during prep would cascade across all (cohort × geo) combos without
+    retries. _call_claude_with_retry guards both phases with 3 retries on
+    transient errors."""
+
+    def test_phase1_retries_on_rate_limit_then_succeeds(self):
+        from anthropic import RateLimitError
+
+        # First two calls raise rate-limit, third returns the JSON. With
+        # 3 retries (4 attempts), we should land on the success path.
+        rl_exc = RateLimitError(
+            message="rate limited",
+            response=_FakeResponse(429),
+            body=None,
+        )
+        responses = [rl_exc, rl_exc, _BRIEF_JSON_RESPONSE]
+
+        def _side_effect(messages, **kwargs):
+            nxt = responses.pop(0)
+            if isinstance(nxt, Exception):
+                raise nxt
+            return nxt
+
+        with patch("src.brief_generator.time.sleep") as mock_sleep, \
+             patch("src.brief_generator.call_claude", side_effect=_side_effect):
+            briefs = build_briefs(_FakeCohort())
+
+        assert len(briefs) == 3, "should recover after 2 rate-limit retries"
+        # Confirm backoff was applied (2s, then 4s).
+        assert mock_sleep.call_count == 2
+        assert mock_sleep.call_args_list[0].args == (2,)
+        assert mock_sleep.call_args_list[1].args == (4,)
+
+    def test_phase1_gives_up_after_max_attempts(self):
+        from anthropic import RateLimitError
+
+        rl_exc = RateLimitError(
+            message="rate limited",
+            response=_FakeResponse(429),
+            body=None,
+        )
+
+        with patch("src.brief_generator.time.sleep"), \
+             patch("src.brief_generator.call_claude", side_effect=rl_exc):
+            # The retry wrapper re-raises after the last attempt — build_briefs
+            # then bubbles the exception up. Caller's per-(cohort × geo)
+            # try/except in main._prep_ramp catches it.
+            try:
+                build_briefs(_FakeCohort())
+                raised = False
+            except RateLimitError:
+                raised = True
+        assert raised, "expected RateLimitError to bubble up after max retries"
+
+    def test_auth_error_is_not_retried(self):
+        """AuthenticationError is fatal — retrying just wastes 14s. The
+        retry tuple deliberately excludes AuthenticationError."""
+        from anthropic import AuthenticationError
+
+        auth_exc = AuthenticationError(
+            message="bad key",
+            response=_FakeResponse(401),
+            body=None,
+        )
+
+        with patch("src.brief_generator.time.sleep") as mock_sleep, \
+             patch("src.brief_generator.call_claude", side_effect=auth_exc) as mock_call:
+            try:
+                build_briefs(_FakeCohort())
+            except AuthenticationError:
+                pass
+        assert mock_sleep.call_count == 0, "auth error must not trigger backoff"
+        assert mock_call.call_count == 1, "auth error must not retry"
+
+
+class _FakeResponse:
+    """Minimal stand-in for httpx.Response — anthropic exception constructors
+    require a response object but only read .status_code in __repr__."""
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+        self.headers: dict = {}
+        self.request = None

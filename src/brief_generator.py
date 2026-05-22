@@ -24,11 +24,81 @@ from __future__ import annotations
 import json
 import logging
 import pathlib
+import time
 from typing import Any
 
 from src.claude_client import call_claude
 
 log = logging.getLogger(__name__)
+
+
+# Transient API errors worth retrying. Auth / bad-request / permission errors
+# are NOT in this set — those are fatal misconfigurations, retrying just delays
+# the inevitable. anthropic's modern SDK exposes these as top-level classes;
+# fall back to bare-Exception detection on older SDKs so we never crash trying
+# to import the names.
+try:
+    from anthropic import (
+        APIConnectionError,
+        APITimeoutError,
+        InternalServerError,
+        RateLimitError,
+    )
+    _RETRIABLE_API_EXCEPTIONS: tuple[type[BaseException], ...] = (
+        RateLimitError,
+        APIConnectionError,
+        APITimeoutError,
+        InternalServerError,
+    )
+except ImportError:                                                # pragma: no cover
+    _RETRIABLE_API_EXCEPTIONS = ()
+
+
+# Exponential backoff for transient errors: 2s, 4s, 8s before the next attempt.
+# Three retries (4 total attempts) gives Anthropic ~14s to recover from a
+# transient burst rate-limit before we give up and let the caller's
+# per-(cohort × geo) try/except swallow the failure.
+_BRIEF_GEN_MAX_ATTEMPTS = 4
+_BRIEF_GEN_BACKOFF_SECONDS = (2, 4, 8)
+
+
+def _call_claude_with_retry(messages: list[dict], **kwargs) -> str:
+    """call_claude wrapper that retries on transient Anthropic errors.
+
+    Used by both Phase 1 (build_briefs) and Phase 2 (build_copy_from_brief)
+    so a rate-limit burst during prep doesn't cascade into 0-brief output.
+
+    Re-raises non-transient errors immediately so the caller's try/except
+    sees auth / bad-request failures without 14s of dead wait."""
+    last_exc: BaseException | None = None
+    for attempt in range(_BRIEF_GEN_MAX_ATTEMPTS):
+        try:
+            return call_claude(messages, **kwargs)
+        except _RETRIABLE_API_EXCEPTIONS as exc:
+            last_exc = exc
+            if attempt == _BRIEF_GEN_MAX_ATTEMPTS - 1:
+                # Final attempt failed — re-raise so the per-(cohort × geo)
+                # try/except in _prep_ramp catches it and skips this combo.
+                log.warning(
+                    "brief gen: transient Anthropic error after %d attempts "
+                    "(%s) — giving up on this call",
+                    _BRIEF_GEN_MAX_ATTEMPTS, type(exc).__name__,
+                )
+                raise
+            delay = _BRIEF_GEN_BACKOFF_SECONDS[
+                min(attempt, len(_BRIEF_GEN_BACKOFF_SECONDS) - 1)
+            ]
+            log.info(
+                "brief gen: transient Anthropic error %s on attempt %d/%d — "
+                "sleeping %ds before retry",
+                type(exc).__name__, attempt + 1, _BRIEF_GEN_MAX_ATTEMPTS, delay,
+            )
+            time.sleep(delay)
+    # Defensive — the loop should always either return or raise; this only
+    # fires if _RETRIABLE_API_EXCEPTIONS is empty (anthropic import failed).
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("brief gen retry loop exited unexpectedly")  # pragma: no cover
 
 
 # ── Phase 1: build_briefs ────────────────────────────────────────────────────
@@ -100,7 +170,7 @@ def build_briefs(
     log.info("Phase 1 brief gen — cohort=%s signals=%d geo=%s",
              cohort.name[:40], len(signals), ",".join(geos or []) or "—")
 
-    raw = call_claude(
+    raw = _call_claude_with_retry(
         messages=[{"role": "user", "content": prompt}],
         max_tokens=2048,
         cache_system=True,
@@ -223,7 +293,7 @@ def build_copy_from_brief(
                 + "\nREWRITE so headline ≤6 words AND ≤40 chars; subheadline "
                 "≤7 words AND ≤48 chars. No exceptions."
             )
-        raw = call_claude(
+        raw = _call_claude_with_retry(
             messages=[{"role": "user", "content": user_content}],
             max_tokens=1024,
             cache_system=True,
