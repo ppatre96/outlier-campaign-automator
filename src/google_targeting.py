@@ -43,8 +43,21 @@ _CACHE_PATH = Path("data/google_segment_cache.json")
 #
 # v1 covers the most common Outlier cohorts. v2 will expand to a larger
 # taxonomy via `AudienceInsightsService.list_audience_insights_attributes`.
-_DEFAULT_AFFINITY_KEYWORDS = {
-    # term : [segment search hints]
+# 2026-05-24 — the old `_DEFAULT_AFFINITY_KEYWORDS` curated dict is gone.
+# It had 9 hardcoded entries and made `_resolve_audience()` return [] for
+# every cohort signal that wasn't one of those 9 strings — which was all
+# of them in practice (cohort signals are "deep learning", "video editing",
+# "applied mathematics", etc. — not "software engineer"/"physician"/etc.).
+#
+# New flow: cohort signal term → KeywordPlanIdeaService.generate_keyword_ideas()
+# → returns Google's keyword expansion (related concepts derived from real
+# search data) → user_interest search uses LIKE %term% (partial match, not
+# exact) so the user_interest taxonomy doesn't need to match Google's
+# wording byte-for-byte.
+
+# Hard fallback when the keyword-idea API itself fails. Lets the Display
+# arm degrade gracefully to its prior behaviour on auth/quota errors.
+_FALLBACK_AFFINITY_KEYWORDS = {
     "software engineer": ["Technology Influencers", "Software Developers"],
     "data scientist":    ["Technology Early Adopters", "Data Analytics"],
     "machine learning":  ["Technology Early Adopters"],
@@ -210,56 +223,142 @@ class GoogleSegmentResolver(TargetingResolver):
     # ── Audience segment lookup ──────────────────────────────────────────────
 
     def _resolve_audience(self, term: str) -> list[str]:
-        """Map a cohort signal term to Google audience segment resource names."""
+        """Map a cohort signal term to Google audience segment resource names.
+
+        Flow (2026-05-24):
+          1. KeywordPlanIdeaService.generate_keyword_ideas(term) — Google
+             returns the top related concepts derived from real search data
+             (e.g. term='video editing' → ['voice over jobs', 'video editor
+             jobs', 'adobe premiere training', ...]).
+          2. For each keyword idea, query user_interest WHERE name LIKE
+             '%idea%' (partial match) — the taxonomy doesn't need to match
+             Google's wording byte-for-byte.
+          3. Dedupe + cap at 5 resources. Cache per-term.
+
+        Fallback chain on failure: keyword-idea API error → fall back to
+        `_FALLBACK_AFFINITY_KEYWORDS` curated dict (9 entries) for the
+        well-known terms; everything else returns [] gracefully.
+        """
         self._load_cache()
         key = f"aud:{term.lower()}"
         cached = self._cache.get(key)
         if cached is not None:
             return cached
 
-        # v1: light-touch — we look up the curated keyword hints; if no hint,
-        # we skip rather than spam the audience-finder API.
-        hints = _DEFAULT_AFFINITY_KEYWORDS.get(term.lower(), [])
-        if not hints:
-            self._cache[key] = []
-            self._save_cache()
-            return []
+        # Step 1 — pull keyword ideas from Google
+        try:
+            ideas = self._generate_keyword_ideas(term, max_ideas=10)
+        except Exception as exc:
+            log.warning(
+                "Google keyword-idea expansion for %r failed (%s) — falling "
+                "back to the curated dict",
+                term, exc,
+            )
+            ideas = []
+
+        # Add the bare term itself as a starting hint — sometimes the LLM
+        # cohort signal is already a Google-taxonomy match (e.g. "marketing").
+        hints = [term] + ideas
+        # Fallback shim for the 9 well-known terms when keyword-idea
+        # expansion returned nothing.
+        if not ideas:
+            hints.extend(_FALLBACK_AFFINITY_KEYWORDS.get(term.lower(), []))
 
         try:
             resources = self._search_user_interest(hints)
         except Exception as exc:
-            log.warning("Google audience search for %r failed: %s", term, exc)
+            log.warning("Google user_interest search for %r failed: %s", term, exc)
             resources = []
         self._cache[key] = resources
         self._save_cache()
         return resources
 
     def _search_user_interest(self, hints: list[str]) -> list[str]:
+        """Look up user_interest segments matching any of the hints.
+
+        2026-05-24 — partial match (LIKE '%hint%') replaces exact match. The
+        exact-match path was returning [] because Google's user_interest
+        taxonomy names ("Software Developers", "Technology Early Adopters")
+        rarely match cohort/keyword-idea strings byte-for-byte. LIKE catches
+        a broader class — e.g. hint='video editor jobs' hits user_interest
+        names containing 'video editor', 'video', or 'editor'.
+
+        Caps at 5 resources total to avoid bloating ad-group targeting.
+        """
         client = self._ensure_client()
         ga_service = client.get_service("GoogleAdsService")
+        seen: set[str] = set()
         out: list[str] = []
         for hint in hints:
-            # Escape single quotes in the hint to avoid GAQL injection. Google
-            # Ads doesn't support parameterized queries — we filter by exact name.
-            safe = hint.replace("'", "\\'")
+            if not (hint or "").strip():
+                continue
+            safe = hint.replace("'", "\\'").replace("%", "")  # strip GAQL LIKE wildcards
             query = (
                 "SELECT user_interest.resource_name, user_interest.name "
                 "FROM user_interest "
-                f"WHERE user_interest.name = '{safe}'"
+                f"WHERE user_interest.name LIKE '%{safe}%' "
+                "LIMIT 5"
             )
-            stream = ga_service.search_stream(
-                customer_id=str(self._customer_id).replace("-", ""),
-                query=query,
-            )
-            for batch in stream:
-                for row in batch.results:
-                    out.append(row.user_interest.resource_name)
-                    break  # One match per hint keeps the audience focused.
-                if out:
-                    break
-            if out:
-                break
+            try:
+                stream = ga_service.search_stream(
+                    customer_id=str(self._customer_id).replace("-", ""),
+                    query=query,
+                )
+                for batch in stream:
+                    for row in batch.results:
+                        rn = row.user_interest.resource_name
+                        if rn and rn not in seen:
+                            seen.add(rn)
+                            out.append(rn)
+                            if len(out) >= 5:
+                                return out
+            except Exception as exc:
+                # Single-hint failure shouldn't kill the whole resolve; log
+                # and try the next hint.
+                log.debug("user_interest LIKE %r failed (%s) — trying next hint", hint, exc)
+                continue
         return out
+
+    def _generate_keyword_ideas(self, term: str, *, max_ideas: int = 10) -> list[str]:
+        """Call KeywordPlanIdeaService for related search concepts.
+
+        Returns the top `max_ideas` keyword phrases by avg_monthly_searches.
+        Empty list on any failure (caller falls back to the curated dict).
+
+        Cost: 1 Google Ads API call per cohort signal term. Typical ramp
+        has 3 cohorts × 3-5 signal terms = ~12 calls per ramp. Light load.
+        """
+        if not (term or "").strip():
+            return []
+        client = self._ensure_client()
+        svc = client.get_service("KeywordPlanIdeaService")
+        request = client.get_type("GenerateKeywordIdeasRequest")
+        request.customer_id = str(self._customer_id).replace("-", "")
+        # English + US baseline — keyword-idea expansion needs language +
+        # geo to anchor relevance. Audience targeting itself remains scoped
+        # by the per-campaign geo_target_constants from resolve_cohort.
+        request.language = "languageConstants/1000"   # English
+        request.geo_target_constants.append("geoTargetConstants/2840")  # US
+        request.include_adult_keywords = False
+        request.keyword_seed.keywords.append(term)
+
+        response = svc.generate_keyword_ideas(request=request)
+        candidates: list[tuple[int, str]] = []
+        for idea in response:
+            text = (idea.text or "").strip()
+            if not text or text.lower() == term.lower():
+                continue
+            volume = int(getattr(idea.keyword_idea_metrics, "avg_monthly_searches", 0) or 0)
+            candidates.append((volume, text))
+
+        # Highest-volume first; volume==0 still allowed but ranked last.
+        candidates.sort(key=lambda x: -x[0])
+        result = [text for _, text in candidates[:max_ideas]]
+        log.info(
+            "Google keyword-ideas for %r → %d ideas (top: %s)",
+            term, len(result), result[:3],
+        )
+        return result
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
