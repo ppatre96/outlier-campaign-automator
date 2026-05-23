@@ -104,6 +104,9 @@ def _call_claude_with_retry(messages: list[dict], **kwargs) -> str:
 # ── Phase 1: build_briefs ────────────────────────────────────────────────────
 
 
+_CHANNELS_SUPPORTED = ("linkedin", "meta", "google")
+
+
 def build_briefs(
     cohort,
     *,
@@ -112,6 +115,7 @@ def build_briefs(
     hourly_rate: str = "",
     geo_icp_hint: str = "",
     icp=None,
+    channel: str = "linkedin",
     competitor_intel_path: str | pathlib.Path | None = None,
 ) -> list[dict]:
     """Phase 1 — produce 3 structured briefs (A/B/C) for this cohort × geo.
@@ -155,6 +159,11 @@ def build_briefs(
         if description_hint else ""
     )
     geo_block = _format_geos_for_brief(geos)
+    channel_norm = (channel or "linkedin").lower()
+    if channel_norm not in _CHANNELS_SUPPORTED:
+        log.warning("build_briefs: unknown channel %r — falling back to linkedin", channel)
+        channel_norm = "linkedin"
+    channel_block = _CHANNEL_GUIDANCE_BRIEF.get(channel_norm, _CHANNEL_GUIDANCE_BRIEF["linkedin"])
 
     prompt = _BRIEF_PROMPT_TEMPLATE.format(
         cohort_label=cohort.name.replace("__", " ").replace("_", " "),
@@ -165,10 +174,11 @@ def build_briefs(
         icp_block=icp_block,
         geo_icp_hint=geo_icp_hint or "",
         competitor_context=competitor_context,
+        channel_block=channel_block,
     )
 
-    log.info("Phase 1 brief gen — cohort=%s signals=%d geo=%s",
-             cohort.name[:40], len(signals), ",".join(geos or []) or "—")
+    log.info("Phase 1 brief gen — cohort=%s channel=%s signals=%d geo=%s",
+             cohort.name[:40], channel_norm, len(signals), ",".join(geos or []) or "—")
 
     raw = _call_claude_with_retry(
         messages=[{"role": "user", "content": prompt}],
@@ -222,6 +232,7 @@ def build_copy_from_brief(
     geos: list[str] | None = None,
     hourly_rate: str = "",
     reviewer_comment: str = "",
+    channel: str = "linkedin",
 ) -> dict:
     """Phase 2 — take ONE (possibly reviewer-edited) brief and produce ONE
     variant dict in today's pipeline schema.
@@ -270,6 +281,10 @@ def build_copy_from_brief(
 
     pay_rate_block = _pay_rate_brief_block(hourly_rate)
     geo_block = _format_geos_for_brief(geos)
+    channel_norm = (channel or "linkedin").lower()
+    if channel_norm not in _CHANNELS_SUPPORTED:
+        channel_norm = "linkedin"
+    channel_block = _CHANNEL_GUIDANCE_PHASE2.get(channel_norm, _CHANNEL_GUIDANCE_PHASE2["linkedin"])
 
     prompt = _PHASE2_PROMPT_TEMPLATE.format(
         cohort_label=cohort_label,
@@ -278,6 +293,7 @@ def build_copy_from_brief(
         layers_summary=layers_summary,
         pay_rate_block=pay_rate_block,
         geo_block=geo_block,
+        channel_block=channel_block,
     )
 
     # Retry loop matches build_copy_variants — LLM sometimes overshoots length
@@ -476,10 +492,65 @@ def _extract_json(raw: str) -> dict:
 # ── Prompt templates ──────────────────────────────────────────────────────────
 
 
+# Channel-specific creative guidance. Inserted into both Phase-1 (brief) and
+# Phase-2 (copy) prompts. Same brief shape across all 3 channels — the
+# *content* of each field shifts based on the channel's creative norms.
+_CHANNEL_GUIDANCE_BRIEF = {
+    "linkedin": """
+## CHANNEL — LinkedIn (B2B sponsored static ad)
+- Audience mindset: scrolling between colleagues' posts. Credibility-led, not entertainment-led.
+- Hook style: expertise validation, peer-benchmarked claims, "people like you do this" framing.
+- Tone target: confident-professional. Calibrate against ICP creative_liberty but bias TOWARDS clear/credible over playful.
+- Photo direction: clean, professional, well-lit. Business-casual or in-context. Indoor or outdoor — natural over staged. Never stock-photo cheese.
+- Headline direction: lead with the person's identity or skill. Earnings claims OK if grounded in the pay_rate_block.
+""",
+    "meta": """
+## CHANNEL — Meta (Facebook + Instagram Feed, 4:5 vertical)
+- Audience mindset: scrolling for entertainment + social. First 1.5 seconds decide it. Attention battle is brutal.
+- Hook style: pattern-interrupt, curiosity gap, specific stat, or bold declaration. Earnings + lifestyle frames over expertise frames.
+- Tone target: punchier, more conversational than LinkedIn. Witty if ICP creative_liberty allows. Avoid B2B vocabulary ("professionals", "experts") — treat as B2C-shaped messaging.
+- Photo direction: high-contrast subject + setting. Real-feeling, not corporate-staged. Single hero subject, vertical-crop-safe composition.
+- Headline direction: SHARPER than LinkedIn (≤6 words always; aim for ≤5). Earnings claim, pain-point, or curiosity gap all work. Don't soften with caveats.
+""",
+    "google": """
+## CHANNEL — Google Display (responsive display ads, intent-adjacent placements)
+- Audience mindset: not actively scrolling — ad appears alongside content they're consuming. Lower attention than Feed.
+- Hook style: direct-response, low ambiguity. "What you get + what you do." NO clever copy — Display has 1–2 seconds of engagement at best.
+- Tone target: clear and functional. Avoid metaphors, riddles, ambiguity. Be the value prop in plain words.
+- Photo direction: clean subject focus on simple background. Google's responsive display rules penalize busy backgrounds. NO text in the photo — Google's image policy rejects it.
+- Headline direction: action-oriented. Mirror likely search keywords: "Earn paid AI tasks", "Remote AI work for [profession]". Keyword-adjacent phrasing helps quality score.
+""",
+}
+
+_CHANNEL_GUIDANCE_PHASE2 = {
+    "linkedin": """
+## CHANNEL — LinkedIn (sponsored static + InMail)
+- Headlines + subheadlines can lean on professional credibility ("Built this skill", "Used by peers like you").
+- ad_description has room — use it to add credibility detail.
+- cta_button is "APPLY".
+""",
+    "meta": """
+## CHANNEL — Meta (Facebook + Instagram Feed)
+- Headlines must be punchier than LinkedIn — assume scroll mode, not reading mode.
+- intro_text first line is the WHOLE battle (Feed truncates at ~125 chars on mobile). Open with the hook, not setup.
+- ad_description rarely renders — keep it short or skip.
+- Avoid corporate vocabulary ("professionals", "experts"). Use 2nd-person ("you").
+- cta_button is "APPLY".
+""",
+    "google": """
+## CHANNEL — Google Display (responsive display)
+- Headlines must work standalone — Google may show ANY headline + ANY description combination. Each line should make sense in isolation.
+- intro_text is reused as the long_headline — keep under 90 chars for safety.
+- No clever copy. State the offer in plain language: who it's for + what they earn + what they do.
+- cta_button is "APPLY".
+""",
+}
+
+
 _BRIEF_PROMPT_TEMPLATE = """You are creating 3 A/B/C creative briefs for **Outlier** — a platform where domain experts earn payment doing flexible, remote AI training tasks (reviewing, rating, and improving AI outputs in their field).
 
 This is the BRIEF stage. You produce only the INTENT — the angle hook, headline direction, photo direction, tone, proof points, and non-negotiables. A second LLM pass turns each brief into the actual headline/subheadline/intro_text/ad_headline. Do NOT write the final copy here.
-
+{channel_block}
 ## WHO THIS PERSON IS
 Cohort name (raw): {cohort_label}
 Signals from statistical analysis (features that predict this person passes Outlier's screening):
@@ -543,7 +614,7 @@ Return ONLY valid JSON, no other text. Exactly 3 briefs:
 
 
 _PHASE2_PROMPT_TEMPLATE = """You are writing ONE Outlier ad creative variant from a structured brief.
-
+{channel_block}
 ## THE BRIEF (your hard inputs — follow these)
 Cohort: {cohort_label}{geo_block}{pay_rate_block}
 

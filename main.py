@@ -3528,6 +3528,53 @@ def _process_extra_platform_arm(
         cluster_suffix = getattr(geo_group_e, "campaign_suffix", "") or "geo"
         spec_key = f"{base_id_e}_{cluster_suffix}_{angle_label_e}"
 
+        # 2026-05-23 — Per-channel brief consumption. If prep wrote a Meta or
+        # Google brief for this (cohort × geo × angle), run Phase-2 against
+        # that brief (with reviewer comment honored) and use the resulting
+        # variant for both PNG composition + ad fields. Falls back to the
+        # LinkedIn variant + adapt_copy_for_platform when no brief exists
+        # (legacy ramps pre-2026-05-23, sparse-mode skips, etc.).
+        if ramp_id and platform in ("meta", "google") and cohort_e is not None:
+            try:
+                from src.ui_decisions import list_briefs_for_ramp
+                from src.brief_generator import build_copy_from_brief
+                _platform_briefs = list_briefs_for_ramp(ramp_id, channel=platform)
+                _matching = [
+                    _b for _b in _platform_briefs
+                    if _b.cohort_signature == getattr(cohort_e, "name", "")
+                    and _b.geo_cluster == (getattr(geo_group_e, "cluster", "") or "global_mix")
+                    and _b.angle == angle_label_e
+                ]
+                if _matching:
+                    log.info(
+                        "_process_extra_platform_arm[%s]: brief match for cohort=%s "
+                        "geo=%s angle=%s (reviewer_comment=%dch) — regen variant from brief",
+                        platform, getattr(cohort_e, "name", "")[:40],
+                        getattr(geo_group_e, "cluster", ""), angle_label_e,
+                        len(_matching[0].reviewer_comment or ""),
+                    )
+                    _v = build_copy_from_brief(
+                        _matching[0].brief,
+                        layer_map={},  # no Figma overlay outside LinkedIn
+                        cohort=cohort_e,
+                        geos=group_geos_e,
+                        hourly_rate=getattr(geo_group_e, "advertised_rate", "") or "",
+                        reviewer_comment=_matching[0].reviewer_comment or "",
+                        channel=platform,
+                    )
+                    if _v:
+                        variant_e = _v
+                        # mutate the spec so downstream PNG composition + Drive
+                        # manifest see the channel-tuned variant.
+                        if isinstance(variants_e, list) and angle_idx_e < len(variants_e):
+                            variants_e[angle_idx_e] = _v
+            except Exception as _exc:
+                log.warning(
+                    "_process_extra_platform_arm[%s]: per-channel brief consumption "
+                    "failed (%s) — falling back to LinkedIn-adapted variant",
+                    platform, _exc,
+                )
+
         # 2026-05-20: Meta arm regenerates a fresh 4:5 (1080×1350) photo
         # instead of reusing the LinkedIn 1:1 composite. Per Meta Help Center
         # + 2025/2026 ad-performance benchmarks, 4:5 is the highest-converting
@@ -4302,41 +4349,54 @@ def _process_row_both_modes(
                 )]
 
             capped_cohorts = resolved.selected[:_cfg.MAX_COHORTS_PER_GEO_CLUSTER]
+            # 2026-05-23 — Phase-1 briefs are now generated PER CHANNEL so the
+            # reviewer sees LinkedIn vs Meta vs Google variants side-by-side.
+            # Channels gated by config.ENABLED_PLATFORMS; LinkedIn always runs
+            # (the static + InMail arms remain the canonical Outlier surface).
+            _platforms_csv = (getattr(_cfg, "ENABLED_PLATFORMS", "") or "").lower()
+            _platforms_list = [p.strip() for p in _platforms_csv.split(",") if p.strip()]
+            enabled_channels = ["linkedin"]
+            for ch in ("meta", "google"):
+                if ch in _platforms_list:
+                    enabled_channels.append(ch)
+
             log.info(
                 "_process_row_both_modes[prep_only]: generating briefs for "
-                "%d cohort(s) × %d geo cluster(s) × 3 angles = %d briefs (linkedin only)",
-                len(capped_cohorts), len(geo_groups),
-                len(capped_cohorts) * len(geo_groups) * 3,
+                "%d cohort(s) × %d geo cluster(s) × %d channel(s) × 3 angles = %d briefs",
+                len(capped_cohorts), len(geo_groups), len(enabled_channels),
+                len(capped_cohorts) * len(geo_groups) * len(enabled_channels) * 3,
             )
 
             for cohort in capped_cohorts:
                 for geo_group in geo_groups:
-                    try:
-                        briefs = build_briefs(
-                            cohort,
-                            geos=geo_group.geos or raw_geos,
-                            description_hint=row.get("description_hint", "") or "",
-                            hourly_rate=geo_group.advertised_rate or "",
-                            geo_icp_hint="",  # geo ICP hints not yet wired into prep path
-                            icp=getattr(cohort, "_icp", None),
-                        )
-                    except Exception as exc:
-                        log.warning(
-                            "Brief gen failed for cohort=%s geo=%s: %s — skipping",
-                            cohort.name, geo_group.cluster, exc,
-                        )
-                        continue
-                    for brief in briefs:
-                        upsert_brief(
-                            ramp_id=ramp_id,
-                            cohort_id=cohort_id_override or getattr(cohort, "_stg_id", "") or cohort.name,
-                            cohort_signature=cohort.name,
-                            geo_cluster=geo_group.cluster or "global_mix",
-                            channel="linkedin",
-                            angle=brief.get("angle", "A"),
-                            brief=brief,
-                        )
-                        briefs_generated += 1
+                    for channel in enabled_channels:
+                        try:
+                            briefs = build_briefs(
+                                cohort,
+                                geos=geo_group.geos or raw_geos,
+                                description_hint=row.get("description_hint", "") or "",
+                                hourly_rate=geo_group.advertised_rate or "",
+                                geo_icp_hint="",  # geo ICP hints not yet wired into prep path
+                                icp=getattr(cohort, "_icp", None),
+                                channel=channel,
+                            )
+                        except Exception as exc:
+                            log.warning(
+                                "Brief gen failed for cohort=%s geo=%s channel=%s: %s — skipping",
+                                cohort.name, geo_group.cluster, channel, exc,
+                            )
+                            continue
+                        for brief in briefs:
+                            upsert_brief(
+                                ramp_id=ramp_id,
+                                cohort_id=cohort_id_override or getattr(cohort, "_stg_id", "") or cohort.name,
+                                cohort_signature=cohort.name,
+                                geo_cluster=geo_group.cluster or "global_mix",
+                                channel=channel,
+                                angle=brief.get("angle", "A"),
+                                brief=brief,
+                            )
+                            briefs_generated += 1
             log.info(
                 "_process_row_both_modes[prep_only]: %d brief(s) persisted to cohort_briefs",
                 briefs_generated,
