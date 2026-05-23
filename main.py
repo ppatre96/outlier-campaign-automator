@@ -3991,13 +3991,42 @@ def _process_extra_platform_arm(
                 )
 
             ad_result: CreateAdResult
-            if not png_path or not Path(str(png_path)).exists():
+            # 2026-05-24: google_search is text-only (Responsive Search Ad).
+            # No image_id, no upload_image, no PNG required — keyword targeting
+            # + ad text are everything the RSA needs.
+            if platform == "google_search":
+                image_id = ""  # unused by create_search_ad
+                # Build UTM destination URL inline (mirrors the else-branch below).
+                from src.utm_builder import build_utm_url, resolve_base_lp_url
+                base_lp = resolve_base_lp_url(
+                    campaign_state=(naming_meta or {}).get("campaign_state"),
+                    platform=platform,
+                    fallback=destination_url_override or config.LINKEDIN_DESTINATION,
+                    matched_domain=(naming_meta or {}).get("domain"),
+                    sheets_client=sheets,
+                    ramp_id=ramp_id,
+                )
+                utm_url = build_utm_url(
+                    base_url=base_lp, platform=platform,
+                    campaign_name=campaign_name,
+                    pod=(naming_meta or {}).get("pod"),
+                    domain=(naming_meta or {}).get("domain"),
+                    locale=(naming_meta or {}).get("locale"),
+                    language="EN",
+                    utm_content=f"{cohort._stg_id}-{platform}-{angle_label}",
+                ) if base_lp else (destination_url_override or "")
+                # Fall through to the create_*_ad dispatch below — it has
+                # the google_search branch.
+                _ad_dispatch_ready = True
+            elif not png_path or not Path(str(png_path)).exists():
                 ad_result = CreateAdResult(
                     status="local_fallback",
                     error_class="MissingPNG",
                     error_message="static-arm produced no PNG for this spec",
                 )
+                _ad_dispatch_ready = False
             else:
+                _ad_dispatch_ready = False
                 try:
                     image_id = client.upload_image(png_path)
                 except Exception as exc:
@@ -4011,6 +4040,7 @@ def _process_extra_platform_arm(
                         error_message=str(exc)[:300],
                     )
                 else:
+                    _ad_dispatch_ready = True
                     # Build the platform-specific UTM destination URL.
                     from src.utm_builder import build_utm_url, resolve_base_lp_url
                     base_lp = resolve_base_lp_url(
@@ -4031,31 +4061,65 @@ def _process_extra_platform_arm(
                         utm_content=f"{cohort._stg_id}-{platform}-{angle_label}",
                     ) if base_lp else (destination_url_override or "")
 
-                    if platform == "google":
-                        ad_result = client.create_image_ad(
-                            campaign_id=sub_id,
-                            image_id=image_id,
-                            headline=(platform_copy.get("headlines") or [""])[0],
-                            description=(platform_copy.get("descriptions") or [""])[0],
-                            destination_url=utm_url,
-                            headlines=platform_copy.get("headlines") or [],
-                            long_headline=platform_copy.get("long_headline") or "",
-                            descriptions=platform_copy.get("descriptions") or [],
-                            # 2026-05-18: pass the local PNG path so
-                            # create_image_ad can generate the 1.91:1
-                            # landscape variant Google RDA requires.
-                            local_png_path=str(png_path) if png_path else None,
-                        )
-                    else:  # meta
-                        ad_result = client.create_image_ad(
-                            campaign_id=sub_id,
-                            image_id=image_id,
-                            headline=platform_copy.get("headline", ""),
-                            description=platform_copy.get("description", ""),
-                            primary_text=platform_copy.get("primary_text"),
-                            cta=platform_copy.get("cta"),
-                            destination_url=utm_url,
-                        )
+            # Ad-creation dispatch (lifted out of the upload_image else-branch
+            # 2026-05-24 so google_search short-circuit reaches it without
+            # needing an image_id).
+            if _ad_dispatch_ready:
+                if platform == "google_search":
+                    # Responsive Search Ad. No image. RSA needs ≥3 short
+                    # headlines (≤30c each) + ≥2 descriptions (≤90c).
+                    # Synthesise from existing variant fields; create_search_ad
+                    # truncates each to RSA limits.
+                    _rsa_headlines = [
+                        h for h in (
+                            variant.get("headline", "") if variant else "",
+                            variant.get("subheadline", "") if variant else "",
+                            variant.get("ad_headline", "") if variant else "",
+                        ) if h
+                    ]
+                    for extra in (platform_copy.get("headlines") or []):
+                        if extra and extra not in _rsa_headlines:
+                            _rsa_headlines.append(extra)
+                    _rsa_descs = [
+                        d for d in (
+                            variant.get("intro_text", "") if variant else "",
+                            variant.get("ad_description", "") if variant else "",
+                        ) if d
+                    ]
+                    for extra in (platform_copy.get("descriptions") or []):
+                        if extra and extra not in _rsa_descs:
+                            _rsa_descs.append(extra)
+                    ad_result = client.create_search_ad(
+                        ad_group_resource=sub_id,
+                        headlines=_rsa_headlines,
+                        descriptions=_rsa_descs,
+                        destination_url=utm_url,
+                    )
+                elif platform == "google":
+                    ad_result = client.create_image_ad(
+                        campaign_id=sub_id,
+                        image_id=image_id,
+                        headline=(platform_copy.get("headlines") or [""])[0],
+                        description=(platform_copy.get("descriptions") or [""])[0],
+                        destination_url=utm_url,
+                        headlines=platform_copy.get("headlines") or [],
+                        long_headline=platform_copy.get("long_headline") or "",
+                        descriptions=platform_copy.get("descriptions") or [],
+                        # 2026-05-18: pass the local PNG path so
+                        # create_image_ad can generate the 1.91:1
+                        # landscape variant Google RDA requires.
+                        local_png_path=str(png_path) if png_path else None,
+                    )
+                else:  # meta
+                    ad_result = client.create_image_ad(
+                        campaign_id=sub_id,
+                        image_id=image_id,
+                        headline=platform_copy.get("headline", ""),
+                        description=platform_copy.get("description", ""),
+                        primary_text=platform_copy.get("primary_text"),
+                        cta=platform_copy.get("cta"),
+                        destination_url=utm_url,
+                    )
 
             # Registry: one row per (cohort × geo × angle), shared
             # platform_campaign_id, distinct platform_creative_id.
@@ -4123,14 +4187,18 @@ def _build_extra_platform_clients(enabled: list[str]) -> dict:
                 log.warning("Skipping Meta arm — init failed: %s", exc)
         else:
             log.info("Skipping Meta arm — META_ACCESS_TOKEN / META_AD_ACCOUNT_ID not set")
+    google_creds_ok = (
+        config.GOOGLE_ADS_DEVELOPER_TOKEN
+        and config.GOOGLE_ADS_REFRESH_TOKEN
+        and config.GOOGLE_ADS_CUSTOMER_ID
+    )
     if "google" in enabled:
-        if (config.GOOGLE_ADS_DEVELOPER_TOKEN and config.GOOGLE_ADS_REFRESH_TOKEN
-                and config.GOOGLE_ADS_CUSTOMER_ID):
+        if google_creds_ok:
             from src.google_ads_api import GoogleAdsClient
             from src.google_targeting import GoogleSegmentResolver
             try:
                 out["google"] = {
-                    "client":   GoogleAdsClient(),
+                    "client":   GoogleAdsClient(channel="display"),
                     "resolver": GoogleSegmentResolver(),
                 }
             except Exception as exc:
@@ -4139,6 +4207,26 @@ def _build_extra_platform_clients(enabled: list[str]) -> dict:
             log.info(
                 "Skipping Google arm — GOOGLE_ADS_DEVELOPER_TOKEN / GOOGLE_ADS_REFRESH_TOKEN / "
                 "GOOGLE_ADS_CUSTOMER_ID not all set"
+            )
+    # 2026-05-24 — google_search is the sibling Search arm. Mirrors Diego's
+    # manual Search campaigns: SEARCH channel + RSA + keyword criteria via
+    # KeywordPlanIdeaService. Can run alongside or instead of "google"
+    # (Display). Shares Google Ads creds with the Display arm.
+    if "google_search" in enabled:
+        if google_creds_ok:
+            from src.google_ads_api import GoogleAdsClient
+            from src.google_targeting import GoogleSegmentResolver
+            try:
+                out["google_search"] = {
+                    "client":   GoogleAdsClient(channel="search"),
+                    "resolver": GoogleSegmentResolver(),
+                }
+            except Exception as exc:
+                log.warning("Skipping Google Search arm — init failed: %s", exc)
+        else:
+            log.info(
+                "Skipping Google Search arm — GOOGLE_ADS_DEVELOPER_TOKEN / "
+                "GOOGLE_ADS_REFRESH_TOKEN / GOOGLE_ADS_CUSTOMER_ID not all set"
             )
     return out
 
