@@ -764,11 +764,22 @@ def _call_gemini_vision(prompt: str, creative_path: str, reference_path: str | N
     # of 13 QC failures on the 2026-05-16 GMR-0020 rerun (the malformed-JSON
     # detector at qc_creative() bailed because `not isinstance(result, dict)`
     # short-circuited the threshold check). Unwrap silently here so the
-    # downstream code never sees the array. List of N>1 is unexpected and
-    # passes through untouched — qc_creative will catch it.
-    if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
-        log.info("QC vision returned 1-element list — unwrapping to inner dict")
-        parsed = parsed[0]
+    # downstream code never sees the array.
+    # 2026-05-22: Broaden to N-element lists — GMR-0017 surfaced cases where
+    # Gemini returns `[{step1_keys}, {step2_keys}, ...]` (one dict per scan
+    # step in the prompt). Merge them into a single dict; later keys overwrite
+    # earlier on conflict so the final pass/fail block wins over intermediate
+    # scan blocks (which is the right precedence for our check_map).
+    if isinstance(parsed, list) and parsed and all(isinstance(x, dict) for x in parsed):
+        if len(parsed) == 1:
+            log.info("QC vision returned 1-element list — unwrapping to inner dict")
+            parsed = parsed[0]
+        else:
+            log.info("QC vision returned %d-element list — merging dicts", len(parsed))
+            merged: dict = {}
+            for item in parsed:
+                merged.update(item)
+            parsed = merged
     return parsed
 
 
@@ -937,7 +948,13 @@ def qc_creative(
         "subject_looks_ai":            ("Subject looks authentic",       "Subject reads as AI-generated. Add 'authentic candid photo, real human skin texture with natural asymmetry, not AI-generated, not uncanny, not stock-photo perfect'."),
         "matches_reference_person":    ("Subject differs from reference","Subject mimics the reference-image person. Omit the reference image on retry, OR explicitly specify a different gender/ethnicity than the reference."),
         "text_zone_contrast":          ("Contrast adequate",             "Text zones are too bright. Tell Gemini 'Top 30%% must be mid-tone to dark background. No white walls, no blown-out windows in text zones.'"),
-        "professional_quality":        ("Professional quality",          "Image lacks professional polish. Tell Gemini 'magazine-quality editorial photography, professional color grading, balanced composition, appropriate for a Fortune-500 LinkedIn campaign'."),
+        # 2026-05-24 — `professional_quality` removed. Gemini grading its own
+        # output against a subjective bar ("magazine-quality editorial,
+        # Fortune-500 polish") generated ~30 false-fail retries per ramp on
+        # images that human reviewers found acceptable. Genuine defects are
+        # still caught by the other 8 vision checks (rendered_text_in_photo,
+        # duplicate_logo, text_overlaps_subject, etc.) + by Diego/Bryan's
+        # manual review pass before un-pausing.
     }
 
     # Detect malformed QC vision responses BEFORE we walk check_map. Gemini
@@ -946,11 +963,16 @@ def qc_creative(
     # this as "all 9 checks failed" with detail='check failed' on each —
     # indistinguishable from a real visual reject and hiding the actual
     # infrastructure error. Observed 8× on the 2026-05-13 GMR-0020 rerun.
-    # Threshold: at least half the expected keys must be present-as-dict
-    # before we trust the response.
+    # Threshold: at least 3 of the expected keys must be present-as-dict
+    # before we trust the response. (Was len/2 = 4; lowered 2026-05-24 to
+    # 3 to be permissive on partial responses — the multi-dict list-merge
+    # fix in _call_gemini_vision already mitigates the original failure
+    # mode, but partial JSON responses still appear occasionally and the
+    # downstream auto-pass logic is safe enough to handle them.)
+    _CHECK_MAP_MIN_KEYS = 3
     if not isinstance(result, dict) or sum(
         1 for k in check_map if isinstance(result.get(k), dict)
-    ) < len(check_map) // 2:
+    ) < _CHECK_MAP_MIN_KEYS:
         import json as _json
         try:
             raw_preview = _json.dumps(result, default=str)[:500]

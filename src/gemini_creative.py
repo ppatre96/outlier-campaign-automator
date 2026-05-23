@@ -788,15 +788,26 @@ def compose_ad(
     # Coordinates are relative to bg_resized (photo_w × photo_h). Fallback to a
     # fixed 30% bottom if vision call fails.
     bbox = detect_subject_bbox(bg_resized)
-    GAP_PX = int(size * 0.04)   # 4% target gap between text bottom and hair top
-    TOP_MARGIN_PX = int(size * 0.02)   # 2% margin from canvas top (was 8%)
+    # 2026-05-24 — Compositor margins widened to address the dominant cause of
+    # QC retries on GMR-0017 (56× "text touching hair"). Root causes were:
+    #   (a) GAP_PX=4% was too aggressive for curly/flyaway-prone subjects,
+    #   (b) bbox.hair_top_y often misses 2-4% of flyaways above the main mass,
+    #   (c) TOP_MARGIN_PX=2% let text crawl right up to canvas edge so even
+    #       small Gemini placement variance triggered overlap.
+    # New: 6% target gap + 2% flyaway buffer (8% effective) + 4% top margin.
+    # The "no text on subject" QC rule remains strict — the fix is upstream,
+    # not in the QC threshold.
+    GAP_PX = int(size * 0.06)              # 6% target gap (was 4%)
+    FLYAWAY_BUFFER_PX = int(size * 0.02)   # 2% safety buffer for hair the bbox missed
+    TOP_MARGIN_PX = int(size * 0.04)       # 4% margin from canvas top (was 2%)
     if bbox:
         hair_top_canvas_y = photo_y + int(bbox["hair_top_y"])
-        hl_bottom = hair_top_canvas_y - GAP_PX
-        # Old floor was 8% — too high. When hair_top sits at 5-12% from top
-        # (Gemini sometimes places it that high), the 8% floor forced the
-        # headline's bottom BELOW the hair top → overlap. New floor: 2%.
-        # Headline can crawl right up to the top edge if necessary.
+        # Subtract the flyaway buffer from bbox.hair_top_y. The bbox vision
+        # call routinely returns the main hair-mass top and misses loose
+        # strands 2-4% above. The buffer absorbs them BEFORE the gap calc so
+        # the compositor's effective gap matches what QC vision will see.
+        effective_hair_top = hair_top_canvas_y - FLYAWAY_BUFFER_PX
+        hl_bottom = effective_hair_top - GAP_PX
         hl_bottom = max(photo_y + TOP_MARGIN_PX, hl_bottom)
     else:
         hl_bottom = int(size * 0.30)
@@ -1064,7 +1075,7 @@ def generate_imagen_photo(
     return bg_image
 
 
-_QC_MAX_RETRIES_DEFAULT = int(os.getenv("QC_MAX_RETRIES", "4"))
+_QC_MAX_RETRIES_DEFAULT = int(os.getenv("QC_MAX_RETRIES", "10"))
 
 
 def generate_imagen_creative_with_qc(
@@ -1083,8 +1094,11 @@ def generate_imagen_creative_with_qc(
 
     Pranav rule (2026-04-29): we always ship a creative — keep retrying until QC
     PASSes or `max_retries` is exhausted, and on exhaust ship the BEST attempt
-    (fewest violations) rather than the last attempt. Default cap is 9 (= 10
-    attempts ≈ 5 min worst case per variant); override via QC_MAX_RETRIES env.
+    (fewest violations) rather than the last attempt. Default cap is 10 retries
+    (= 11 attempts ≈ 5-6 min worst case per variant); override via
+    QC_MAX_RETRIES env. Bumped 2026-05-22 from 4 → 10 after GMR-0017 surfaced
+    list-of-dicts QC response bug that was burning all 5 attempts in a
+    malformed-detector loop.
 
     Handles two distinct failure classes:
       1. **Copy failure** (headline/subheadline exceeds word/char/line limits) — the image
