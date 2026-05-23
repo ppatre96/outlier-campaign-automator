@@ -65,6 +65,7 @@ class GoogleAdsClient(AdPlatformClient):
         refresh_token:       Optional[str] = None,
         customer_id:         Optional[str] = None,
         login_customer_id:   Optional[str] = None,
+        channel:             str = "display",
     ):
         self._client_id          = client_id          or config.GOOGLE_ADS_CLIENT_ID
         self._client_secret      = client_secret      or config.GOOGLE_ADS_CLIENT_SECRET
@@ -72,6 +73,15 @@ class GoogleAdsClient(AdPlatformClient):
         self._refresh_token      = refresh_token      or config.GOOGLE_ADS_REFRESH_TOKEN
         self._customer_id        = customer_id        or config.GOOGLE_ADS_CUSTOMER_ID
         self._login_customer_id  = login_customer_id  or config.GOOGLE_ADS_LOGIN_CUSTOMER_ID
+        # 2026-05-24 — channel toggle. "display" preserves the legacy
+        # Responsive Display Ad path (RDA + audience segments). "search"
+        # creates Search campaigns with Responsive Search Ads + keyword
+        # criteria, mirroring Diego's manual Search campaigns surfaced by
+        # the 2026-05-24 live-account audit.
+        ch = (channel or "display").strip().lower()
+        if ch not in ("display", "search"):
+            raise ValueError(f"GoogleAdsClient channel must be 'display' or 'search', got {channel!r}")
+        self._channel = ch
         self._client = None  # lazy
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
@@ -107,7 +117,8 @@ class GoogleAdsClient(AdPlatformClient):
     # ── Campaign (one per cohort×geo) ────────────────────────────────────────
 
     def create_campaign_group(self, name: str, *, geos: list[str] | None = None) -> str:
-        """Create a Google Ads Campaign (Display channel, PAUSED, MAXIMIZE_CONVERSIONS).
+        """Create a Google Ads Campaign. Channel is `self._channel` (DISPLAY
+        or SEARCH). Status PAUSED, bidding MAXIMIZE_CONVERSIONS by default.
 
         Returns the Google Ads campaign resource name (e.g.
         `customers/1234567890/campaigns/9876543210`).
@@ -141,7 +152,11 @@ class GoogleAdsClient(AdPlatformClient):
         campaign_op = client.get_type("CampaignOperation")
         c = campaign_op.create
         c.name = name
-        c.advertising_channel_type = client.enums.AdvertisingChannelTypeEnum.DISPLAY
+        c.advertising_channel_type = (
+            client.enums.AdvertisingChannelTypeEnum.SEARCH
+            if self._channel == "search"
+            else client.enums.AdvertisingChannelTypeEnum.DISPLAY
+        )
         c.status = client.enums.CampaignStatusEnum.PAUSED
         c.campaign_budget = budget_resource
         # Bidding strategy. Default: MAXIMIZE_CONVERSIONS (Diego, 2026-05-22:
@@ -236,7 +251,11 @@ class GoogleAdsClient(AdPlatformClient):
         ag.name = name
         ag.campaign = campaign_group_id
         ag.status = client.enums.AdGroupStatusEnum.PAUSED
-        ag.type_ = client.enums.AdGroupTypeEnum.DISPLAY_STANDARD
+        ag.type_ = (
+            client.enums.AdGroupTypeEnum.SEARCH_STANDARD
+            if self._channel == "search"
+            else client.enums.AdGroupTypeEnum.DISPLAY_STANDARD
+        )
         # Ad-group max-CPC is only set when the parent campaign uses
         # MANUAL_CPC. MAXIMIZE_CONVERSIONS manages bids automatically and
         # rejects ad groups that pin cpc_bid_micros.
@@ -255,9 +274,13 @@ class GoogleAdsClient(AdPlatformClient):
         ad_group_resource = resp.results[0].resource_name
         log.info("Google ad group created %s (campaign=%s)", ad_group_resource, campaign_group_id)
 
-        # Apply audience criteria (best-effort — failure here doesn't kill the
-        # ad group; it just runs with broader targeting).
-        self._apply_audience_criteria(ad_group_resource, targeting)
+        # Apply targeting criteria (best-effort — failure doesn't kill the
+        # ad group; it just runs with broader targeting). Display uses
+        # audience segments; Search uses keyword criteria.
+        if self._channel == "search":
+            self._apply_keyword_criteria(ad_group_resource, targeting)
+        else:
+            self._apply_audience_criteria(ad_group_resource, targeting)
         return ad_group_resource
 
     def update_campaign_budget(
@@ -386,6 +409,45 @@ class GoogleAdsClient(AdPlatformClient):
             # Audience-segment criteria are nice-to-have; geo + Display-network
             # defaults still produce a reachable audience without them.
             log.warning("Google audience criteria attach failed (non-fatal): %s", exc)
+
+    def _apply_keyword_criteria(self, ad_group_resource: str, targeting: dict[str, Any]) -> None:
+        """Attach keyword criteria to a Search ad-group.
+
+        Reads `targeting["keyword_ideas"]` (populated by GoogleSegmentResolver
+        via KeywordPlanIdeaService.generate_keyword_ideas). Each keyword is
+        attached with PHRASE match by default — captures variations (singular/
+        plural, word-order tweaks) without going full-broad. Mirrors Diego's
+        manual Search campaigns surfaced by the 2026-05-24 audit which use
+        ~30 keywords per ad-group with phrase match.
+
+        Cap at 30 keywords/ad-group. Mass-mutate in one API call.
+        """
+        try:
+            client = self._ensure_client()
+            criterion_service = client.get_service("AdGroupCriterionService")
+            kws = (targeting or {}).get("keyword_ideas") or []
+            if not kws:
+                log.info("Search ad-group %s has no keyword_ideas to attach", ad_group_resource)
+                return
+            ops = []
+            for kw in kws[:30]:
+                if not (kw or "").strip():
+                    continue
+                op = client.get_type("AdGroupCriterionOperation")
+                c = op.create
+                c.ad_group = ad_group_resource
+                c.status = client.enums.AdGroupCriterionStatusEnum.ENABLED
+                c.keyword.text = str(kw).strip()
+                c.keyword.match_type = client.enums.KeywordMatchTypeEnum.PHRASE
+                ops.append(op)
+            if ops:
+                criterion_service.mutate_ad_group_criteria(
+                    customer_id=self._customer_id_str,
+                    operations=ops,
+                )
+                log.info("Attached %d keyword criteria to %s", len(ops), ad_group_resource)
+        except Exception as exc:
+            log.warning("Google keyword criteria attach failed (non-fatal): %s", exc)
 
     # ── Reach estimation (pre-campaign audience check) ──────────────────────
 
@@ -646,6 +708,103 @@ class GoogleAdsClient(AdPlatformClient):
             return CreateAdResult(creative_id=resource, status="ok")
         except Exception as exc:
             log.error("Google create_image_ad outer failure: %s", exc)
+            return CreateAdResult(
+                status="error",
+                error_class=type(exc).__name__,
+                error_message=str(exc)[:500],
+            )
+
+    # ── Responsive Search Ad ─────────────────────────────────────────────────
+
+    def create_search_ad(
+        self,
+        ad_group_resource: str,
+        *,
+        headlines: list[str],
+        descriptions: list[str],
+        destination_url: Optional[str] = None,
+        final_url_path: Optional[str] = None,
+    ) -> CreateAdResult:
+        """Create a Responsive Search Ad in the given ad-group.
+
+        Search ads are text-only — no image asset needed (unlike RDA).
+        Required RSA inputs:
+          - headlines:      3-15 short text assets, each ≤30 chars
+          - descriptions:   2-4 text assets, each ≤90 chars
+          - final_urls:     destination URL (query string moves to suffix)
+
+        Status PAUSED so Diego/Bryan eyeball before un-pausing. Mirrors
+        Diego's manual Search campaigns from the 2026-05-24 audit.
+        """
+        try:
+            client = self._ensure_client()
+            ad_service = client.get_service("AdGroupAdService")
+            op = client.get_type("AdGroupAdOperation")
+            aga = op.create
+            aga.ad_group = ad_group_resource
+            aga.status = client.enums.AdGroupAdStatusEnum.PAUSED
+
+            ad = aga.ad
+
+            # Split destination_url so UTM query string lives in final_url_suffix
+            # (Google strips ?utm_* from final_urls — same gotcha as RDA path).
+            from urllib.parse import urlsplit, urlunsplit
+            _final = destination_url or config.LINKEDIN_DESTINATION
+            _parts = urlsplit(_final)
+            _base = urlunsplit((_parts.scheme, _parts.netloc, _parts.path, "", ""))
+            ad.final_urls.append(_base)
+            if _parts.query:
+                ad.final_url_suffix = _parts.query
+
+            rsa = ad.responsive_search_ad
+            # Headlines — Google needs 3-15. Truncate each to 30 chars.
+            valid_headlines = [h.strip() for h in (headlines or []) if h and h.strip()]
+            if len(valid_headlines) < 3:
+                return CreateAdResult(
+                    status="error",
+                    error_class="InsufficientHeadlines",
+                    error_message=f"RSA needs ≥3 headlines, got {len(valid_headlines)}",
+                )
+            for h in valid_headlines[:15]:
+                ah = client.get_type("AdTextAsset")
+                ah.text = h[:30]
+                rsa.headlines.append(ah)
+
+            # Descriptions — Google needs 2-4. Truncate each to 90 chars.
+            valid_descs = [d.strip() for d in (descriptions or []) if d and d.strip()]
+            if len(valid_descs) < 2:
+                return CreateAdResult(
+                    status="error",
+                    error_class="InsufficientDescriptions",
+                    error_message=f"RSA needs ≥2 descriptions, got {len(valid_descs)}",
+                )
+            for d in valid_descs[:4]:
+                ad_desc = client.get_type("AdTextAsset")
+                ad_desc.text = d[:90]
+                rsa.descriptions.append(ad_desc)
+
+            try:
+                resp = ad_service.mutate_ad_group_ads(
+                    customer_id=self._customer_id_str,
+                    operations=[op],
+                )
+            except Exception as exc:
+                msg = str(exc)[:500]
+                log.error("Google create_search_ad mutate failed (ag=%s): %s",
+                          ad_group_resource, msg)
+                return CreateAdResult(
+                    status="error",
+                    error_class=type(exc).__name__,
+                    error_message=msg,
+                )
+
+            resource = resp.results[0].resource_name
+            log.info("Google RSA created %s (ad group=%s, %d headlines, %d descriptions)",
+                     resource, ad_group_resource,
+                     len(valid_headlines[:15]), len(valid_descs[:4]))
+            return CreateAdResult(creative_id=resource, status="ok")
+        except Exception as exc:
+            log.error("Google create_search_ad outer failure: %s", exc)
             return CreateAdResult(
                 status="error",
                 error_class=type(exc).__name__,

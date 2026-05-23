@@ -112,6 +112,7 @@ class GoogleSegmentResolver(TargetingResolver):
         out: dict[str, Any] = {
             "geo_targets":       self._resolve_geos(geos or []),
             "audience_segments": [],
+            "keyword_ideas":     [],   # 2026-05-24 — populated for Search arm
             "demographics":      {},
         }
 
@@ -124,21 +125,35 @@ class GoogleSegmentResolver(TargetingResolver):
                     terms.append(term)
 
         seen_segments: set[str] = set()
+        seen_keywords: set[str] = set()
         for term in terms:
+            # Audience segments (Display arm — capped at 5 to keep targeting focused)
             for seg_resource in self._resolve_audience(term):
                 if seg_resource not in seen_segments:
                     seen_segments.add(seg_resource)
                     out["audience_segments"].append(seg_resource)
                     if len(out["audience_segments"]) >= 5:
                         break
-            if len(out["audience_segments"]) >= 5:
+            # Keyword ideas (Search arm — collect up to 30 per cohort, capped
+            # downstream by _apply_keyword_criteria). Include the bare cohort
+            # term as the first keyword so the most-specific intent always
+            # gets a slot.
+            for kw in [term] + self._generate_keyword_ideas(term, max_ideas=12):
+                kw_norm = (kw or "").strip().lower()
+                if kw_norm and kw_norm not in seen_keywords:
+                    seen_keywords.add(kw_norm)
+                    out["keyword_ideas"].append(kw)
+                    if len(out["keyword_ideas"]) >= 30:
+                        break
+            if len(out["audience_segments"]) >= 5 and len(out["keyword_ideas"]) >= 30:
                 break
 
         log.info(
-            "Google targeting resolved: cohort=%s geos=%d segments=%d",
+            "Google targeting resolved: cohort=%s geos=%d segments=%d keywords=%d",
             getattr(cohort, "name", "?"),
             len(out["geo_targets"]),
             len(out["audience_segments"]),
+            len(out["keyword_ideas"]),
         )
         return out
 
@@ -325,11 +340,24 @@ class GoogleSegmentResolver(TargetingResolver):
         Returns the top `max_ideas` keyword phrases by avg_monthly_searches.
         Empty list on any failure (caller falls back to the curated dict).
 
-        Cost: 1 Google Ads API call per cohort signal term. Typical ramp
-        has 3 cohorts × 3-5 signal terms = ~12 calls per ramp. Light load.
+        Cached per-term in the on-disk segment cache so both consumers
+        (Display audience resolution + Search keyword criteria) reuse one
+        API call.
+
+        Cost: 1 Google Ads API call per UNIQUE cohort signal term. Typical
+        ramp has 3 cohorts × 3-5 signal terms = ~12 calls per ramp once,
+        then served from cache on re-runs.
         """
         if not (term or "").strip():
             return []
+        self._load_cache()
+        key = f"kwideas:{term.lower()}"
+        cached = self._cache.get(key)
+        if cached is not None:
+            # Return up to max_ideas from the cached pool (we cache the full
+            # ranked list and slice per caller).
+            return cached[:max_ideas]
+
         client = self._ensure_client()
         svc = client.get_service("KeywordPlanIdeaService")
         request = client.get_type("GenerateKeywordIdeasRequest")
@@ -342,7 +370,14 @@ class GoogleSegmentResolver(TargetingResolver):
         request.include_adult_keywords = False
         request.keyword_seed.keywords.append(term)
 
-        response = svc.generate_keyword_ideas(request=request)
+        try:
+            response = svc.generate_keyword_ideas(request=request)
+        except Exception as exc:
+            log.warning("Google keyword-idea expansion for %r failed: %s", term, exc)
+            self._cache[key] = []
+            self._save_cache()
+            return []
+
         candidates: list[tuple[int, str]] = []
         for idea in response:
             text = (idea.text or "").strip()
@@ -352,13 +387,16 @@ class GoogleSegmentResolver(TargetingResolver):
             candidates.append((volume, text))
 
         # Highest-volume first; volume==0 still allowed but ranked last.
+        # Cache the full pool — callers slice per their own max_ideas.
         candidates.sort(key=lambda x: -x[0])
-        result = [text for _, text in candidates[:max_ideas]]
+        pool = [text for _, text in candidates[:30]]
+        self._cache[key] = pool
+        self._save_cache()
         log.info(
             "Google keyword-ideas for %r → %d ideas (top: %s)",
-            term, len(result), result[:3],
+            term, len(pool), pool[:3],
         )
-        return result
+        return pool[:max_ideas]
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
