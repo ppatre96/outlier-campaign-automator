@@ -2,8 +2,12 @@ name: Smart Ramp Poller
 
 on:
   schedule:
-    # Every 15 minutes, 24/7 — GitHub Actions cron is UTC
-    - cron: "0,15,30,45 * * * *"
+    # Every 5 minutes, 24/7 — GitHub Actions cron is UTC.
+    # Tightened from 15 → 5 min on 2026-05-23 so prep fires within ~5 min of
+    # a Smart Ramp being raised (was up to 15 min latency before). The poller
+    # is idempotent: when no new ramps exist the tick is a single Smart Ramp
+    # API call + Postgres status check, costing well under a second of CPU.
+    - cron: "*/5 * * * *"
     # Daily feedback run at 08:00 UTC — pulls LinkedIn metrics, scores campaigns,
     # updates campaign_registry.xlsx, deprecates underperformers
     - cron: "0 8 * * *"
