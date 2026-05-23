@@ -121,17 +121,24 @@ def save_intel_json(intel: "CompetitorIntel", tg_label: str = "") -> None:
             "skills":     tl.skills_required[:6] if tl.skills_required else [],
         })
 
-    # Role-demand proxy — match task listings against the TG label so the
-    # card can show "did any competitor list this role?" Even a no-hit answer
-    # is useful: "0 listings for 'video editor' across Turing/Surge/Handshake
-    # = mostly Outlier territory."
-    role_hits: list[dict] = []
+    # Role-demand proxy — find listings on the 8 direct competitor sites whose
+    # roles align (or could serve as a proxy) with the cohort's target role.
+    #
+    # 2026-05-23 — LLM semantic rank replaces the prior substring matcher.
+    # The substring path:
+    #   - false-positives ("Video Engineer" SWE role matched target="Video
+    #     Creator" because both contain "video"),
+    #   - false-negatives (an "Ad copy reviewer" listing — a strong proxy for
+    #     a video creator's scroll-stop creative skill — never matched any of
+    #     the target's tokens),
+    # The semantic ranker reads each listing and classifies as:
+    #   - direct        — same skill AND same role
+    #   - adjacent      — different role, same buyer/skill (strong proxy)
+    #   - inspirational — different role + skill, only the creative angle
+    #                     carries over (fallback when direct+adjacent empty)
+    # Falls back to the substring matcher if the Claude call fails.
     role_terms = [t.strip().lower() for t in (tg_label or "").replace("(", " ").replace(")", " ").replace(",", " ").split() if len(t.strip()) >= 4]
-    if role_terms and listings:
-        for tl in listings:
-            haystack = " ".join(str(v).lower() for v in (tl.get("title"), tl.get("domain"), " ".join(tl.get("skills") or [])) if v)
-            if any(term in haystack for term in role_terms):
-                role_hits.append(tl)
+    role_hits = _rank_listings_by_role_alignment(listings, tg_label, role_terms)
 
     # 2026-05-22 — role-keyed Reddit fallback. When task_listings produced
     # zero role hits (competitors don't list this exact role on their
@@ -225,6 +232,153 @@ def save_intel_json(intel: "CompetitorIntel", tg_label: str = "") -> None:
         "Saved structured competitor intel to %s — ads=%d, listings=%d, role_hits=%d",
         _INTEL_PATH, len(ads_rich), len(listings), len(role_hits),
     )
+
+
+def _rank_listings_by_role_alignment(
+    listings: list[dict],
+    tg_label: str,
+    role_terms_fallback: list[str],
+    *,
+    max_results: int = 15,
+    sample_cap: int = 200,
+) -> list[dict]:
+    """LLM semantic rank of scraped contractor listings by alignment to the
+    ramp's target role. Each returned match carries:
+      - classification: "direct" | "adjacent" | "inspirational"
+      - why_match:      one-line explanation from Claude
+
+    Why this exists (2026-05-24): the prior substring matcher had two failure
+    modes that surfaced on GMR-0021 (Short-Form Video Creators):
+      1. False positives — "Senior Video Engineer" SWE listing on Turing
+         matched target="Video Creator" on the token "video".
+      2. False negatives — "Ad Copy Reviewer" on Surge never matched any
+         token from "Short-Form Video Creators" but is a strong creative-
+         skill proxy.
+    The 8 hardcoded competitors are kept (they are the right scope —
+    contractor/part-time only). The matcher inside that scope becomes
+    semantic instead of substring.
+
+    Fallback: when the Claude call fails (rate limit / parse error / auth),
+    fall back to the original substring matcher. role_terms_fallback is
+    the caller's pre-computed token list to avoid recomputing on the hot
+    fallback path.
+    """
+    if not listings or not (tg_label or "").strip():
+        return []
+
+    sample = listings[:sample_cap]
+    catalog_lines = []
+    for i, tl in enumerate(sample):
+        title = (str(tl.get("title") or ""))[:120]
+        platform = str(tl.get("platform") or "")
+        domain = (str(tl.get("domain") or ""))[:40]
+        skills_list = tl.get("skills") or []
+        if isinstance(skills_list, list):
+            skills = ", ".join(str(s) for s in skills_list[:5])[:80]
+        else:
+            skills = str(skills_list)[:80]
+        catalog_lines.append(
+            f"[{i}] {platform} | {title} | domain={domain} | skills={skills}"
+        )
+
+    prompt = (
+        f"Outlier is running an ad campaign targeting this contractor role: "
+        f"'{tg_label}'.\n\n"
+        f"Below are contractor task listings scraped from Outlier's 8 direct "
+        f"competitors (all part-time / 1099 contractor platforms — NOT "
+        f"full-time job boards). Identify the listings whose roles align "
+        f"with the target role above, or could serve as a proxy. For each "
+        f"match, classify:\n\n"
+        f"- direct:        same skill AND same role "
+        f"(e.g. target='video editor' + listing='video editor')\n"
+        f"- adjacent:      different role but shares the same skill or "
+        f"buyer (e.g. target='video editor' + listing='ad copy reviewer' "
+        f"— both = scroll-stop creative skill)\n"
+        f"- inspirational: different role + skill, only the creative angle "
+        f"carries over (e.g. target='video editor' + listing='AI labeler' "
+        f"— borrow the 'paid hourly' framing only). Use sparingly; only "
+        f"surface when direct + adjacent are sparse.\n\n"
+        f"Return up to {max_results} matches, prioritized by usefulness as "
+        f"a signal for ad creative.\n\n"
+        f"## LISTINGS\n"
+        + "\n".join(catalog_lines)
+        + "\n\n## RESPONSE FORMAT\n"
+        "Return ONLY valid JSON, no other text:\n"
+        "```json\n"
+        "{\n"
+        '  "matches": [\n'
+        '    {"listing_idx": <int>, "classification": '
+        '"direct|adjacent|inspirational", "why": "<one sentence>"}\n'
+        "  ]\n"
+        "}\n"
+        "```\n"
+    )
+
+    try:
+        from src.claude_client import call_claude
+        raw = call_claude(
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=2048,
+            cache_system=True,
+        ).strip()
+
+        import re as _re
+        match = _re.search(r"```(?:json)?\s*([\s\S]+?)```", raw)
+        body = match.group(1).strip() if match else raw
+        start = body.find("{")
+        end = body.rfind("}")
+        if start < 0 or end <= start:
+            raise ValueError(f"no JSON object in response: {raw[:200]}")
+        data = json.loads(body[start:end + 1])
+
+        matches_out: list[dict] = []
+        for m in (data.get("matches") or [])[:max_results]:
+            try:
+                idx = int(m.get("listing_idx"))
+            except (TypeError, ValueError):
+                continue
+            if not (0 <= idx < len(sample)):
+                continue
+            enriched = dict(sample[idx])
+            classification = (m.get("classification") or "").strip().lower()
+            if classification not in ("direct", "adjacent", "inspirational"):
+                classification = "adjacent"
+            enriched["classification"] = classification
+            enriched["why_match"] = (m.get("why") or "")[:200]
+            matches_out.append(enriched)
+        log.info(
+            "Role-alignment LLM rank: %d match(es) for tg_label=%r — "
+            "direct=%d adjacent=%d inspirational=%d",
+            len(matches_out), (tg_label or "")[:60],
+            sum(1 for x in matches_out if x.get("classification") == "direct"),
+            sum(1 for x in matches_out if x.get("classification") == "adjacent"),
+            sum(1 for x in matches_out if x.get("classification") == "inspirational"),
+        )
+        return matches_out
+    except Exception as exc:
+        log.warning(
+            "Role-alignment LLM rank failed (%s) — falling back to substring matcher",
+            exc,
+        )
+        hits: list[dict] = []
+        for tl in sample:
+            haystack = " ".join(
+                str(v).lower()
+                for v in (
+                    tl.get("title"),
+                    tl.get("domain"),
+                    " ".join(tl.get("skills") or []) if isinstance(tl.get("skills"), list) else "",
+                )
+                if v
+            )
+            if role_terms_fallback and any(term in haystack for term in role_terms_fallback):
+                enriched = dict(tl)
+                enriched["classification"] = "direct"
+                enriched["why_match"] = "substring fallback (LLM unavailable)"
+                hits.append(enriched)
+                if len(hits) >= max_results:
+                    break
+        return hits
 
 
 def load_pending_hypotheses() -> list[str]:
