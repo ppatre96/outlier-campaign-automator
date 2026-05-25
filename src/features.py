@@ -484,8 +484,13 @@ def binary_features(df: pd.DataFrame, freq_maps: dict[str, Counter]) -> pd.DataF
         if exploded.empty:
             continue
 
-        # get_dummies on the exploded series → binary matrix with original index
-        dummies = pd.get_dummies(exploded, dtype=int)
+        # get_dummies on the exploded series → binary matrix with original index.
+        # dtype="uint8" (1 byte/cell) instead of int=int64 (8 bytes/cell). For
+        # binary one-hot data the wider dtype just wastes memory. Surfaced
+        # 2026-05-22 when GMR-0022 prep OOM'd with int64: 825248 × 9586 cells
+        # = 58.9 GiB requested allocation, refused by numpy on a 14 GiB runner.
+        # uint8 cuts that to ~7.4 GiB, fits comfortably in standard GHA runners.
+        dummies = pd.get_dummies(exploded, dtype="uint8")
 
         # aggregate back to original row index (any occurrence = 1)
         dummies = dummies.groupby(level=0).max()
