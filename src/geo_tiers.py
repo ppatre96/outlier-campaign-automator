@@ -173,6 +173,32 @@ GEO_ETHNIC_CLUSTER: dict[str, str] = {
 }
 
 # Human-readable descriptions used in photo_subject and campaign naming
+# Per-country nationality used as the cluster_label when a ramp targets a
+# SINGLE country (not a multi-country cluster). Without this override the
+# brief generator's geo_block + photo_direction prompt sees the broader
+# cluster label (e.g. "South Asian") and the LLM writes generic ethnicities
+# into the creative — even when the ramp explicitly asked for India only
+# (GMR-0022 raised this on 2026-05-25). Falls back to CLUSTER_LABELS for
+# countries not in this map.
+COUNTRY_NATIONALITY: dict[str, str] = {
+    "IN": "Indian", "PK": "Pakistani", "BD": "Bangladeshi", "LK": "Sri Lankan", "NP": "Nepali",
+    "BR": "Brazilian", "MX": "Mexican", "AR": "Argentine", "CO": "Colombian", "CL": "Chilean",
+    "PE": "Peruvian", "VE": "Venezuelan", "PR": "Puerto Rican", "DO": "Dominican",
+    "US": "American", "CA": "Canadian", "GB": "British", "AU": "Australian", "NZ": "New Zealand",
+    "IE": "Irish", "ZA": "South African",
+    "DE": "German", "FR": "French", "IT": "Italian", "ES": "Spanish", "PT": "Portuguese",
+    "NL": "Dutch", "BE": "Belgian", "PL": "Polish", "RO": "Romanian", "CZ": "Czech",
+    "SK": "Slovak", "HU": "Hungarian", "GR": "Greek", "TR": "Turkish", "UA": "Ukrainian",
+    "RU": "Russian", "RS": "Serbian", "HR": "Croatian", "BG": "Bulgarian", "FI": "Finnish",
+    "SE": "Swedish", "NO": "Norwegian", "DK": "Danish",
+    "PH": "Filipino", "ID": "Indonesian", "VN": "Vietnamese", "TH": "Thai", "MY": "Malaysian",
+    "SG": "Singaporean", "JP": "Japanese", "KR": "Korean", "TW": "Taiwanese", "HK": "Hong Konger",
+    "CN": "Chinese",
+    "NG": "Nigerian", "KE": "Kenyan", "GH": "Ghanaian", "EG": "Egyptian", "MA": "Moroccan",
+    "AE": "Emirati", "SA": "Saudi Arabian", "IL": "Israeli",
+}
+
+
 CLUSTER_LABELS: dict[str, str] = {
     "anglo":             "English-speaking",
     "northern_european": "Northern/Western European",
@@ -562,14 +588,20 @@ def group_geos_for_campaigns(
             return ""
         return _format_rate(base_rate_usd * multiplier)
 
-    # If single geo: simple single-group result
+    # If single geo: simple single-group result.
+    # Override cluster_label with the country-specific nationality so the
+    # brief generator + photo_direction prompt say "Indian" / "Brazilian"
+    # rather than the broader cluster label ("South Asian" / "Latin American").
+    # Fixes GMR-0022 surfacing creatives that said "South Asian software
+    # developer" when the ramp specifically asked for India-only (2026-05-25).
     if len(allowed) == 1:
         cc = allowed[0]
         cluster = GEO_ETHNIC_CLUSTER.get(cc, "global_mix")
         mult = COUNTRY_PAY_MULTIPLIER.get(cc, 0.65)
+        single_country_label = COUNTRY_NATIONALITY.get(cc, CLUSTER_LABELS.get(cluster, cluster))
         return [GeoCampaignGroup(
             cluster=cluster,
-            cluster_label=CLUSTER_LABELS.get(cluster, cluster),
+            cluster_label=single_country_label,
             geos=[cc],
             median_multiplier=mult,
             advertised_rate=_rate_str(mult),
