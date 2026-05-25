@@ -113,6 +113,13 @@ class GoogleSegmentResolver(TargetingResolver):
             "geo_targets":       self._resolve_geos(geos or []),
             "audience_segments": [],
             "keyword_ideas":     [],   # 2026-05-24 — populated for Search arm
+            # 2026-05-25 — sum of avg_monthly_searches across the cohort's
+            # keyword pool. Used as the Search arm's "reach estimate" since
+            # Google's user_interest taxonomy doesn't cover most technical
+            # cohort terms (java / deep learning / quantum physics return 0
+            # audience_segments). Not a literal audience size — closest
+            # signal Google provides for keyword-targeted campaigns.
+            "keyword_volume_estimate": 0,
             "demographics":      {},
         }
 
@@ -148,12 +155,20 @@ class GoogleSegmentResolver(TargetingResolver):
             if len(out["audience_segments"]) >= 5 and len(out["keyword_ideas"]) >= 30:
                 break
 
+        # Sum keyword-volume signal across all cohort terms. Reads from the
+        # cache populated by _generate_keyword_ideas above (no extra API
+        # call). Provides the Search arm's reach-estimate path with a
+        # numeric signal even when audience_segments is empty.
+        for term in terms:
+            out["keyword_volume_estimate"] += self.get_keyword_volume_for_term(term)
+
         log.info(
-            "Google targeting resolved: cohort=%s geos=%d segments=%d keywords=%d",
+            "Google targeting resolved: cohort=%s geos=%d segments=%d keywords=%d kw_volume=%d",
             getattr(cohort, "name", "?"),
             len(out["geo_targets"]),
             len(out["audience_segments"]),
             len(out["keyword_ideas"]),
+            out["keyword_volume_estimate"],
         )
         return out
 
@@ -354,8 +369,12 @@ class GoogleSegmentResolver(TargetingResolver):
         key = f"kwideas:{term.lower()}"
         cached = self._cache.get(key)
         if cached is not None:
-            # Return up to max_ideas from the cached pool (we cache the full
-            # ranked list and slice per caller).
+            # 2026-05-25: cache format is now `[[volume, text], ...]` pairs.
+            # Old caches were `["text", ...]` — handle both shapes so this
+            # change doesn't invalidate the on-disk cache. Return just text
+            # strings to keep the public signature unchanged.
+            if cached and isinstance(cached[0], (list, tuple)) and len(cached[0]) == 2:
+                return [text for _, text in cached[:max_ideas]]
             return cached[:max_ideas]
 
         client = self._ensure_client()
@@ -387,16 +406,47 @@ class GoogleSegmentResolver(TargetingResolver):
             candidates.append((volume, text))
 
         # Highest-volume first; volume==0 still allowed but ranked last.
-        # Cache the full pool — callers slice per their own max_ideas.
+        # Cache the full pool as (volume, text) pairs so the Search arm's
+        # reach-estimate path can read volumes without a second API call.
+        # Stored as nested lists for JSON-safety; readback handles tuples too.
         candidates.sort(key=lambda x: -x[0])
-        pool = [text for _, text in candidates[:30]]
-        self._cache[key] = pool
+        pool_pairs = [[vol, text] for vol, text in candidates[:30]]
+        self._cache[key] = pool_pairs
         self._save_cache()
+        pool_texts = [text for _, text in candidates[:30]]
         log.info(
             "Google keyword-ideas for %r → %d ideas (top: %s)",
-            term, len(pool), pool[:3],
+            term, len(pool_texts), pool_texts[:3],
         )
-        return pool[:max_ideas]
+        return pool_texts[:max_ideas]
+
+    def get_keyword_volume_for_term(self, term: str) -> int:
+        """Sum of avg_monthly_searches across the cached keyword-idea pool
+        for `term`. Used by the Search arm's reach-estimate path as the
+        closest equivalent to "audience size" for keyword targeting.
+
+        Reads from the on-disk cache populated by `_generate_keyword_ideas`.
+        Returns 0 when the term hasn't been resolved yet OR when the cache
+        format is the legacy strings-only shape (predates the volume
+        cache 2026-05-25). Caller should treat 0 as "no signal" — not
+        "audience is zero".
+        """
+        if not (term or "").strip():
+            return 0
+        self._load_cache()
+        cached = self._cache.get(f"kwideas:{term.lower()}")
+        if not cached or not isinstance(cached, list):
+            return 0
+        # Legacy strings-only cache → no volume signal available
+        if cached and not isinstance(cached[0], (list, tuple)):
+            return 0
+        total = 0
+        for pair in cached:
+            try:
+                total += int(pair[0])
+            except (TypeError, ValueError, IndexError):
+                continue
+        return total
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 

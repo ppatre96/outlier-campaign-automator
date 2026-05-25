@@ -469,6 +469,25 @@ class GoogleAdsClient(AdPlatformClient):
           - Returns None on the typical "Standard Access required" auth
             error so the gate doesn't block live runs while access is pending.
         """
+        # 2026-05-25: Search arm reach estimate via keyword_volume_estimate
+        # (sum of avg_monthly_searches across cohort's keyword pool). Used
+        # when audience_segments is empty — common because Google's
+        # user_interest taxonomy lacks most technical/professional segments
+        # (java / deep learning / video editor → 0 segments). Not a true
+        # audience size, but the closest numeric signal Google provides for
+        # keyword-targeted campaigns. Read directly from the targeting dict
+        # — no Google Ads client call needed. Display arm continues to use
+        # the user_list summation below.
+        if self._channel == "search":
+            kw_vol = int((targeting or {}).get("keyword_volume_estimate") or 0)
+            if kw_vol > 0:
+                log.info(
+                    "Google Search reach estimate: %d monthly searches "
+                    "across cohort keyword pool",
+                    kw_vol,
+                )
+                return kw_vol
+
         try:
             client = self._ensure_client()
         except Exception as exc:
