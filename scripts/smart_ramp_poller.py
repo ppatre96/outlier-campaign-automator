@@ -218,8 +218,23 @@ def _should_block_for_escalation(prior: Optional[dict]) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def run_ramp_pipeline(record: RampRecord, dry_run: bool = False, version: int = 1) -> dict:
+def run_ramp_pipeline(
+    record: RampRecord,
+    dry_run: bool = False,
+    version: int = 1,
+    force: bool = False,
+) -> dict:
     """Run the real pipeline for a single ramp. Calls main.run_launch_for_ramp.
+
+    `force=True` (set by `--force` CLI flag, only usable with `--ramp-id`)
+    bypasses the existing-decision gate-skip check. Use to recover from
+    stuck ramps whose first prep run failed mid-flow and left a stale
+    `awaiting_approval` row in Postgres (e.g. GMR-0022 OOM 2026-05-22 —
+    poller subsequently skipped every tick because the decision row
+    existed). When `force=True` and a decision row is present, the
+    pre-existing `cohort_briefs` + `cohort_icp` rows are NOT deleted, but
+    `_prep_ramp` re-runs and overwrites them via the existing
+    upsert_*_ON_CONFLICT logic.
 
     Returns the dict shape Plan 02 produces:
       {
@@ -299,8 +314,19 @@ def run_ramp_pipeline(record: RampRecord, dry_run: bool = False, version: int = 
     # Run prep (cohort mining + Triggers Sheet rows + LinkedIn briefs).
     # If briefs were generated, transition to awaiting_brief_review (new gate);
     # otherwise fall back to awaiting_approval (legacy gate, no brief review).
-    if decision is None:
-        log.info("UI gate: ramp %s has no decision — running prep", record.id)
+    #
+    # `force=True` short-circuits the gate-skip block below and falls into
+    # this path even when a decision row exists. Treated as "treat the
+    # existing decision as if it were null" — re-run prep, let upsert_*
+    # ON_CONFLICT overwrite stale rows.
+    if decision is None or force:
+        if decision is not None and force:
+            log.info(
+                "UI gate: ramp %s status=%s — forcing prep re-run (--force)",
+                record.id, decision.status,
+            )
+        else:
+            log.info("UI gate: ramp %s has no decision — running prep", record.id)
 
         # Slack ping #1 — fired BEFORE prep starts so Diego/Bryan know a new
         # ramp is in flight. Best-effort; failures never block the pipeline.
@@ -417,7 +443,8 @@ def run_ramp_pipeline(record: RampRecord, dry_run: bool = False, version: int = 
 
 
 def process_ramp(
-    record: RampRecord, action: str, state: dict, dry_run: bool = False
+    record: RampRecord, action: str, state: dict, dry_run: bool = False,
+    force: bool = False,
 ) -> dict:
     """Process a single ramp; update state[ramps][record.id]; return pipeline result.
 
@@ -442,7 +469,7 @@ def process_ramp(
     sig = compute_signature(record)
 
     try:
-        result = run_ramp_pipeline(record, dry_run=dry_run, version=version)
+        result = run_ramp_pipeline(record, dry_run=dry_run, version=version, force=force)
         ok = bool(result.get("ok"))
         err_class = None
         tb_text = None
@@ -858,7 +885,10 @@ def run_once(args: argparse.Namespace) -> int:
         if not full:
             log.error("Could not fetch ramp %s", args.ramp_id)
             return 1
-        outcome = process_ramp(full, action="retry", state=state, dry_run=args.dry_run)
+        outcome = process_ramp(
+            full, action="retry", state=state, dry_run=args.dry_run,
+            force=bool(getattr(args, "force", False)),
+        )
         _drive_notifier(outcome, dry_run=args.dry_run)
         if not args.dry_run:
             _write_state_atomic(state)
@@ -987,6 +1017,17 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "LinkedIn creative attach for registry rows where creative_image_path "
             "is empty. Reads qc_rule_overrides for this ramp_id from console DB "
             "and suppresses matching QC rules during gen. Requires --ramp-id."
+        ),
+    )
+    p.add_argument(
+        "--force", action="store_true",
+        help=(
+            "Force prep re-run for --ramp-id even when a ramp_decisions row "
+            "already exists. Use to recover ramps stuck because their first "
+            "prep crashed mid-flow (e.g. GMR-0022 OOM 2026-05-22 left a stale "
+            "awaiting_approval row that the poller respected as 'UI controls'). "
+            "Requires --ramp-id. Re-running upserts cohort_briefs + cohort_icp "
+            "via ON_CONFLICT, overwriting stale rows."
         ),
     )
     return p.parse_args(argv)

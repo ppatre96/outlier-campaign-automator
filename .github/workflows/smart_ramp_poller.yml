@@ -34,6 +34,14 @@ on:
         options:
           - "true"
           - "false"
+      force:
+        description: "Force prep re-run for ramp_id even when a ramp_decisions row already exists (recovers ramps stuck on stale awaiting_approval from prior failures). Requires ramp_id. Overwrites cohort_briefs + cohort_icp via ON_CONFLICT."
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 jobs:
   poll:
@@ -132,6 +140,13 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
              [ "${{ github.event.inputs.regen_mode }}" = "true" ]; then
             ARGS="$ARGS --regen-mode"
+          fi
+
+          # Force mode: bypass the existing ramp_decisions gate-skip when
+          # re-running a stuck ramp. Requires ramp_id.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
+             [ "${{ github.event.inputs.force }}" = "true" ]; then
+            ARGS="$ARGS --force"
           fi
 
           echo "Running: doppler run -- python scripts/smart_ramp_poller.py $ARGS"
