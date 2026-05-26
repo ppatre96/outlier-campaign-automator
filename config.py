@@ -388,6 +388,10 @@ SLACK_TUAN_USER_ID          = os.getenv("SLACK_TUAN_USER_ID", "U08PDA0T85U")
 # Slack ID is known.
 SLACK_BRYAN_USER_ID         = os.getenv("SLACK_BRYAN_USER_ID", "")
 SLACK_RAMP_NOTIFY_CHANNEL   = os.getenv("SLACK_RAMP_NOTIFY_CHANNEL", "C0B0NBB986L")
+# Weekly ads-audit destination. Defaults to the same channel as the ramp
+# launch notifier (`#outlier-campaign-atomation-bot`, C0B0NBB986L); override
+# in Doppler if you ever want audit posts in a dedicated channel.
+SLACK_AUDIT_CHANNEL         = os.getenv("SLACK_AUDIT_CHANNEL", "C0B0NBB986L")
 # Three notification targets per success/escalation message: Pranav DM + Diego DM + shared channel.
 # Each tuple is (kind, id); kind ∈ {"user", "channel"}. Notifier iterates this list.
 SLACK_RAMP_NOTIFY_TARGETS   = [

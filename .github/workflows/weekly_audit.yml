@@ -1,0 +1,77 @@
+name: Weekly Ads Audit
+
+# Mondays 09:00 PT (17:00 UTC). Audits every campaign launched in the last
+# 21 days (configurable via workflow_dispatch input), feeds them through the
+# vendored claude-ads sub-skill prompts, and posts a structured summary to
+# `SLACK_AUDIT_CHANNEL` (defaults to `#outlier-campaign-atomation-bot`).
+#
+# Runs ~9h after smart_ramp_poller's Monday metrics refresh (08:00 UTC), so
+# the registry's cached impressions/spend/CTR/CPA columns are fresh when the
+# audit ingests them. Don't move the cron earlier without re-checking that
+# ordering.
+
+on:
+  schedule:
+    - cron: "0 17 * * 1"   # 17:00 UTC Mondays = 09:00 PT (PDT) / 10:00 PT (PST)
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: "How many days of campaigns to audit (default 21)"
+        required: false
+        default: "21"
+      dry_run:
+        description: "Build the audit but don't post to Slack"
+        required: false
+        default: "false"
+
+jobs:
+  audit:
+    name: Audit + post to Slack
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v4
+
+      - name: Run weekly ads audit
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.lookback_days }}" ]; then
+            ARGS="$ARGS --lookback-days ${{ github.event.inputs.lookback_days }}"
+          fi
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          ARGS="$ARGS --json-out logs/weekly_audit_${{ github.run_id }}.json"
+          echo "Running: doppler run -- python3 scripts/weekly_audit.py $ARGS"
+          doppler run -- python3 scripts/weekly_audit.py $ARGS
+
+      - name: Upload audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-audit-${{ github.run_id }}
+          path: logs/
+          retention-days: 30
+          if-no-files-found: ignore
