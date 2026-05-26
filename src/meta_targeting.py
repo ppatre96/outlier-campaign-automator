@@ -154,12 +154,21 @@ class MetaInterestResolver(TargetingResolver):
             out["age_max"] = 65
         # Under EMPLOYMENT/HOUSING/CREDIT: skip age + gender (Meta enforces).
 
+        # Suppress already-active contributors (the four "Actives" custom
+        # audiences Tuan provided 2026-05-26). Applied to every prospecting
+        # ad set — these IDs are bound to Outlier's Meta ad account, so
+        # they're safe to hardcode in config.META_EXCLUDE_AUDIENCE_IDS.
+        excluded_ids = list(config.META_EXCLUDE_AUDIENCE_IDS or [])
+        if excluded_ids:
+            out["excluded_custom_audiences"] = [{"id": aid} for aid in excluded_ids]
+
         log.info(
-            "Meta targeting resolved: cohort=%s geos=%d interests=%d edu=%s",
+            "Meta targeting resolved: cohort=%s geos=%d interests=%d edu=%s excludes=%d",
             getattr(cohort, "name", "?"),
             len(out["geo_locations"]["countries"]),
             len(interests),
             edu_codes or "none",
+            len(excluded_ids),
         )
         return out
 

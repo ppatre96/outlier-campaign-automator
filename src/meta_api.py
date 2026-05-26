@@ -195,7 +195,24 @@ class MetaClient(AdPlatformClient):
         )
         return campaign_id
 
-    # ── Ad Set (one per cohort×geo×angle) ────────────────────────────────────
+    # ── Ad Set (one per cohort×geo×angle, or TWO once LAL ships) ─────────────
+    #
+    # Dual ad-set plan (decision 2026-05-26 — see config.META_BROAD_CONTROL_ENABLED):
+    # Feature #5 (LAL Custom Audiences) will introduce a second call to
+    # `create_campaign` per (cohort × geo cluster × angle) so each cohort
+    # runs as two parallel ad sets:
+    #
+    #   1. LAL primary    — `targeting["custom_audiences"] = [{id: <1% LAL>}]`
+    #                       receives META_LAL_BUDGET_SPLIT_PCT of the budget.
+    #   2. Broad control  — `targeting` carries NO `custom_audiences`,
+    #                       receives the remainder of the budget.
+    #
+    # Both ad sets share the same creative, exclusions, frequency cap, and
+    # promoted_object/pixel — only the inclusion-audience differs. This lets
+    # Meta's algo discover converters that don't look like our existing pool
+    # while LAL captures the high-precision tail. The current implementation
+    # treats every call as broad (no custom_audiences) — feature #5 layers
+    # the LAL path on top by passing a different `targeting` dict per call.
 
     def create_campaign(
         self,
@@ -219,16 +236,55 @@ class MetaClient(AdPlatformClient):
 
         name = self._prefixed(name)
         budget = daily_budget_cents if daily_budget_cents is not None else self.PLACEHOLDER_DAILY_BUDGET_CENTS
+
+        # Optimization mode — when a custom conversion is wired up (Tuan's
+        # `worker_skill_all` event, ID 986478843749388 as of 2026-05-26), the
+        # ad set optimizes for OFFSITE_CONVERSIONS instead of LINK_CLICKS so
+        # delivery picks people likely to fire that pixel event, not just any
+        # click. promoted_object pins the conversion + pixel; attribution_spec
+        # restricts the window to 7-day click-through (per Tuan, no view-through).
+        # Empty pixel/conversion → fall back to LINK_CLICKS (back-compat).
+        optimize_for_conversions = bool(
+            config.META_CUSTOM_CONVERSION_ID and config.META_PIXEL_ID
+        )
+        if optimize_for_conversions:
+            optimization_goal = AdSet.OptimizationGoal.offsite_conversions
+        else:
+            optimization_goal = AdSet.OptimizationGoal.link_clicks
+
         params = {
             AdSet.Field.name:               name,
             AdSet.Field.campaign_id:        campaign_group_id,
             AdSet.Field.daily_budget:       budget,
             AdSet.Field.billing_event:      AdSet.BillingEvent.impressions,
-            AdSet.Field.optimization_goal:  AdSet.OptimizationGoal.link_clicks,
+            AdSet.Field.optimization_goal:  optimization_goal,
             AdSet.Field.bid_strategy:       AdSet.BidStrategy.lowest_cost_without_cap,
             AdSet.Field.targeting:          targeting,
             AdSet.Field.status:             AdSet.Status.paused,
         }
+
+        if optimize_for_conversions:
+            # custom_conversion_id is sufficient — Meta resolves the parent
+            # pixel from the conversion. pixel_id is still required when
+            # optimizing on a standard event (PURCHASE / LEAD / etc).
+            params[AdSet.Field.promoted_object] = {
+                "pixel_id": config.META_PIXEL_ID,
+                "custom_conversion_id": config.META_CUSTOM_CONVERSION_ID,
+            }
+            params[AdSet.Field.attribution_spec] = [{
+                "event_type":  "CLICK_THROUGH",
+                "window_days": config.META_ATTRIBUTION_WINDOW_DAYS,
+            }]
+
+        # Frequency cap (Tuan 2026-05-26): 3 impressions / 7 days. Set
+        # META_FREQUENCY_CAP_IMPRESSIONS=0 to disable.
+        if config.META_FREQUENCY_CAP_IMPRESSIONS > 0:
+            params[AdSet.Field.frequency_control_specs] = [{
+                "event":         "IMPRESSIONS",
+                "interval_days": config.META_FREQUENCY_CAP_INTERVAL_DAYS,
+                "max_frequency": config.META_FREQUENCY_CAP_IMPRESSIONS,
+            }]
+
         try:
             account = AdAccount(self._ad_account_id)
             ad_set = account.create_ad_set(params=params)
@@ -236,7 +292,15 @@ class MetaClient(AdPlatformClient):
             log.error("Meta create_campaign (ad set) failed for %r: %s", name, exc)
             raise
         ad_set_id = str(ad_set["id"])
-        log.info("Meta ad set created %s (name=%s, campaign=%s)", ad_set_id, name, campaign_group_id)
+        log.info(
+            "Meta ad set created %s (name=%s, campaign=%s, optimize=%s, freq_cap=%s)",
+            ad_set_id,
+            name,
+            campaign_group_id,
+            "conversions" if optimize_for_conversions else "link_clicks",
+            f"{config.META_FREQUENCY_CAP_IMPRESSIONS}/{config.META_FREQUENCY_CAP_INTERVAL_DAYS}d"
+                if config.META_FREQUENCY_CAP_IMPRESSIONS > 0 else "off",
+        )
         return ad_set_id
 
     def update_campaign_budget(

@@ -209,10 +209,59 @@ META_APP_ID          = os.getenv("META_APP_ID", "")
 META_APP_SECRET      = os.getenv("META_APP_SECRET", "")
 META_AD_ACCOUNT_ID   = os.getenv("META_AD_ACCOUNT_ID", "")  # "act_<numeric>"
 META_API_VERSION     = os.getenv("META_API_VERSION", "v21.0")
-# Image ads need an object_story_spec.page_id — the Outlier Facebook Page ID.
-# Empty string disables Meta image-ad creation (campaigns + ad sets still get
-# logged, ad creation falls back to "local_fallback" status).
-META_PAGE_ID         = os.getenv("META_PAGE_ID", "")
+# Outlier Facebook Page ID (provided 2026-05-26 by Tuan). Image ads need
+# object_story_spec.page_id — without it create_image_ad falls back to
+# "local_fallback" and the PNG is saved locally for manual upload.
+META_PAGE_ID         = os.getenv("META_PAGE_ID", "260786120451494")
+
+# Meta Pixel + Custom Conversion (provided 2026-05-26 by Tuan):
+#   Pixel ID:             637714478283926
+#   Custom Conversion ID: 986478843749388  (event: worker_skill_all)
+#   Conversion window:    7-day click only
+# When META_CUSTOM_CONVERSION_ID is set, the Meta arm switches the ad set
+# optimization_goal from LINK_CLICKS → OFFSITE_CONVERSIONS, attaches
+# promoted_object.custom_conversion_id, and sets attribution_spec to N-day
+# click-through. Leave empty to fall back to LINK_CLICKS (back-compat).
+META_PIXEL_ID                = os.getenv("META_PIXEL_ID", "637714478283926")
+META_CUSTOM_CONVERSION_ID    = os.getenv("META_CUSTOM_CONVERSION_ID", "986478843749388")
+META_ATTRIBUTION_WINDOW_DAYS = int(os.getenv("META_ATTRIBUTION_WINDOW_DAYS", "7"))
+
+# Custom audiences to exclude on every prospecting ad set (provided 2026-05-26
+# by Tuan — the four active-contributor audiences from Outlier's Meta account).
+# Override via META_EXCLUDE_AUDIENCE_IDS_JSON to replace the list.
+DEFAULT_META_EXCLUDE_AUDIENCE_IDS: list[str] = [
+    "120211889244260257",  # Generalists Actives - 12.12.24 (~208k)
+    "120211112196180257",  # Coders Actives - 12.12.24      (~118k)
+    "120211112198140257",  # Languages Actives - 12.12.24   (~502k)
+    "120211112208060257",  # Specialists Actives - 12.12.24 (~240k)
+]
+try:
+    _meta_excl_env = os.getenv("META_EXCLUDE_AUDIENCE_IDS_JSON", "")
+    META_EXCLUDE_AUDIENCE_IDS = (
+        _json.loads(_meta_excl_env) if _meta_excl_env else DEFAULT_META_EXCLUDE_AUDIENCE_IDS
+    )
+except Exception:
+    META_EXCLUDE_AUDIENCE_IDS = DEFAULT_META_EXCLUDE_AUDIENCE_IDS
+
+# Frequency cap on every prospecting ad set (provided 2026-05-26 by Tuan):
+# 3 impressions / 7 days. Set MAX_FREQ to 0 to disable.
+META_FREQUENCY_CAP_IMPRESSIONS   = int(os.getenv("META_FREQUENCY_CAP_IMPRESSIONS", "3"))
+META_FREQUENCY_CAP_INTERVAL_DAYS = int(os.getenv("META_FREQUENCY_CAP_INTERVAL_DAYS", "7"))
+
+# Dual ad-set strategy (decision 2026-05-26). When LAL Custom Audiences ship
+# (feature #5: Snowflake seed → SHA256 → Meta upload → 1% LAL), the Meta arm
+# creates TWO ad sets per (cohort × geo cluster × angle):
+#   1. LAL primary  — `custom_audiences = [{id: <1% LAL audience>}]`,
+#                     ~LAL_BUDGET_SPLIT_PCT of the cohort's daily budget.
+#   2. Broad control — no `custom_audiences`, geo + education + exclusions only,
+#                      remainder of the budget.
+# This sidesteps "LAL plateau" and lets Meta's algo discover converters who
+# don't look like our existing pool. Until LAL ships, all ad sets are
+# functionally broad (no inclusion audience) — flipping BROAD_CONTROL_ENABLED
+# off today is a no-op. Set False after feature #5 ships only if Diego/Tuan
+# decide pure-LAL outperforms the control over the 14-day window.
+META_BROAD_CONTROL_ENABLED   = os.getenv("META_BROAD_CONTROL_ENABLED", "true").lower() in ("1", "true", "yes")
+META_LAL_BUDGET_SPLIT_PCT    = int(os.getenv("META_LAL_BUDGET_SPLIT_PCT", "70"))  # LAL gets 70%, broad gets 30%
 
 # ── Google Ads ────────────────────────────────────────────────────────────────
 GOOGLE_ADS_CLIENT_ID         = os.getenv("GOOGLE_ADS_CLIENT_ID", "")

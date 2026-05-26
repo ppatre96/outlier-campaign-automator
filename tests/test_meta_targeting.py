@@ -80,6 +80,25 @@ def test_human_value_normalisation():
     assert MetaInterestResolver._human_value("rawcol", "fallback") == "fallback"
 
 
+def test_exclude_audiences_attached_to_targeting(tmp_path, monkeypatch):
+    """Every prospecting ad set must carry the active-contributor exclusions."""
+    import config
+    monkeypatch.setattr(config, "META_EXCLUDE_AUDIENCE_IDS", ["111", "222"])
+    cache = tmp_path / "cache.json"
+    r = MetaInterestResolver(access_token="dummy", cache_path=cache)
+    out = r.resolve_cohort(_FakeCohort(rules=[]), geos=["US"])
+    assert out["excluded_custom_audiences"] == [{"id": "111"}, {"id": "222"}]
+
+
+def test_exclude_audiences_empty_omits_field(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "META_EXCLUDE_AUDIENCE_IDS", [])
+    cache = tmp_path / "cache.json"
+    r = MetaInterestResolver(access_token="dummy", cache_path=cache)
+    out = r.resolve_cohort(_FakeCohort(rules=[]), geos=["US"])
+    assert "excluded_custom_audiences" not in out
+
+
 def test_lookup_misses_get_cached(tmp_path):
     """Repeated lookups of an unknown term must hit the API only once.
 
