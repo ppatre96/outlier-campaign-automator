@@ -110,24 +110,50 @@ class SmartRampClient:
 
     def fetch_ramp_list(self) -> list[RampRecord]:
         """
-        Fetch list of all ramps (paginated if needed).
+        Fetch list of all ramps via the discovery endpoint /api/ramps/all.
+
+        The summary endpoint returns lightweight ramp objects without formData /
+        full cohort details — only id, name, alias, status, startDate, endDate
+        and a stub cohort list (pod/domain/locale only, no cohort IDs). Callers
+        that need full cohort detail must follow up with fetch_ramp(id).
 
         Returns:
-            List of RampRecord objects (at least summary fields populated).
+            List of RampRecord objects with summary-only fields populated.
+            cohorts is always [] — drill into individual ramps for cohort data.
         """
         try:
-            url = f"{self.API_BASE}/ramps"
+            url = f"{self.API_BASE}/ramps/all"
             resp = requests.get(url, headers=self._headers(), timeout=10)
             resp.raise_for_status()
             data = resp.json()
 
-            # API returns list of ramps directly
             if isinstance(data, list):
-                return [self._parse_ramp(r) for r in data]
+                return [self._parse_ramp_summary(r) for r in data]
             return []
         except requests.exceptions.RequestException as e:
             print(f"Error fetching ramp list: {e}")
             return []
+
+    def _parse_ramp_summary(self, raw: dict) -> RampRecord:
+        """Parse a summary item from /api/ramps/all into a RampRecord.
+
+        The summary shape is much lighter than the single-ramp endpoint:
+        no formData, no requester, no Linear linkage. Empty strings stand in
+        for fields the consumer can backfill via fetch_ramp(id) if needed.
+        """
+        return RampRecord(
+            id=raw.get("id") or "",
+            project_id="",  # not in summary; call fetch_ramp(id) to get it
+            project_name=raw.get("name"),
+            requester_name="",
+            summary=raw.get("alias") or "",
+            submitted_at=raw.get("startDate") or "",
+            updated_at=raw.get("endDate") or "",
+            status=raw.get("status") or "draft",
+            linear_issue_id=None,
+            linear_url=None,
+            cohorts=[],  # always empty — drill into fetch_ramp(id) for cohorts
+        )
 
     def _parse_ramp(self, raw: dict) -> RampRecord:
         """Parse raw API response into RampRecord."""
