@@ -350,6 +350,34 @@ def log_campaign(
     populated when platform="linkedin" so the existing readers + Google
     Sheets writers continue to work without further changes.
     """
+    # Test-fixture leak guard (added 2026-05-27 after the audit caught 42
+    # rows with `smart_ramp_id="flow"` + `urn:li:sponsoredCampaign:42` —
+    # leaked from tests/test_inmail_isolation.py runs during the 13-hour
+    # gap between e311ff1 and d511a28 before _block_registry_writes was
+    # added). Reject any write carrying obvious test-mock values so future
+    # test leaks fail loudly instead of silently polluting the registry.
+    # If you legitimately need `smart_ramp_id="flow"` (e.g., a new dev tool)
+    # rename your test fixture instead — flow is reserved for the leak path.
+    _BANNED_RAMP_IDS = {"flow"}
+    _BANNED_URNS = {
+        "urn:li:sponsoredCampaign:42",
+        "urn:li:sponsoredCreative:99",
+    }
+    if smart_ramp_id in _BANNED_RAMP_IDS:
+        raise ValueError(
+            f"log_campaign refusing to write: smart_ramp_id={smart_ramp_id!r} "
+            f"is a known test-fixture value (see feedback_campaign_registry_singleton_leak "
+            "in memory). If this is a real call, use a real GMR-XXXX id."
+        )
+    _suspect_urn = linkedin_campaign_urn or creative_urn or platform_campaign_id
+    if _suspect_urn in _BANNED_URNS:
+        raise ValueError(
+            f"log_campaign refusing to write: URN {_suspect_urn!r} is a known "
+            "test mock from tests/test_inmail_isolation.py. Likely cause: a "
+            "test ran without `_block_registry_writes(monkeypatch)`. See memory "
+            "feedback_campaign_registry_singleton_leak."
+        )
+
     # Resolve the platform-native id pair from whichever set of kwargs the
     # caller used. LinkedIn callers may pass either set.
     pcid = platform_campaign_id or linkedin_campaign_urn
