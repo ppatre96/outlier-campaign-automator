@@ -177,7 +177,7 @@ def _audit_platform(
     spend_total = sum(_safe_float(r.get("spend_usd")) for r in rows)
     impressions_total = sum(_safe_int(r.get("impressions")) for r in rows)
 
-    system = _build_system_prompt(prompt_text)
+    system = _build_system_prompt(prompt_text, platform=platform)
     user = (
         "Audit the campaigns below and return ONLY a JSON object matching this exact schema:\n"
         '{ "health_score": <int 0-100>, '
@@ -221,16 +221,81 @@ def _load_prompt(platform: str) -> str:
     return path.read_text()
 
 
-def _build_system_prompt(prompt_text: str) -> str:
+def _build_system_prompt(prompt_text: str, platform: str = "") -> str:
+    context_block = _build_deployment_context(platform) if platform else ""
     return (
         "You are an expert paid-ads auditor. Apply the audit framework "
         "below to the campaign data the user provides. Return findings "
         "as structured JSON exactly per the schema specified in the user "
         "message. Do not return any prose outside the JSON. Do not wrap "
         "the JSON in markdown code fences.\n\n"
+        + context_block +
         "===== AUDIT FRAMEWORK =====\n"
         f"{prompt_text}\n"
         "===== END AUDIT FRAMEWORK ====="
+    )
+
+
+def _build_deployment_context(platform: str) -> str:
+    """Production deployment context the audit prompt should treat as known-good.
+
+    Without this block the audit was registry-blind — it would flag
+    'Pixel not installed', 'no conversion action configured', etc., even
+    though those are deployed. The block lists what's actually in place
+    so the auditor focuses on the campaigns themselves, not the account
+    plumbing.
+    """
+    items: list[str] = []
+    if platform == "meta":
+        # META_AD_ACCOUNT_ID already includes the `act_` prefix in Doppler; don't double-prefix.
+        acct = config.META_AD_ACCOUNT_ID or ""
+        if acct and not acct.startswith("act_"):
+            acct = f"act_{acct}"
+        conv_line = (
+            f"- Custom Conversion: {config.META_CUSTOM_CONVERSION_ID} (worker_skill_all) — "
+            "value-based, T1=$50/T2=$75/T3=$100 injected upstream via "
+            "ifnd_6a161027c1c2ad7aff752e7a (Tuan, 2026-05-27). 7–14d learning phase from that date."
+            if config.META_CUSTOM_CONVERSION_ID
+            else "- Custom Conversion: NOT configured (META_CUSTOM_CONVERSION_ID empty in Doppler) — value-based bidding falls back to default optimization until set."
+        )
+        items = [
+            f"- Ad Account: {acct}" if acct else "",
+            f"- Meta Pixel ID: {config.META_PIXEL_ID} — INSTALLED, firing on app.outlier.ai signup events",
+            conv_line,
+            f"- Page ID: {config.META_PAGE_ID}",
+            f"- Exclusion audiences (always attached at ad-set level): {', '.join(config.META_EXCLUDE_AUDIENCE_IDS)}",
+            "- CAPI Gateway: INSTALLED (server-side conversion path).",
+            "- LAL (lookalike) audiences: APPROVED 2026-05-22 pending Tuan/admin LAL spec ship; will be 70% LAL + 30% broad control once live.",
+            "- Special Ad Category: EMPLOYMENT — declared at campaign create time via API.",
+        ]
+    elif platform == "google":
+        items = [
+            "- Customer ID: 8840244968 (leaf). MCC 6301406350 is empty; login_customer_id + customer_id both point at the leaf.",
+            f"- Conversion Action: {config.GOOGLE_CONVERSION_ACTION_ID} (worker_skill_all) — value-based, T1=$50/T2=$75/T3=$100 injected upstream. UPLOAD_CLICKS / SIGNUP. 7–14d learning phase from 2026-05-27.",
+            f"- Bid strategy default: {config.GOOGLE_BID_STRATEGY}. Existing live campaigns do NOT auto-migrate; they retain their original strategy.",
+            "- Custom Intent Audience: ENABLED (wired into ad-group criterion attach).",
+            "- Customer Match: ENABLED on leaf 8840244968 (2026-05-27). Identity verification deadline 2026-06-12 (Tuan owns).",
+            "- Special Ad Category EMPLOYMENT: REQUIRED but google-ads SDK v22+ removed SPECIAL_AD_CATEGORY from the Campaign proto. Reviewer must toggle this manually in the Ads Manager UI per campaign before un-pausing. DO NOT flag this as missing — it's a known SDK gap, not a config oversight.",
+        ]
+    elif platform == "linkedin":
+        items = [
+            f"- Ad Account: urn:li:sponsoredAccount:{config.LINKEDIN_AD_ACCOUNT_ID}",
+            f"- Authoring member: {config.LINKEDIN_MEMBER_URN} (ACCOUNT_MANAGER on the ad account + SUPER_ADMIN on the owning Outlier org urn:li:organization:92583550)",
+            "- Conversion tracking: worker_skill_all live across LinkedIn (Tuan, 2026-05-27).",
+            "- InMail: WORKING — uses /rest/inMailContents with LinkedIn-Version 202506 (MDP not required for InMail).",
+            "- Static ad arm (DSC posts via /rest/posts with adContext): GATED by LinkedIn Marketing Developer Platform (MDP) entitlement on app 86g4m92v2vfq68 — currently returns 403 FORBIDDEN regardless of scope/role. Approval ticket open with LinkedIn. Pipeline falls back to local PNG when blocked. DO NOT flag this as a misconfiguration — it's a pending platform approval, not something we can fix in our code.",
+            "- Default exclusions: applied at campaign-create time.",
+        ]
+    if not items:
+        return ""
+    body = "\n".join(line for line in items if line)
+    return (
+        "===== PRODUCTION DEPLOYMENT CONTEXT =====\n"
+        "Use this as ground truth — these are already deployed and verified. "
+        "Do NOT flag any of them as missing or misconfigured; focus on the "
+        "campaign-level data instead.\n\n"
+        f"{body}\n"
+        "===== END CONTEXT =====\n\n"
     )
 
 
