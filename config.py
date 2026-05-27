@@ -294,6 +294,27 @@ GOOGLE_ADS_CUSTOMER_ID       = os.getenv("GOOGLE_ADS_CUSTOMER_ID", "")
 GOOGLE_ADS_LOGIN_CUSTOMER_ID = os.getenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "")
 GOOGLE_ADS_REFRESH_TOKEN     = os.getenv("GOOGLE_ADS_REFRESH_TOKEN", "")
 
+# Google Ads value-based conversion tracking (Tuan, 2026-05-27).
+# Conversion Action ID `7625599821` (`worker_skill_all`) on leaf account
+# 8840244968, type UPLOAD_CLICKS / category SIGNUP, default value $74.29.
+# Per-tier values ($50/$75/$100 for T1/T2/T3) injected upstream by
+# worker_skill_tier_value_inject (ID ifnd_6a161027c1c2ad7aff752e7a) — see
+# reference_outlier_value_based_conversions memory file. Setting this attaches
+# the action to every new campaign via selective_optimization, constraining
+# Google's optimizer to this specific conversion (not all account conversions).
+GOOGLE_CONVERSION_ACTION_ID  = os.getenv("GOOGLE_CONVERSION_ACTION_ID", "7625599821")
+
+# Google bid strategy. Options (read at campaign-create time):
+#   - MAXIMIZE_CONVERSIONS       — count-based (Diego default 2026-05-22)
+#   - MAXIMIZE_CONVERSION_VALUE  — value-based (new 2026-05-27 default after
+#                                  Tuan shipped value injection across all
+#                                  channels). 7-14 day learning phase expected.
+#   - MANUAL_CPC                 — legacy fallback; only for debug
+# Override via Doppler `GOOGLE_BID_STRATEGY` env var. Existing live campaigns
+# do NOT auto-migrate when the default changes — they retain their original
+# strategy until edited via the Ads UI.
+GOOGLE_BID_STRATEGY          = os.getenv("GOOGLE_BID_STRATEGY", "MAXIMIZE_CONVERSION_VALUE")
+
 # ── LiteLLM proxy (kept for image-gen fallback via /images/generations) ───────
 # Public endpoint (no VPN required). Internal: litellm-proxy.ml-serving-internal.scale.com/v1
 LITELLM_BASE_URL = os.getenv("LITELLM_BASE_URL", "https://litellm-proxy.ml.scale.com/v1")

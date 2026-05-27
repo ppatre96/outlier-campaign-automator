@@ -159,21 +159,61 @@ class GoogleAdsClient(AdPlatformClient):
         )
         c.status = client.enums.CampaignStatusEnum.PAUSED
         c.campaign_budget = budget_resource
-        # Bidding strategy. Default: MAXIMIZE_CONVERSIONS (Diego, 2026-05-22:
-        # "Google Ads default bidding should be maximize conversions with no
-        # more restrictions"). Requires conversion tracking on the customer
-        # account — Diego confirmed it's set up on 8840244968. To roll back
-        # to the pre-2026-05-22 placeholder behavior set
-        # GOOGLE_BID_STRATEGY=MANUAL_CPC in the env.
+        # Bidding strategy (config.GOOGLE_BID_STRATEGY — env-overridable).
+        # Default since 2026-05-27: MAXIMIZE_CONVERSION_VALUE. Tuan shipped
+        # per-tier value injection across all channels that day
+        # (worker_skill_tier_value_inject ID ifnd_6a161027c1c2ad7aff752e7a;
+        # T1=$50/T2=$75/T3=$100). Value-based bidding weights each impression
+        # by P(conversion) × E(value) rather than just P(conversion), pulling
+        # delivery toward higher-LTV cohorts. Expect 7-14 day learning phase
+        # with elevated CPA before steady state.
+        # Rollback path: `doppler secrets set GOOGLE_BID_STRATEGY=MAXIMIZE_CONVERSIONS`
         import os as _os
-        _bid_strategy = (_os.getenv("GOOGLE_BID_STRATEGY") or "MAXIMIZE_CONVERSIONS").upper()
+        _bid_strategy = (
+            _os.getenv("GOOGLE_BID_STRATEGY")
+            or config.GOOGLE_BID_STRATEGY
+            or "MAXIMIZE_CONVERSION_VALUE"
+        ).upper()
         if _bid_strategy == "MANUAL_CPC":
             c.manual_cpc.enhanced_cpc_enabled = False
+        elif _bid_strategy == "MAXIMIZE_CONVERSION_VALUE":
+            # target_roas=0 → pure value maximization (no ROAS target).
+            # Once 30d of value-tagged conversion data accumulates, can flip
+            # to a non-zero target_roas (e.g., 3.0 = $3 of value per $1 spend)
+            # for efficiency — but only after Diego/Tuan confirm a realistic
+            # ROAS target from observed performance.
+            c.maximize_conversion_value.target_roas = 0
+            log.info(
+                "Google bid strategy: MAXIMIZE_CONVERSION_VALUE (target_roas=0). "
+                "Expect 7-14d learning phase + CPA volatility."
+            )
         else:
-            # Setting any sub-field of the maximize_conversions oneof
-            # activates that strategy. target_cpa_micros=0 = no target
-            # CPA, pure conversion maximization.
+            # MAXIMIZE_CONVERSIONS — count-based. Setting any sub-field
+            # activates the oneof; target_cpa_micros=0 = no CPA target.
             c.maximize_conversions.target_cpa_micros = 0
+
+        # Conversion-action attach (Tuan 2026-05-27 — Google conversion
+        # action `7625599821` for the `worker_skill_all` event). Constrains
+        # this campaign's optimization to THIS conversion action specifically
+        # (instead of all conversion actions on the customer account).
+        # Independent of bid strategy — both MAX_CONVERSIONS and
+        # MAX_CONVERSION_VALUE benefit from focused attribution.
+        # Set GOOGLE_CONVERSION_ACTION_ID="" in Doppler to disable.
+        _conversion_action_id = (
+            _os.getenv("GOOGLE_CONVERSION_ACTION_ID")
+            or config.GOOGLE_CONVERSION_ACTION_ID
+            or ""
+        ).strip()
+        if _conversion_action_id:
+            ca_resource = (
+                f"customers/{self._customer_id_str}/conversionActions/"
+                f"{_conversion_action_id}"
+            )
+            c.selective_optimization.conversion_actions.append(ca_resource)
+            log.info(
+                "Google campaign optimizing on conversion action %s (%s)",
+                _conversion_action_id, ca_resource,
+            )
         # EU political advertising declaration — required field in Google
         # Ads v21+ (2026-05-08 verified). Outlier's tasking ads are not
         # political; explicitly declare DOES_NOT_CONTAIN.
