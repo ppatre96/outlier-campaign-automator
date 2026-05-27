@@ -27,6 +27,15 @@ def test_recorded_ramp_replay_writes_state_and_three_slack_calls(tmp_path, monke
     """End-to-end: poller → run_launch_for_ramp (mocked) → notifier (3 sends)."""
     fixture = _load_fixture()
 
+    # 0) Force the UI gate OFF for this test. With UI_GATE_ENABLED=true (the
+    # current prd setting since 2026-05-22), the poller routes through a
+    # Postgres-based gate that returns empty pipeline stubs for any ramp not
+    # explicitly approved in ramp_decisions. This test mocks run_launch_for_ramp
+    # directly, bypassing that gate-aware codepath — only relevant when the
+    # legacy direct-call path at smart_ramp_poller.py:277 is active.
+    import config
+    monkeypatch.setattr(config, "UI_GATE_ENABLED", False)
+
     # 1) Mock SmartRampClient — return the fixture for both list + single fetch.
     fake_client = MagicMock()
     fake_client.fetch_ramp_list.return_value = [fixture]
@@ -66,7 +75,7 @@ def test_recorded_ramp_replay_writes_state_and_three_slack_calls(tmp_path, monke
     import main
     monkeypatch.setattr(
         main, "run_launch_for_ramp",
-        lambda ramp_id, modes=("inmail", "static"), dry_run=False: fake_pipeline_result,
+        lambda ramp_id, modes=("inmail", "static"), dry_run=False, prep_only=False, **kwargs: fake_pipeline_result,
     )
 
     # 3) Mock slack_sdk.WebClient inside the notifier module.
