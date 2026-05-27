@@ -3862,33 +3862,11 @@ def _process_extra_platform_arm(
             # (cohort × geo) for THIS platform only — other platforms run
             # independently. On skipped (API failure / unsupported account)
             # we ship without gating, with a null audience_size in the sheet.
-            from src.audience_check import denarrow_for_platform
-
-            def _meta_drop_rule(t: dict) -> dict | None:
-                flex = (t.get("flexible_spec") or [])
-                if flex:
-                    head = flex[0] or {}
-                    interests = (head.get("interests") or [])[:]
-                    if interests:
-                        interests.pop()
-                        new_head = {**head, "interests": interests}
-                        # Empty interests block — remove it altogether
-                        new_flex = ([new_head] if interests else []) + flex[1:]
-                        return {**t, "flexible_spec": new_flex}
-                # No interests left to drop — try removing an age band
-                if t.get("age_min") and t.get("age_max"):
-                    new_t = dict(t)
-                    new_t.pop("age_min", None)
-                    new_t.pop("age_max", None)
-                    return new_t
-                return None
-
-            def _google_drop_rule(t: dict) -> dict | None:
-                segs = list(t.get("audience_segments") or [])
-                if segs:
-                    segs.pop()
-                    return {**t, "audience_segments": segs}
-                return None
+            from src.audience_check import (
+                denarrow_for_platform,
+                drop_rule_for_google,
+                drop_rule_for_meta,
+            )
 
             audience_count: int | None = None
             audience_status = "skipped"
@@ -3897,7 +3875,7 @@ def _process_extra_platform_arm(
                     platform="meta",
                     targeting=targeting,
                     get_reach_fn=lambda t: client.get_reach_estimate(t),
-                    drop_rule_fn=_meta_drop_rule,
+                    drop_rule_fn=drop_rule_for_meta,
                     cohort_label=f"{getattr(cohort, '_stg_id', '?')}|{geo_group.cluster_label}",
                 )
             elif platform == "google" and hasattr(client, "get_reach_estimate"):
@@ -3905,7 +3883,7 @@ def _process_extra_platform_arm(
                     platform="google",
                     targeting=targeting,
                     get_reach_fn=lambda t: client.get_reach_estimate(t),
-                    drop_rule_fn=_google_drop_rule,
+                    drop_rule_fn=drop_rule_for_google,
                     cohort_label=f"{getattr(cohort, '_stg_id', '?')}|{geo_group.cluster_label}",
                 )
 
