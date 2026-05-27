@@ -543,6 +543,7 @@ class LinkedInClient(AdPlatformClient):
         facet_urns: dict[str, list[str]],
         daily_budget_cents: int = 10000,
         exclude_facet_urns: dict[str, list[str]] | None = None,
+        campaign_state: dict | None = None,
     ) -> str:
         """
         Create a Sponsored Content campaign with the given targeting.
@@ -551,9 +552,20 @@ class LinkedInClient(AdPlatformClient):
         `exclude_facet_urns` is an optional `{facet: [urns]}` map of negation
         targeting (recruiters/sales/etc.) — emitted as the `exclude` block of
         targetingCriteria. See `config.DEFAULT_EXCLUDE_FACETS`.
+
+        `campaign_state` is an optional dict from Smart Ramp's
+        `formData.cohorts[].campaign_state`. If `campaign_state.linkedin`
+        contains `liAdLanguage` (e.g. "EN") or `mainCountry` (e.g. "GB"), they
+        override the default locale of US/en. Channel-manager-saved overrides
+        win over pipeline defaults. liTargetingFacet + liAdFormat are NOT
+        consumed here yet — they're surfaced in campaign naming via
+        campaign_name.py but don't affect actual targeting / format selection.
+        TODO: wire liTargetingFacet into the targeting block + route liAdFormat
+        to the InMail arm dispatch in main.py.
         """
         name = self._prefixed(name)
         targeting = _build_targeting_criteria(facet_urns, exclude_facet_urns)
+        locale = _locale_from_campaign_state(campaign_state)
         payload = {
             "account":       f"urn:li:sponsoredAccount:{config.LINKEDIN_AD_ACCOUNT_ID}",
             "campaignGroup": campaign_group_urn,
@@ -564,7 +576,7 @@ class LinkedInClient(AdPlatformClient):
             "unitCost":      {"currencyCode": "USD", "amount": "10.00"},
             "targetingCriteria": targeting,
             "status":                 "DRAFT",
-            "locale":                 {"country": "US", "language": "en"},
+            "locale":                 locale,
             # WEBSITE_CONVERSION matches Outlier's standard for production
             # Sponsored Content (78% of active campaigns; per
             # 2026-05-08 ad-account audit). Attached conversion is
@@ -1120,6 +1132,26 @@ def _encode_targeting_for_query(targeting: dict) -> str:
 
 
 # ── Utility ────────────────────────────────────────────────────────────────────
+
+def _locale_from_campaign_state(campaign_state: dict | None) -> dict:
+    """Build the LinkedIn `locale` payload, honouring channel-manager overrides.
+
+    Reads `campaign_state.linkedin.liAdLanguage` and
+    `campaign_state.linkedin.mainCountry`. Each is independent — if only one is
+    set the other falls back to the LinkedIn default (US / en). Returns the
+    {"country": ..., "language": ...} shape LinkedIn's API expects.
+
+    LinkedIn expects lowercase ISO-639 for language and uppercase ISO-3166 for
+    country. We normalize accordingly so the channel manager can save either
+    case ("EN" or "en", "gb" or "GB") without breaking the API call.
+    """
+    state = campaign_state or {}
+    li = state.get("linkedin") if isinstance(state, dict) else None
+    li = li if isinstance(li, dict) else {}
+    language = (li.get("liAdLanguage") or "en").strip().lower() or "en"
+    country = (li.get("mainCountry") or "US").strip().upper() or "US"
+    return {"country": country, "language": language}
+
 
 def _now_ms() -> int:
     import time

@@ -180,7 +180,11 @@ def test_sql_files_exist_and_have_signup_flow_id_placeholder():
     act_sql = ar._ACTIVATIONS_SQL_PATH.read_text()
     assert "{signup_flow_id}" in pay_sql
     assert "{signup_flow_id}" in act_sql
-    # And the corrected schema bits
-    assert "qpr.QUALIFICATION_ID = pq._ID" in pay_sql  # corrected join key
+    # And the corrected schema bits (post 2026-05-27 Q2 pivot rewrite)
+    # The 2026-05-27 rewrite restructured the join — tier_rank now extracted
+    # from QUALIFICATION_NAME suffix, joined via the qpr_decoded CTE rather
+    # than direct qpr→pq. Key invariant: pq._ID is still the correct join key
+    # (NOT pq.QUALIFICATION_ID), so we assert that pattern survives.
+    assert "= pq._ID" in pay_sql                        # join key is _ID, not QUALIFICATION_ID
     assert "PAY_RATE" in pay_sql                        # flat column, not T1-T4
     assert "EVER_PASSED_SKILL_SCREENING" in act_sql     # CESF column

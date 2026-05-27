@@ -750,6 +750,7 @@ def _process_row(
             campaign_group_urn=group_urn,
             facet_urns=facet_urns,
             exclude_facet_urns=cohort_exclude_urns,
+            campaign_state=getattr(cohort, "campaign_state", None),
         )
         campaign_id = campaign_urn.rsplit(":", 1)[-1]
         sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
@@ -1644,6 +1645,7 @@ def _retry_li_campaign(
                 campaign_group_urn=master_urn,
                 facet_urns=facet_urns,
                 exclude_facet_urns=urn_res.resolve_default_excludes(),
+                campaign_state=getattr(cohort, "campaign_state", None),
             )
         except requests.exceptions.HTTPError as exc:
             resp = exc.response
@@ -3253,6 +3255,7 @@ def _process_static_campaigns(
                 campaign_group_urn=group_urn,
                 facet_urns=facet_urns,
                 exclude_facet_urns=cohort_exclude_urns,
+                campaign_state=getattr(cohort, "campaign_state", None),
                 **_li_static_budget_kwargs,
             )
             campaign_id = campaign_urn.rsplit(":", 1)[-1]
