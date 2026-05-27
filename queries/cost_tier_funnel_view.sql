@@ -1,5 +1,8 @@
 -- =============================================================================
--- COST_TIER_FUNNEL_VIEW
+-- cost_tier_funnel (Redash query — not deployed as a view)
+-- Originally drafted as a CREATE VIEW DDL; switched to Redash-query form on
+-- 2026-05-28 per Quintin's feedback (no downstream consumers needed yet, and
+-- repo convention is one .sql per Redash query, not deployed views).
 -- Grain: one row per (cost_tier × channel)
 -- cost_tier ∈ {HCC, MCC, LCC, Other}
 -- channel: sourced from APPLICATION_CONVERSION (ATTRIBUTED_SOURCE / SOURCED_FROM /
@@ -57,8 +60,6 @@
 --   CAMPAIGN_COSTS (VIEW): CLICKS, IMPRESSIONS, CLICKTHROUGH_RATE,
 --     COST_PER_CLICK, COST, SOURCE confirmed present.
 -- =============================================================================
-
-CREATE OR REPLACE VIEW SCALE_PROD.VIEW.COST_TIER_FUNNEL_VIEW AS
 
 WITH
 

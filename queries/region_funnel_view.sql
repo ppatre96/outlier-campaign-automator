@@ -1,5 +1,8 @@
 -- =============================================================================
--- REGION_FUNNEL_VIEW
+-- region_funnel (Redash query — not deployed as a view)
+-- Originally drafted as a CREATE VIEW DDL; switched to Redash-query form on
+-- 2026-05-28 per Quintin's feedback (no downstream consumers needed yet, and
+-- repo convention is one .sql per Redash query, not deployed views).
 -- Grain: one row per (region × channel)
 -- region ∈ {NA, LATAM, WEU, EEU, MENA, SSA, SEA, EA, INDIA, SA, OC, Other}
 --
@@ -46,8 +49,6 @@
 --
 -- Schema-verified 2026-05-28 — same verified columns as COST_TIER_FUNNEL_VIEW.
 -- =============================================================================
-
-CREATE OR REPLACE VIEW SCALE_PROD.VIEW.REGION_FUNNEL_VIEW AS
 
 WITH
 
