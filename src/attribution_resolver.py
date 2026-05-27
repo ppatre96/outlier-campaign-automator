@@ -55,7 +55,7 @@ _ACTIVATIONS_SQL_PATH = _QUERY_DIR / "snowflake_activations_attribution.sql"
 class PayRateResult:
     """Output of resolve_pay_rate.
 
-    All fields are Optional — when the lookup soft-fails (no JOBPOST_IDS,
+    All fields are Optional — when the lookup soft-fails (no JOB_POST_IDS,
     no qualifications, no rate in pay-rate card), every field is None and
     the caller should ship rate-free copy.
     """
