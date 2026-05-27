@@ -248,6 +248,29 @@ except Exception:
 META_FREQUENCY_CAP_IMPRESSIONS   = int(os.getenv("META_FREQUENCY_CAP_IMPRESSIONS", "3"))
 META_FREQUENCY_CAP_INTERVAL_DAYS = int(os.getenv("META_FREQUENCY_CAP_INTERVAL_DAYS", "7"))
 
+# Meta LAL feature flags (2026-05-27). Toggles the lookalike-audience layer
+# in src/meta_lal.py. When META_USE_LAL is True, src/meta_targeting.py
+# resolve_cohort() will auto-attach 1% LAL audiences seeded from the 4
+# Actives audiences in META_LAL_SEED_AUDIENCES — one LAL per (seed × country)
+# tuple. Default seeds = the same IDs as META_EXCLUDE_AUDIENCE_IDS (so we
+# target lookalikes of active contributors while excluding the contributors
+# themselves; two disjoint sets, same source pool).
+META_USE_LAL              = os.getenv("META_USE_LAL", "false").lower() in ("1", "true", "yes")
+META_LAL_RATIO            = float(os.getenv("META_LAL_RATIO", "0.01"))   # 1%
+try:
+    _meta_lal_seeds_env = os.getenv("META_LAL_SEED_AUDIENCES_JSON", "")
+    META_LAL_SEED_AUDIENCES = (
+        _json.loads(_meta_lal_seeds_env) if _meta_lal_seeds_env else DEFAULT_META_EXCLUDE_AUDIENCE_IDS
+    )
+except Exception:
+    META_LAL_SEED_AUDIENCES = DEFAULT_META_EXCLUDE_AUDIENCE_IDS
+
+# Google Custom Intent feature flag (2026-05-27). Toggles
+# src/google_custom_intent.py — per-cohort keyword-seeded audience layer
+# attached as ad-group criterion. PII-free path (no Customer Match upload).
+# Pairs with the existing audience_segments + keyword_ideas paths.
+GOOGLE_USE_CUSTOM_INTENT  = os.getenv("GOOGLE_USE_CUSTOM_INTENT", "false").lower() in ("1", "true", "yes")
+
 # Dual ad-set strategy (decision 2026-05-26). When LAL Custom Audiences ship
 # (feature #5: Snowflake seed → SHA256 → Meta upload → 1% LAL), the Meta arm
 # creates TWO ad sets per (cohort × geo cluster × angle):
