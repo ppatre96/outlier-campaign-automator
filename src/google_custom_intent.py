@@ -248,11 +248,15 @@ def _create_custom_intent_on_google(
     )
     audience.type_ = ga.enums.CustomAudienceTypeEnum.SEARCH
 
-    # Each keyword becomes a CustomAudienceMember of dimension=KEYWORD
+    # Each keyword becomes a CustomAudienceMember of dimension=KEYWORD.
+    # google-ads SDK uses RepeatedComposite messages — construct each
+    # member via get_type() then append (NOT `.add()` — that's the old proto
+    # API and fails with AttributeError on RepeatedComposite).
     for kw in keywords:
-        member = audience.members.add()
+        member = ga.get_type("CustomAudienceMember")
         member.member_type = ga.enums.CustomAudienceMemberTypeEnum.KEYWORD
         member.keyword = kw
+        audience.members.append(member)
 
     response = audience_service.mutate_custom_audiences(
         customer_id=client._customer_id_str,

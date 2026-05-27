@@ -214,15 +214,25 @@ def _create_lookalike_on_meta(
     client._ensure_init()
     account = AdAccount(client._ad_account_id)
     name = f"{client.AGENT_NAME_PREFIX}lal_{seed_audience_id[-8:]}_{country}_{int(ratio*100)}pct"
+
+    # Meta's lookalike_spec wants:
+    #  1. A JSON-encoded STRING (NOT a dict — confirmed via 400 #2654 on
+    #     2026-05-27 smoke test). The facebook_business SDK warns on dict
+    #     input but the API outright rejects unless it's JSON-stringified.
+    #  2. Each `origin` entry MUST carry `"type": "custom_audience"` — without
+    #     it Meta returns "No custom_audience ID given for lookalike cluster".
+    import json as _json
+    lookalike_spec = _json.dumps({
+        "origin":  [{"id": seed_audience_id, "type": "custom_audience"}],
+        "country": country,
+        "type":    "similarity",  # alternatives: 'reach' (broader)
+        "ratio":   ratio,
+    })
+
     params = {
-        CustomAudience.Field.name:        name,
-        CustomAudience.Field.subtype:     "LOOKALIKE",
-        CustomAudience.Field.lookalike_spec: {
-            "origin":   [{"id": seed_audience_id}],
-            "country":  country,
-            "type":     "similarity",  # alternatives: 'reach' (broader)
-            "ratio":    ratio,
-        },
+        CustomAudience.Field.name:           name,
+        CustomAudience.Field.subtype:        "LOOKALIKE",
+        CustomAudience.Field.lookalike_spec: lookalike_spec,
     }
     audience = account.create_custom_audience(params=params)
     return str(audience["id"])
