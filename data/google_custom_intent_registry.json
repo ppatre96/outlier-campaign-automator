@@ -1,0 +1,14 @@
+{
+  "registry": {
+    "smoke_test_python": {
+      "keyword_count": 4,
+      "keywords_preview": [
+        "python",
+        "data science",
+        "machine learning",
+        "software engineer"
+      ],
+      "resource": "customers/8840244968/customAudiences/981350894"
+    }
+  }
+}

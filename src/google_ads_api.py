@@ -399,12 +399,28 @@ class GoogleAdsClient(AdPlatformClient):
                 c.ad_group = ad_group_resource
                 c.user_interest.user_interest_category = seg_resource
                 ops.append(op)
+
+            # Custom Intent Audience (PII-free) attach — added 2026-05-27.
+            # When targeting carries `custom_intent_audience` (resource name
+            # from src.google_custom_intent.resolve_custom_intent_for_cohort),
+            # attach it as a CustomAudience criterion. This is the Path-1
+            # equivalent of Customer Match's Similar Audiences and bypasses
+            # the broken user_interest taxonomy for cohort-specific keywords.
+            ci_resource = targeting.get("custom_intent_audience")
+            if ci_resource:
+                op = client.get_type("AdGroupCriterionOperation")
+                c = op.create
+                c.ad_group = ad_group_resource
+                c.custom_audience.custom_audience = ci_resource
+                ops.append(op)
+                log.info("Will attach Custom Intent audience %s to %s", ci_resource, ad_group_resource)
+
             if ops:
                 criterion_service.mutate_ad_group_criteria(
                     customer_id=self._customer_id_str,
                     operations=ops,
                 )
-                log.info("Attached %d audience segments to %s", len(ops), ad_group_resource)
+                log.info("Attached %d audience criteria to %s", len(ops), ad_group_resource)
         except Exception as exc:
             # Audience-segment criteria are nice-to-have; geo + Display-network
             # defaults still produce a reachable audience without them.
