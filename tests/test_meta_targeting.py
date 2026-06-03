@@ -25,7 +25,13 @@ def test_resolve_cohort_basic_geo_only(tmp_path):
     assert out["geo_locations"]["countries"] == ["US", "CA"]
 
 
-def test_resolve_cohort_extracts_skill_terms_from_cache(tmp_path):
+def test_resolve_cohort_extracts_skill_terms_from_cache(tmp_path, monkeypatch):
+    # Occupational interests (flexible_spec) are only emitted when NOT under an
+    # EMPLOYMENT special-ad category — Outlier's default SAC=EMPLOYMENT strips
+    # them. Force a non-EMPLOYMENT category so this test exercises the
+    # skill-term → interest extraction path it is meant to cover.
+    import config
+    monkeypatch.setattr(config, "SPECIAL_AD_CATEGORY", "NONE")
     cache = tmp_path / "cache.json"
     cache.write_text(json.dumps({
         "python":         [{"id": "111", "name": "Python (programming language)"}],
