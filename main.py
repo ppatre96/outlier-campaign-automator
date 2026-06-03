@@ -3720,6 +3720,25 @@ def _process_extra_platform_arm(
     # Cohort × geo × angle become Ad Sets / Ad Groups under it.
     # Group-level name uses the Smart Ramp v2 spec when naming_meta is
     # available; legacy "Outlier <flow> <loc> <Platform>" otherwise.
+
+    # Google keyword override read-back (Phase 2 of the keywords-card flow).
+    # Before generating fresh keyword_ideas via the Google Ads keyword planner,
+    # check the Campaign Registry sheet for prior keywords on this (ramp ×
+    # cohort × geo × angle) combo. If present (either pipeline-written from a
+    # previous run OR user-edited via outlier-campaign-console keywords-card),
+    # those win. Empty list ([]) is treated as "user intentionally cleared all"
+    # and respected. Missing key → caller regenerates as before.
+    google_keyword_overrides: dict[tuple[str, str, str], list[str]] = {}
+    if platform == "google" and ramp_id and sheets is not None:
+        try:
+            google_keyword_overrides = sheets.read_registry_keywords_for_ramp(ramp_id)
+        except Exception as _exc:
+            log.warning(
+                "Google keyword override read failed (%s) — falling back to "
+                "fresh keyword generation",
+                _exc,
+            )
+
     if naming_meta is not None:
         from src.campaign_name import build_campaign_name as _build_grp_name
         group_name = _build_grp_name(
@@ -3867,6 +3886,25 @@ def _process_extra_platform_arm(
                 if extras:
                     campaign_name = f"{campaign_name} | {extras}"
             targeting = resolver.resolve_cohort(cohort, geos=group_geos)
+
+            # Google Search keyword override (Phase 2 of keywords-card flow).
+            # Keywords attach to the AD-GROUP (1:1 with cohort × geo), not the
+            # individual ad — so all 3 angle rows in the registry share a
+            # single keyword set. We pick angle A's override as canonical
+            # (fall back to B then C if only those are populated). Empty list
+            # ([]) is honored — user cleared all keywords intentionally.
+            if platform == "google" and google_keyword_overrides:
+                for _try_angle in ("A", "B", "C"):
+                    _ovr_key = (str(base_id), geo_group.cluster, _try_angle)
+                    if _ovr_key in google_keyword_overrides:
+                        targeting["keyword_ideas"] = google_keyword_overrides[_ovr_key]
+                        log.info(
+                            "Google keyword override applied: ramp=%s cohort=%s "
+                            "geo=%s (using angle %s) → %d keyword(s)",
+                            ramp_id, base_id, geo_group.cluster, _try_angle,
+                            len(targeting["keyword_ideas"]),
+                        )
+                        break
 
             # ── Pre-campaign audience check (parity with LinkedIn Stage C). ─
             # Same 50k floor; same de-narrow loop. On below_floor we skip THIS

@@ -10,6 +10,7 @@ If credentials.json is absent (e.g. GitHub Actions without GOOGLE_CREDENTIALS_JS
 secret), SheetsClient() returns a NullSheetsClient stub that reads from env vars
 and silently no-ops all writes. No credentials needed for the Smart Ramp path.
 """
+import json
 import logging
 import os
 import random
@@ -357,6 +358,101 @@ class SheetsClient:
 
         self._registry_ws_cache = ws
         return ws
+
+    def read_registry_keywords_for_ramp(
+        self, ramp_id: str,
+    ) -> dict[tuple[str, str, str], list[str]]:
+        """Return Google-platform keyword overrides for a ramp, keyed by
+        (cohort_id, geo_cluster, angle) → list of keyword strings.
+
+        Used by Phase 2 keyword read-back: before _apply_keyword_criteria
+        generates fresh keywords for a (cohort × geo × angle), the pipeline
+        checks this map. If the key is present, those keywords win — they
+        represent either a prior pipeline write or a user edit from the
+        console keywords-card (the console writes back to the same cell).
+
+        Disambiguation: a key with value `[]` means "user intentionally
+        cleared all keywords" — callers MUST respect that and not regenerate.
+        A missing key means "cell was empty / row didn't exist" — caller
+        regenerates as usual.
+
+        Returns empty dict on any error (auth, network, malformed sheet);
+        the caller falls back to fresh regeneration which is the same
+        behavior as before Phase 2.
+        """
+        from src.campaign_registry import COLUMNS
+        try:
+            ws = self._get_or_create_registry_tab()
+            rows = ws.get_all_values()
+        except Exception as exc:
+            log.warning("read_registry_keywords_for_ramp: sheet read failed (%s) — no overrides applied", exc)
+            return {}
+        if not rows or len(rows) < 2:
+            return {}
+
+        header = rows[0]
+        expected_headers = [c.replace("_", " ").title() for c in COLUMNS]
+
+        def col(name: str) -> int:
+            try:
+                return header.index(name)
+            except ValueError:
+                return -1
+
+        i_ramp    = col("Smart Ramp Id")
+        i_cohort  = col("Cohort Id")
+        i_geo     = col("Geo Cluster")
+        i_angle   = col("Angle")
+        i_platform = col("Platform")
+        i_kw      = col("Google Keywords")
+        if min(i_ramp, i_cohort, i_geo, i_angle, i_platform) < 0 or i_kw < 0:
+            log.info(
+                "read_registry_keywords_for_ramp: required columns missing "
+                "(ramp=%d cohort=%d geo=%d angle=%d platform=%d kw=%d) — "
+                "no overrides applied. Pipeline must have run at least once "
+                "after the 2026-06-03 schema change to populate the header.",
+                i_ramp, i_cohort, i_geo, i_angle, i_platform, i_kw,
+            )
+            return {}
+
+        out: dict[tuple[str, str, str], list[str]] = {}
+        for row in rows[1:]:
+            if len(row) <= max(i_ramp, i_cohort, i_geo, i_angle, i_platform, i_kw):
+                continue
+            if (row[i_ramp] or "").strip() != ramp_id:
+                continue
+            if (row[i_platform] or "").strip().lower() != "google":
+                continue
+            raw = (row[i_kw] or "").strip()
+            if not raw:
+                continue  # missing cell — caller regenerates
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    keywords = [str(k).strip() for k in parsed if str(k).strip()]
+                else:
+                    continue
+            except Exception:
+                # Fall back to comma-split for hand-edited rows. Treat empty
+                # split as "no override" since we can't tell whether user
+                # meant to clear it.
+                parts = [p.strip() for p in raw.split(",") if p.strip()]
+                if not parts:
+                    continue
+                keywords = parts
+            key = (
+                (row[i_cohort] or "").strip(),
+                (row[i_geo] or "").strip(),
+                (row[i_angle] or "").strip(),
+            )
+            # Last write wins if multiple rows match (e.g. registry duplication
+            # per feedback_registry_multi_row_per_meta_campaign.md).
+            out[key] = keywords
+        log.info(
+            "read_registry_keywords_for_ramp(%s): %d Google keyword overrides loaded",
+            ramp_id, len(out),
+        )
+        return out
 
     def write_registry_row(self, record: dict) -> None:
         """Append one campaign registry row to the Campaign Registry tab.
