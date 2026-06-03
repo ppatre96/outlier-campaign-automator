@@ -24,6 +24,7 @@ class CohortSpec:
     # are optional because legacy ramps don't carry the metadata.
     job_post_pod: Optional[str] = None              # "specialist"|"generalist"|"coders"|"languages"
     matched_domain: Optional[str] = None            # e.g. "Finance & Quantitative Analysis"
+    job_post_domain: Optional[str] = None           # Smart Ramp tool's name "domain" segment, e.g. "bn-IN"
     job_post_language_code: Optional[str] = None    # e.g. "en-US"
     campaign_state: Optional[dict] = None           # formData.cohorts[].campaign_state — full nested dict
 
@@ -189,6 +190,7 @@ class SmartRampClient:
             job_post_id=raw.get("job_post_id"),
             job_post_pod=raw.get("job_post_pod"),
             matched_domain=raw.get("matched_domain"),
+            job_post_domain=raw.get("job_post_domain"),
             job_post_language_code=raw.get("job_post_language_code"),
             campaign_state=raw.get("campaign_state"),
         )

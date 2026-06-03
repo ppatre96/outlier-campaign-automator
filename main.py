@@ -4436,7 +4436,9 @@ def _process_row_both_modes(
     naming_meta = {
         "submitted_at":  row.get("ramp_submitted_at", "") or "",
         "pod":           row.get("job_post_pod"),
-        "domain":        row.get("matched_domain"),
+        # Name "domain" segment = Smart Ramp tool's job_post_domain (e.g. "bn-IN"),
+        # falling back to matched_domain for ramps that don't carry it.
+        "domain":        row.get("job_post_domain") or row.get("matched_domain"),
         "locale":        row.get("job_post_language_code"),
         "included_geos": row.get("included_geos") or [],
         "campaign_state": row.get("campaign_state"),
@@ -4939,6 +4941,7 @@ def _ramp_to_rows(ramp) -> list[dict]:
             # Smart Ramp v2 campaign-naming metadata
             "job_post_pod": getattr(cohort, "job_post_pod", None),
             "matched_domain": getattr(cohort, "matched_domain", None),
+            "job_post_domain": getattr(cohort, "job_post_domain", None),
             "job_post_language_code": getattr(cohort, "job_post_language_code", None),
             "campaign_state": getattr(cohort, "campaign_state", None),
         })

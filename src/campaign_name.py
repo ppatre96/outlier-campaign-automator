@@ -3,22 +3,21 @@
 Generates names that match the spec at
   https://genai-smart-ramp-v2.vercel.app/ramps/<ramp_id>/campaigns
 
-Format (12 segments separated by " | "):
+Format (8 segments separated by " | ", matching the Smart Ramp tool's
+generated campaign name; InMail appends a 9th " | Inmail" segment so the two
+LinkedIn arms stay distinct):
 
     Scale-<ramp_id>
     | <Channel>                                 # LinkedIn | Meta | Google
-    | <type of CBs>                             # specialist | generalist | coders | languages
-    | <field requirement>                       # e.g. "Finance & Quantitative Analysis"
-    | <locale>                                  # e.g. en-US
-    | <country>                                 # ISO-2 e.g. US
-    | <geo-tier>                                # HCC | ALL | Region | Individual | Main Country
-    | <LI facets>                               # comma-joined human-readable facets
-    | <Language>                                # display language e.g. EN
-    | <Format>                                  # Single Image | Inmail
-    | <ramp date>                               # MM/DD/YYYY
-    | Agent                                     # literal
+    | <pod>                                      # job_post_pod, e.g. "language"
+    | <domain>                                   # job_post_domain, e.g. "bn-IN"
+    | <locale>                                   # job_post_language_code, e.g. "bn-IN"
+    | <country>                                  # ISO-2 from locale region, e.g. IN
+    | <run date>                                 # MM/DD/YYYY (today)
+    | <geo-tier>                                 # ALL | HCC | Region | Individual | Main Country
 
-Example: `Scale-GMR-0020 | LinkedIn | specialist | Finance & Quantitative Analysis | en-US | US | HCC | PHDs | EN | Inmail | 05/11/2026 | Agent`
+Example: `Scale-GMR-0023 | LinkedIn | language | bn-IN | bn-IN | IN | 06/04/2026 | ALL`
+         (InMail: same + ` | Inmail`)
 
 Maintainers: Smart Ramp may add new naming fields; keep `build_campaign_name`
 backwards-compatible by defaulting missing fields to safe strings rather than
@@ -146,51 +145,48 @@ def build_campaign_name(
     # Segment 1 — Scale-<ramp_id>
     seg_ramp = f"Scale-{_safe(ramp_id, 'GMR-XXXX')}"
 
-    # Segment 2 — channel
+    # Segment 2 — channel (LinkedIn | Meta | Google)
     seg_channel = _CHANNEL_LABEL.get(platform.lower(), platform.title())
 
-    # Segment 3 — type of CB
+    # Segment 3 — pod / type of CB (Smart Ramp job_post_pod, e.g. "language")
     seg_pod = _pod_label(cohort, pod)
 
-    # Segment 4 — field requirement (Smart Ramp matched_domain, e.g. "Finance & Quantitative Analysis")
-    seg_field = _safe(domain, "General")
+    # Segment 4 — domain (Smart Ramp job_post_domain, e.g. "bn-IN")
+    seg_domain = _safe(domain, "General")
 
-    # Segment 5 — locale (en-US style)
+    # Segment 5 — locale (Smart Ramp job_post_language_code, e.g. "bn-IN")
     seg_locale = _safe(locale, "en-US")
 
-    # Segment 6 — country (ISO-2). Prefer Smart Ramp's main_country, else first geo.
-    main_country = (li_state.get("mainCountry") or "").strip()
-    if not main_country:
+    # Segment 6 — country (ISO-2). The Smart Ramp tool uses the locale's region
+    # (bn-IN → IN), falling back to campaign_state.mainCountry then first geo.
+    country = ""
+    if locale and "-" in str(locale):
+        country = str(locale).split("-")[-1].strip().upper()
+    if not country:
+        country = (li_state.get("mainCountry") or "").strip().upper()
+    if not country:
         geos = list(included_geos or [])
         if not geos and geo_group is not None:
             geos = list(getattr(geo_group, "geos", []) or [])
-        main_country = geos[0] if geos else ""
-    seg_country = _safe(main_country.upper(), "US")
+        country = (geos[0].upper() if geos else "")
+    seg_country = _safe(country, "US")
 
-    # Segment 7 — geo-tier label
+    # Segment 7 — run date (MM/DD/YYYY), i.e. today (when the campaign is built).
+    seg_date = datetime.now().strftime("%m/%d/%Y")
+
+    # Segment 8 — geo-tier label (ALL when no grouping override).
     seg_geo_tier = _grouping_label(li_state.get("groupingType"))
 
-    # Segment 8 — LI facets (comma-joined string from Smart Ramp, e.g. "PHDs, MBAs")
-    seg_facets = _safe(li_state.get("liTargetingFacet"))
-
-    # Segment 9 — language code for ad copy (e.g. EN)
-    seg_language = _safe(li_state.get("liAdLanguage"), seg_locale.split("-")[0].upper())
-
-    # Segment 10 — ad format
-    if format_override:
-        seg_format = _safe(format_override, "Single Image")
-    else:
-        seg_format = _FORMAT_LABEL_FROM_CAMPAIGN_TYPE.get(campaign_type.lower(), "Single Image")
-
-    # Segment 11 — ramp date (MM/DD/YYYY)
-    seg_date = _format_date_mdy(submitted_at or "")
-
-    # Segment 12 — literal "Agent"
-    seg_agent = "Agent"
-
     parts = [
-        seg_ramp, seg_channel, seg_pod, seg_field, seg_locale,
-        seg_country, seg_geo_tier, seg_facets, seg_language, seg_format,
-        seg_date, seg_agent,
+        seg_ramp, seg_channel, seg_pod, seg_domain, seg_locale,
+        seg_country, seg_date, seg_geo_tier,
     ]
-    return " | ".join(parts)
+    name = " | ".join(parts)
+
+    # LinkedIn runs two arms with otherwise-identical names; mark InMail so the
+    # static + InMail campaigns stay distinguishable. Static matches the Smart
+    # Ramp tool's 8-segment format exactly.
+    fmt = (format_override or _FORMAT_LABEL_FROM_CAMPAIGN_TYPE.get(campaign_type.lower(), "")).strip()
+    if campaign_type.lower() == "inmail" or fmt.lower() == "inmail":
+        name = f"{name} | Inmail"
+    return name
