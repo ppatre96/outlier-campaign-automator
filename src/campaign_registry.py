@@ -138,6 +138,14 @@ COLUMNS = [
     # cost-per-worker-skill columns in the console's drilldown.
     "activations",              # count of contributors who completed onboarding for this campaign
     "skill_passes",             # count of contributors who passed at least one skill screen via this campaign
+    # ── 2026-06-03 additions (APPEND ONLY) ───────────────────────────────────
+    # Google search keywords attached to the Search ad-group for this row.
+    # JSON-encoded list of strings (e.g. '["earn from home", "remote ai work", …]').
+    # Populated by _process_extra_platform_arm when platform == "google".
+    # Reviewed + editable in the outlier-campaign-console (keywords-card.tsx);
+    # the console writes back to this column on save. Pipeline override-read on
+    # next run is Phase 2 (TODO).
+    "google_keywords",
 ]
 
 
@@ -180,6 +188,7 @@ class CampaignEntry:
     audience_check_status:  str = ""           # pass | denarrowed | below_floor | skipped
     activations:            int | None = None  # filled nightly from Snowflake
     skill_passes:           int | None = None  # filled nightly from Snowflake
+    google_keywords:        str = ""           # JSON-encoded list of keyword strings; Google Search ad-group only
     # metrics — empty until feedback agent runs
     impressions:            int | None = None
     clicks:                 int | None = None
@@ -339,6 +348,7 @@ def log_campaign(
     meta_audience_size: int | None = None,
     google_audience_size: int | None = None,
     audience_check_status: str = "",
+    google_keywords: list[str] | str | None = None,
 ) -> None:
     """Append one campaign row to the registry. Safe to call from any platform arm.
 
@@ -397,6 +407,12 @@ def log_campaign(
         meta_audience_size=meta_audience_size,
         google_audience_size=google_audience_size,
         audience_check_status=audience_check_status,
+        google_keywords=(
+            json.dumps(list(google_keywords))
+            if isinstance(google_keywords, list) and google_keywords
+            else (google_keywords or "") if isinstance(google_keywords, str)
+            else ""
+        ),
         channel=_channel_label(platform),
         platform=platform,
         campaign_name=campaign_name,

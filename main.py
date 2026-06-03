@@ -4141,6 +4141,14 @@ def _process_extra_platform_arm(
                     google_audience_size=audience_count if platform == "google" else None,
                     audience_check_status=audience_status,
                     campaign_name=campaign_name,
+                    # Google search keywords (review surface for Diego/Bryan in the
+                    # outlier-campaign-console keywords-card). Captured from the same
+                    # targeting dict that's about to be applied to the Search ad-group
+                    # via _apply_keyword_criteria. Null for Meta rows.
+                    google_keywords=(
+                        list((targeting or {}).get("keyword_ideas") or [])[:30]
+                        if platform == "google" else None
+                    ),
                 )
             except Exception as exc:
                 log.warning(
