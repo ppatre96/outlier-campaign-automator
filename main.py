@@ -2539,7 +2539,7 @@ def _resolve_cohorts(
     if ramp_id_for_icp and selected:
         try:
             from src.prep_audience import measure_audience_for_cohort
-            from src.ui_decisions import upsert_cohort_audience
+            from src.ui_decisions import upsert_cohort_audience, upsert_cohort_targeting
             enabled = [p.strip().lower() for p in (config.ENABLED_PLATFORMS or "").split(",") if p.strip()]
             if not enabled:
                 enabled = ["linkedin", "meta", "google"]
@@ -2561,6 +2561,13 @@ def _resolve_cohorts(
                         status=ca.status,
                         geos_used=ca.geos_used,
                         rules_dropped=ca.rules_dropped,
+                    )
+                    upsert_cohort_targeting(
+                        ramp_id=ramp_id_for_icp,
+                        cohort_id=getattr(cohort, "_stg_id", "") or "",
+                        cohort_signature=getattr(cohort, "name", "") or "",
+                        platform=ca.platform,
+                        facets=ca.facets,
                     )
                 log.info(
                     "_resolve_cohorts: audience persisted ramp=%s cohort=%s %s",

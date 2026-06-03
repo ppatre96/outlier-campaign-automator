@@ -18,7 +18,7 @@ re-persist that number here so the console reads it from one place.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import config
@@ -33,6 +33,11 @@ class ChannelAudience:
     status: str               # measured | denarrowed | below_floor | skipped
     geos_used: list[str]
     rules_dropped: int = 0
+    # Resolved targeting facets for this channel, persisted to cohort_targeting
+    # so the console can show reviewers what's actually being targeted per
+    # channel. Meta/Google hold the resolver's targeting dict; LinkedIn holds
+    # the cohort rule features.
+    facets: dict = field(default_factory=dict)
 
 
 def measure_audience_for_cohort(
@@ -62,9 +67,11 @@ def measure_audience_for_cohort(
         status = "measured" if size is not None else "skipped"
         if size is not None and size < config.AUDIENCE_SIZE_MIN:
             status = "below_floor"
+        li_rules = [str(feat) for feat, _val in (getattr(cohort, "rules", None) or [])]
         results.append(ChannelAudience(
             platform="linkedin", audience_size=size,
             status=status, geos_used=geos,
+            facets={"rules": li_rules},
         ))
 
     # ── Meta ──
@@ -98,6 +105,7 @@ def _measure_meta(cohort, geos: list[str]) -> ChannelAudience:
         return ChannelAudience(
             platform="meta", audience_size=size,
             status=status, geos_used=geos,
+            facets=targeting,
         )
     except Exception as exc:
         log.info(
@@ -126,6 +134,7 @@ def _measure_google(cohort, geos: list[str]) -> ChannelAudience:
         return ChannelAudience(
             platform="google", audience_size=size,
             status=status, geos_used=geos,
+            facets=targeting,
         )
     except Exception as exc:
         log.info(

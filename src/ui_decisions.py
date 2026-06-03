@@ -241,6 +241,59 @@ def upsert_cohort_audience(
                   ramp_id, cohort_signature, platform, exc)
 
 
+def upsert_cohort_targeting(
+    *,
+    ramp_id: str,
+    cohort_id: str,
+    cohort_signature: str,
+    platform: str,
+    facets: dict,
+) -> None:
+    """Persist the resolved targeting facets for a (ramp × cohort × platform).
+
+    `facets` is the channel's resolver output — Meta/Google targeting dicts
+    (interests, education, segments, keywords, geos) or LinkedIn's cohort
+    rules. Lets the console show reviewers what's actually being targeted per
+    channel. Self-creates the table so no manual migration is required.
+    Idempotent on (ramp_id, cohort_signature, platform). Best-effort.
+    """
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cohort_targeting (
+                    id               BIGSERIAL PRIMARY KEY,
+                    ramp_id          TEXT NOT NULL,
+                    cohort_id        TEXT,
+                    cohort_signature TEXT NOT NULL,
+                    platform         TEXT NOT NULL,
+                    facets           JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    measured_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (ramp_id, cohort_signature, platform)
+                )
+                """
+            )
+            cur.execute(
+                """
+                INSERT INTO cohort_targeting (
+                    ramp_id, cohort_id, cohort_signature, platform, facets
+                ) VALUES (%s, %s, %s, %s, %s::jsonb)
+                ON CONFLICT (ramp_id, cohort_signature, platform) DO UPDATE SET
+                    cohort_id   = EXCLUDED.cohort_id,
+                    facets      = EXCLUDED.facets,
+                    measured_at = NOW()
+                """,
+                (
+                    ramp_id, cohort_id, cohort_signature, platform,
+                    json.dumps(facets or {}),
+                ),
+            )
+            conn.commit()
+    except UIDecisionsUnavailable as exc:
+        log.debug("upsert_cohort_targeting skipped (%s/%s/%s): %s",
+                  ramp_id, cohort_signature, platform, exc)
+
+
 def upsert_cohort_icp(
     *,
     ramp_id: str,
