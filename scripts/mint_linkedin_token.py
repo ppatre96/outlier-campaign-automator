@@ -48,7 +48,12 @@ REDIRECT_URI  = f"http://{REDIRECT_HOST}:{REDIRECT_PORT}{REDIRECT_PATH}"
 
 # Full scope set this pipeline needs. Order matches LinkedIn's app config UI.
 # - r_ads / r_ads_reporting / rw_ads: read+write campaign hierarchy
-# - w_member_social: DSC post creation (creative attach)
+# - w_member_social: post as a person (legacy — kept for backwards-compat fallbacks)
+# - w_organization_social: post as an organization. REQUIRED for DSC static-ad
+#   posts since 2026-06-03 — LinkedIn DSC contract demands org URN as both image
+#   owner and post author, and an org-scoped token to authorize either. Without
+#   this scope you get HTTP 400 "Organization permissions must be used when
+#   using organization as owner" on /rest/images?action=initializeUpload.
 # - openid / profile: OpenID Connect userinfo, lets us auto-discover the
 #   token owner's urn:li:person URN immediately after mint so we can
 #   keep LINKEDIN_MEMBER_URN in sync. Both ride on the "Sign In with
@@ -58,6 +63,7 @@ SCOPES = [
     "r_ads_reporting",
     "rw_ads",
     "w_member_social",
+    "w_organization_social",
     "openid",
     "profile",
 ]
@@ -200,13 +206,18 @@ def main() -> int:
     for s in extras:
         print(f"  + {s}  (extra)")
 
-    if "w_member_social" not in granted:
+    required = {"w_member_social", "w_organization_social"}
+    missing = required - set(granted)
+    if missing:
         print()
-        print("ERROR: minted token still lacks `w_member_social`.")
-        print("       Check the LinkedIn consent screen on the next attempt;")
-        print("       w_member_social must be visible in the scope list shown")
-        print("       to the user. If it's not, the scope is not yet enabled")
-        print("       on the LinkedIn app — re-check Products tab on the app.")
+        print(f"ERROR: minted token is missing required scopes: {sorted(missing)}")
+        print("       Each required scope must be visible (and ticked) on the")
+        print("       LinkedIn consent screen. If a scope isn't shown to you")
+        print("       at all, the LinkedIn app doesn't have the corresponding")
+        print("       Product enabled — go to:")
+        print("         https://www.linkedin.com/developers/apps/86g4m92v2vfq68/products")
+        print("       and add the right product (w_organization_social is part")
+        print("       of the Community Management API product family).")
         return 5
 
     print()
@@ -247,7 +258,7 @@ def main() -> int:
 
     print()
     print("=" * 72)
-    print(" SUCCESS — minted token has w_member_social.")
+    print(" SUCCESS — minted token has w_member_social + w_organization_social.")
     print("=" * 72)
     print()
     print("Run these to save them to Doppler:")

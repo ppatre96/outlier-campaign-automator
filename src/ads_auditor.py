@@ -283,7 +283,7 @@ def _build_deployment_context(platform: str) -> str:
             f"- Authoring member: {config.LINKEDIN_MEMBER_URN} (ACCOUNT_MANAGER on the ad account + SUPER_ADMIN on the owning Outlier org urn:li:organization:92583550)",
             "- Conversion tracking: worker_skill_all live across LinkedIn (Tuan, 2026-05-27).",
             "- InMail: WORKING — uses /rest/inMailContents with LinkedIn-Version 202506 (MDP not required for InMail).",
-            "- Static ad arm (DSC posts via /rest/posts with adContext): GATED by LinkedIn Marketing Developer Platform (MDP) entitlement on app 86g4m92v2vfq68 — currently returns 403 FORBIDDEN regardless of scope/role. Approval ticket open with LinkedIn. Pipeline falls back to local PNG when blocked. DO NOT flag this as a misconfiguration — it's a pending platform approval, not something we can fix in our code.",
+            "- Static ad arm (DSC posts via /rest/posts with adContext): WIRED 2026-06-03 — image owner + post author are both `urn:li:organization:{LINKEDIN_ORG_ID}`, NOT a person URN (per LinkedIn DSC contract). Token user must hold ADMIN on the ad account AND Sponsored Content Poster on the org. If 403s return, check those two roles first — the previously-suspected MDP entitlement gap was a misdiagnosis.",
             "- Default exclusions: applied at campaign-create time.",
         ]
     if not items:

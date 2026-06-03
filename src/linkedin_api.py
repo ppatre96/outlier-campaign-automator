@@ -9,8 +9,10 @@ import logging
 import mimetypes
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Literal, Optional
+from urllib.parse import unquote
 
 import requests
 
@@ -606,14 +608,23 @@ class LinkedInClient(AdPlatformClient):
         """
         image_path = Path(image_path)
 
-        # Step 1: initialize upload
-        # The image owner MUST match the DSC post author (create_image_ad uses
-        # LINKEDIN_MEMBER_URN as the author). LinkedIn rejects the post creation
-        # with INVALID_CONTENT_OWNERSHIP if the image owner is different from the
-        # post author — so we use the member URN here, not the sponsored account.
+        # Step 1: initialize upload.
+        # The image owner MUST match the DSC post author (set in _create_image_ad_inner).
+        # 2026-06-03: DSC posts require an ORGANIZATION URN as author (confirmed by
+        # LinkedIn support — see _create_image_ad_inner for full root cause). So the
+        # image owner is the org URN, not the member URN. The token user must have
+        # Sponsored Content Poster (or Super Admin) on this organization to upload.
+        if not config.LINKEDIN_ORG_ID:
+            raise RuntimeError(
+                "LINKEDIN_ORG_ID is not set. DSC image uploads (and the resulting "
+                "static-ad posts) require an organization URN as both image owner "
+                "and post author — set LINKEDIN_ORG_ID in Doppler to the Outlier "
+                "company page numeric ID (e.g. 92583550)."
+            )
+        org_urn = f"urn:li:organization:{config.LINKEDIN_ORG_ID}"
         init_payload = {
             "initializeUploadRequest": {
-                "owner": config.LINKEDIN_MEMBER_URN,
+                "owner": org_urn,
             }
         }
         resp = self._req("POST", self._url("images?action=initializeUpload"), json=init_payload)
@@ -634,7 +645,32 @@ class LinkedInClient(AdPlatformClient):
             log.error("Image PUT failed %d: %s", put_resp.status_code, put_resp.text[:300])
             put_resp.raise_for_status()
 
-        log.info("Uploaded image %s → %s", image_path.name, image_urn)
+        # Step 3: poll image processing status until AVAILABLE.
+        # LinkedIn returns the image URN immediately after PUT but the image
+        # takes a few seconds to be indexed before it can be referenced in a
+        # /rest/posts payload. Referencing too early returns a generic 404
+        # "Could not find entity" on the DSC post call.
+        # Statuses: WAITING_UPLOAD → PROCESSING → AVAILABLE (or FAILED).
+        # Budget: up to 30s, 1s intervals.
+        status_url = self._url(f"images/{image_urn}")
+        for attempt in range(30):
+            time.sleep(1)
+            status_resp = self._req("GET", status_url)
+            if not status_resp.ok:
+                # Some LinkedIn-Version combos return 404 here briefly while
+                # the upload settles; keep polling until our overall budget runs out.
+                log.debug("Image status probe attempt %d: %d", attempt, status_resp.status_code)
+                continue
+            status = (status_resp.json() or {}).get("status")
+            if status == "AVAILABLE":
+                log.info("Uploaded image %s → %s (ready in ~%ds)", image_path.name, image_urn, attempt + 1)
+                return image_urn
+            if status == "FAILED":
+                raise RuntimeError(f"LinkedIn image processing FAILED for {image_urn}")
+            log.debug("Image %s status=%s, polling (attempt %d)", image_urn, status, attempt)
+        # Fell through 30s budget — return URN anyway and let the caller's
+        # DSC post attempt fail loudly if the image really isn't ready.
+        log.warning("Image %s not AVAILABLE after 30s — proceeding anyway", image_urn)
         return image_urn
 
     # ── InMail Campaign ────────────────────────────────────────────────────────
@@ -788,7 +824,7 @@ class LinkedInClient(AdPlatformClient):
         """
         Create a Single Image Ad creative and attach it to a campaign.
 
-        Returns ImageAdResult — NEVER raises for the LINKEDIN_MEMBER_URN /
+        Returns ImageAdResult — NEVER raises for the LINKEDIN_ORG_ID /
         DSC-403 cases (those return status="local_fallback" so callers can
         fall back to saving the PNG locally and continue). Other unexpected
         errors return status="error" — caller decides whether to log + skip
@@ -814,7 +850,7 @@ class LinkedInClient(AdPlatformClient):
             return ImageAdResult(creative_urn=urn, status="ok")
         except RuntimeError as exc:
             msg = str(exc)
-            if "LINKEDIN_MEMBER_URN" in msg:
+            if "LINKEDIN_ORG_ID" in msg or "LINKEDIN_MEMBER_URN" in msg:
                 return ImageAdResult(
                     status="local_fallback",
                     error_class="RuntimeError",
@@ -860,38 +896,50 @@ class LinkedInClient(AdPlatformClient):
         Flow:
         1. Create a Direct Sponsored Content (DSC) post via /rest/posts.
            DSC posts are dark — never shown organically, only as ads.
-           Author must be the LinkedIn public profile URN of whoever authorized
-           the OAuth token (LINKEDIN_MEMBER_URN in .env, e.g. urn:li:person:AbCdEfGhIj).
+           Author MUST be an organization URN (urn:li:organization:<page_id>) per
+           LinkedIn DSC contract, NOT a person URN. The token user needs Sponsored
+           Content Poster (or Super Admin) on that organization, AND ADMIN on the
+           target ad account. (Confirmed by LinkedIn support 2026-06-03 — see the
+           historical-blocker NOTE block below this for the prior misdiagnosis.)
         2. Create the creative referencing that post URN.
 
-        Scope requirements: w_member_social (already present).
+        Scope requirements: w_member_social + w_organization_social.
         """
         dest = destination_url or config.LINKEDIN_DESTINATION
 
-        member_urn = config.LINKEDIN_MEMBER_URN
-        if not member_urn:
+        if not config.LINKEDIN_ORG_ID:
             raise RuntimeError(
-                "LINKEDIN_MEMBER_URN is not set in .env. "
-                "Set it to the LinkedIn public profile URN of whoever authorized the OAuth token "
-                "(e.g. urn:li:person:AbCdEfGhIj — find it at linkedin.com/in/<id>)."
+                "LINKEDIN_ORG_ID is not set. DSC posts must use an organization URN "
+                "as author — set LINKEDIN_ORG_ID in Doppler to the Outlier company "
+                "page numeric ID (e.g. 92583550)."
             )
+        org_urn = f"urn:li:organization:{config.LINKEDIN_ORG_ID}"
 
         # Step 1 — create DSC post via /rest/posts (LinkedIn API 202510).
-        # lifecycleState=DRAFT + adContext.dscAdAccount = Direct Sponsored Content.
-        # feedDistribution=NONE ensures it never appears organically.
+        # lifecycleState=PUBLISHED + visibility=PUBLIC + feedDistribution=NONE
+        # + adContext.dscAdAccount = a "dark post": published in the system so
+        # it can be referenced by ad creatives, but never shown in feed
+        # organically. (DRAFT posts can't be referenced from a creative →
+        # createAdCreative returns a bare 500.)
         # Field priority for what shows to the user:
-        #   commentary  = intro_text (above the image in feed, ≤140 chars preferred)
-        #                 Falls back to `description` if intro_text is empty.
-        #   media.title = ad_headline (bold text BELOW image in feed, ≤70 chars)
-        #                 Falls back to `headline` if ad_headline is empty.
-        # ad_description and cta_button are attached on the creative payload (Step 2).
-        commentary = (intro_text or description)[:700]
-        media_title = (ad_headline or headline)[:200]
+        #   commentary       = intro_text (above the image in feed, ≤140 chars preferred)
+        #                      Falls back to `description` if intro_text is empty.
+        #   article.title    = ad_headline (bold text BELOW image in feed, ≤70 chars)
+        #                      Falls back to `headline` if ad_headline is empty.
+        #   article.source   = destination_url (where the ad clicks through to)
+        #   article.thumbnail= the uploaded image URN
+        # Content shape: `article` (NOT `media`). `media` creates an image-only
+        # post with no click destination — useless as an ad. `article` is the
+        # canonical Sponsored Content single-image-ad shape with a click target.
+        # cta_button is configured at campaign-attribute level (LinkedIn supports
+        # a limited enum of CTAs that show as the button overlay on the ad).
+        commentary  = (intro_text or description)[:700]
+        article_title = (ad_headline or headline)[:200]
         dsc_payload = {
-            "author":        member_urn,
+            "author":        org_urn,
             "commentary":    commentary,
             "visibility":    "PUBLIC",
-            "lifecycleState": "DRAFT",
+            "lifecycleState": "PUBLISHED",
             "adContext": {
                 "dscAdAccount": f"urn:li:sponsoredAccount:{config.LINKEDIN_AD_ACCOUNT_ID}",
             },
@@ -901,9 +949,11 @@ class LinkedInClient(AdPlatformClient):
                 "thirdPartyDistributionChannels": [],
             },
             "content": {
-                "media": {
-                    "id":    image_urn,
-                    "title": media_title,
+                "article": {
+                    "source":      dest,
+                    "thumbnail":   image_urn,
+                    "title":       article_title,
+                    **({"description": ad_description[:100]} if ad_description else {}),
                 }
             },
         }
@@ -917,51 +967,73 @@ class LinkedInClient(AdPlatformClient):
                 "Content-Type":               "application/json",
             },
         )
-        # NOTE (2026-05-09): /rest/posts with adContext.dscAdAccount returns
-        # a generic 403 FORBIDDEN regardless of OAuth scope or LinkedIn user
-        # role. Confirmed via direct probing — even with w_member_social +
-        # ACCOUNT_MANAGER on the ad account + Page Super-Admin on the owning
-        # organization, the call still 403s. The legacy /v2/ugcPosts path
-        # surfaces the specific reason: "Unpermitted fields present in
-        # REQUEST_BODY: [/adContext]". Setting adContext is gated by LinkedIn
-        # Marketing Developer Platform (MDP) entitlement on the OAuth app,
-        # which is a separate multi-week LinkedIn approval process. Until MDP
-        # is granted, this call cannot succeed and the static-ad arm falls
-        # back to local PNG via the create_image_ad wrapper's 403 handler.
-        # Duplicate-detection 422 responses on retry contain phantom URNs
+        # HISTORICAL NOTE (2026-05-09 → resolved 2026-06-03):
+        # This call used to 403 reliably. We originally diagnosed it as a
+        # LinkedIn Marketing Developer Platform (MDP) entitlement gap on the
+        # OAuth app — that diagnosis was WRONG. LinkedIn support clarified
+        # 2026-06-03 that the real causes were:
+        #   (a) author was a person URN (LINKEDIN_MEMBER_URN); DSC posts must
+        #       use an organization URN — fixed above by switching to org_urn.
+        #   (b) image owner (in upload_image) was also a person URN; ownership
+        #       validation failed because owner ≠ author once (a) is fixed.
+        #       The owner is now the same org URN.
+        #   (c) Out-of-band: the OAuth token user must be ADMIN on the ad
+        #       account AND Sponsored Content Poster (or Super Admin) on the
+        #       organization. Verify in LinkedIn Campaign Manager UI if 403
+        #       returns. (`X-Restli-Id` won't be set on the response.)
+        # Duplicate-detection 422 responses on retry still contain phantom URNs
         # (returned for spam-prevention fingerprinting) that 404 on creative
-        # attach — they are NOT a viable workaround.
+        # attach — they are NOT a viable workaround; let the 422 propagate.
         self._raise_for_status(dsc_resp, "createDscPost")
-        post_id  = dsc_resp.headers.get("x-restli-id") or _id_from_location(dsc_resp)
-        post_urn = f"urn:li:share:{post_id}"
+        # x-restli-id behavior depends on LinkedIn-Version: older versions return
+        # just the numeric id; 202510+ returns the full URN. Normalize either shape
+        # to a single urn:li:share:<id> form (avoid the double-prefix bug).
+        post_id_or_urn = dsc_resp.headers.get("x-restli-id") or _id_from_location(dsc_resp)
+        post_urn = (
+            post_id_or_urn
+            if post_id_or_urn and post_id_or_urn.startswith("urn:li:share:")
+            else f"urn:li:share:{post_id_or_urn}"
+        )
         log.info("Created DSC post %s", post_urn)
 
         # Step 2 — create creative referencing the DSC post.
-        # The creative holds the CTA button + destination URL + optional description.
-        # The DSC post (Step 1) holds commentary + media; the creative overlays the
-        # click-through spec on top of that post.
-        creative_content = {"reference": post_urn}
-        # LinkedIn creative API accepts `callToAction` + `landingPage` + `description`
-        # at the creative level (not in the DSC post) for Sponsored Content image ads.
-        creative_extras: dict = {}
-        if cta_button:
-            creative_extras["callToAction"] = {"label": cta_button.upper()}
-        if dest:
-            creative_extras["landingPage"] = {"url": dest}
-        if ad_description:
-            creative_extras["description"] = ad_description[:100]
-
+        # In the modern /rest/adAccounts/{id}/creatives schema, `content` is a
+        # UNION with exactly ONE variant — either `reference` (point at an
+        # existing post) OR `inlineContent` (define the post inline). For DSC
+        # the post already exists, so we use `reference` only. Attempting to
+        # also set `inlineContent` (legacy attempt to attach CTA/landingPage
+        # at the creative level) returns:
+        #   /content :: DataMap should have no more than one entry for a union type
+        # CTA + landing page + description for Sponsored Content image ads
+        # live on the underlying POST (commentary + media.title), not on the
+        # creative wrapper. If we need a distinct destination URL different
+        # from the post's link, switch the post's content from `media` to
+        # `article` (article.source = destination URL).
+        # intendedStatus must match (or be lower-state than) the parent campaign's
+        # status. Per feedback_linkedin_draft_default.md the pipeline keeps every
+        # campaign DRAFT until a human flips it, so the creative starts DRAFT too.
+        # Setting ACTIVE while campaign is DRAFT triggers a bare 500 from
+        # /rest/adAccounts/{id}/creatives — LinkedIn's typical "wrong state" shape.
         payload = {
             "campaign":       campaign_urn,
-            "intendedStatus": "ACTIVE",
-            "content":        creative_content,
+            "intendedStatus": "DRAFT",
+            "content":        {"reference": post_urn},
         }
-        if creative_extras:
-            payload["content"]["inlineContent"] = creative_extras
         resp = self._req("POST", self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/creatives"), json=payload)
         self._raise_for_status(resp, "createAdCreative")
-        creative_id = resp.headers.get("x-linkedin-id") or _id_from_location(resp)
-        urn = f"urn:li:sponsoredCreative:{creative_id}"
+        # The DSC-static creative endpoint returns x-restli-id (not x-linkedin-id
+        # — that's an older header) and the value is the FULL URN, often
+        # URL-encoded ("urn%3Ali%3AsponsoredCreative%3A1431560786"). Decode and
+        # use as-is; wrapping with a sponsoredCreative prefix produces the
+        # double-prefix bug we saw on 2026-06-03.
+        raw = (
+            resp.headers.get("x-restli-id")
+            or resp.headers.get("x-linkedin-id")
+            or _id_from_location(resp)
+            or ""
+        )
+        raw = unquote(raw)
+        urn = raw if raw.startswith("urn:li:") else f"urn:li:sponsoredCreative:{raw}"
         log.info("Created adCreative %s", urn)
         return urn
 
