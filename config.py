@@ -286,6 +286,14 @@ GOOGLE_USE_CUSTOM_INTENT  = os.getenv("GOOGLE_USE_CUSTOM_INTENT", "false").lower
 META_BROAD_CONTROL_ENABLED   = os.getenv("META_BROAD_CONTROL_ENABLED", "true").lower() in ("1", "true", "yes")
 META_LAL_BUDGET_SPLIT_PCT    = int(os.getenv("META_LAL_BUDGET_SPLIT_PCT", "70"))  # LAL gets 70%, broad gets 30%
 
+# ── Generalist / i18n locale targeting (Bug 2, 2026-06-04) ─────────────────────
+# For per-locale generalist cohorts (e.g. "Bengali generalist contributors"),
+# target by language + geo using src/locales.py instead of running Stage A
+# beam discovery over résumé features (which produced noise cohorts for
+# generalist ramps — see data/plan_generalist_locale_targeting.md). Set False
+# to fall back to beam discovery for every cohort.
+GENERALIST_LOCALE_TARGETING  = os.getenv("GENERALIST_LOCALE_TARGETING", "true").lower() in ("1", "true", "yes")
+
 # ── Google Ads ────────────────────────────────────────────────────────────────
 GOOGLE_ADS_CLIENT_ID         = os.getenv("GOOGLE_ADS_CLIENT_ID", "")
 GOOGLE_ADS_CLIENT_SECRET     = os.getenv("GOOGLE_ADS_CLIENT_SECRET", "")

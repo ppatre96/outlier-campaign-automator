@@ -155,6 +155,23 @@ class GoogleSegmentResolver(TargetingResolver):
             if len(out["audience_segments"]) >= 5 and len(out["keyword_ideas"]) >= 30:
                 break
 
+        # Generalist/i18n locale targeting (Bug 2). The synthetic
+        # ("interface_locale", …) rule yields no cohort terms, so seed the
+        # Search arm with localized generic keywords + a campaign language
+        # constant. Reviewers refine the keywords via the console keyword card.
+        _gen_locale = (getattr(cohort, "facet_strength", None) or {}).get("generalist_locale")
+        if _gen_locale:
+            from src.locales import get_locale
+            _lt = get_locale(_gen_locale)
+            if _lt:
+                if _lt.google_language_const is not None:
+                    out["language_constant"] = f"languageConstants/{_lt.google_language_const}"
+                for kw in _lt.generic_keywords:
+                    kw_norm = (kw or "").strip().lower()
+                    if kw_norm and kw_norm not in seen_keywords and len(out["keyword_ideas"]) < 30:
+                        seen_keywords.add(kw_norm)
+                        out["keyword_ideas"].append(kw)
+
         # Sum keyword-volume signal across all cohort terms. Reads from the
         # cache populated by _generate_keyword_ideas above (no extra API
         # call). Provides the Search arm's reach-estimate path with a

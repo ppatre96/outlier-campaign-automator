@@ -105,6 +105,18 @@ class MetaInterestResolver(TargetingResolver):
             "geo_locations": {"countries": countries},
         }
 
+        # Generalist/i18n locale targeting (Bug 2). For a per-locale generalist
+        # cohort, target by Meta locale (the member's language) + geo. The
+        # synthetic ("interface_locale", …) rule yields no interests/education
+        # below, so this is geo + language only — which sizes properly instead
+        # of falling to Meta's reach floor.
+        _gen_locale = (getattr(cohort, "facet_strength", None) or {}).get("generalist_locale")
+        if _gen_locale:
+            from src.locales import get_locale
+            _lt = get_locale(_gen_locale)
+            if _lt and _lt.meta_locale_id is not None:
+                out["locales"] = [_lt.meta_locale_id]
+
         # Demographics: education from degree features.
         edu_codes: list[int] = []
         for feat, _val in rules:

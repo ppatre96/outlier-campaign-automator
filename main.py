@@ -1860,6 +1860,13 @@ def _cohort_headline(cohort) -> str:
 
 def _cohort_to_targeting_json(cohort) -> tuple[str, str]:
     from src.analysis import _feature_to_facet
+    # Generalist/i18n locale cohort (Bug 2) → LinkedIn targets GEO ONLY in v1.
+    # Emit empty résumé-facet criteria so the synthetic ("interface_locale", …)
+    # rule never leaks into URN resolution; included_geos are applied downstream
+    # via _apply_geo_overrides. (Interface-locale facet targeting is a planned
+    # fast-follow — see data/plan_generalist_locale_targeting.md.)
+    if (getattr(cohort, "facet_strength", None) or {}).get("generalist_locale"):
+        return "generalist_locale", json.dumps([])
     primary_facet = _feature_to_facet(cohort.rules[0][0]) if cohort.rules else "unknown"
     criteria = [
         {"feature": r[0], "value": r[1], "lift_pp": round(cohort.lift_pp, 2)}
@@ -1971,6 +1978,103 @@ class ResolvedCohorts:
     requirement_commonality: list = field(default_factory=list)
 
 
+def is_generalist_cohort(row: dict) -> str | None:
+    """Return the BCP-47 locale to target if this Smart Ramp cohort is a
+    per-locale generalist cohort, else None.
+
+    Generalist requires BOTH (a) a known locale in matched_locales, and (b) a
+    "generalist"/"i18n" signal in the cohort description — so a specialist ramp
+    that merely carries a locale is NOT hijacked. See
+    data/plan_generalist_locale_targeting.md.
+    """
+    if not row:
+        return None
+    desc = (row.get("cohort_description") or "").lower()
+    if "generalist" not in desc and "i18n" not in desc:
+        return None
+    from src.locales import get_locale
+    for loc in (row.get("matched_locales") or []):
+        lt = get_locale(loc)
+        if lt:
+            return lt.locale
+    return None
+
+
+def _build_locale_cohort(row: dict, locale: str):
+    """Construct a single Cohort that targets a generalist locale (language +
+    geo) instead of résumé facets. Marked with facet_strength['generalist_locale']
+    so the channel resolvers use locale targeting."""
+    from src.analysis import Cohort
+    from src.locales import get_locale
+    lt = get_locale(locale)
+    name = (row.get("cohort_description") or "").strip() or f"{lt.display_language} generalist contributors"
+    cohort = Cohort(name=name, rules=[("interface_locale", locale)])
+    cohort.facet_strength = {"generalist_locale": locale}
+    return cohort
+
+
+def _resolve_locale_cohort(
+    row: dict, locale: str, *, flow_id: str, location: str, project_id: str | None,
+) -> "ResolvedCohorts":
+    """Self-contained generalist path: build one locale cohort, persist its
+    per-channel audience + targeting (idempotent, no wipe so sibling locales of
+    the same ramp coexist), and return. Skips Stage A/B/C beam discovery."""
+    from src.sheets import make_stg_id
+    cohort = _build_locale_cohort(row, locale)
+    cohort._stg_id = make_stg_id()
+    cohort._stg_name = _cohort_display_name(cohort, flow_id, location)
+    facet, criteria = _cohort_to_targeting_json(cohort)
+    cohort._facet = facet
+    cohort._criteria = criteria
+
+    ramp_id = (row or {}).get("ramp_id") or ""
+    included_geos = list((row or {}).get("included_geos") or [])
+    log.info(
+        "_resolve_cohorts: generalist locale path ramp=%s locale=%s cohort=%r geos=%s (beam skipped)",
+        ramp_id, locale, cohort.name, included_geos,
+    )
+
+    if ramp_id:
+        try:
+            from src.prep_audience import measure_audience_for_cohort
+            from src.ui_decisions import upsert_cohort_audience, upsert_cohort_targeting
+            enabled = [p.strip().lower() for p in (config.ENABLED_PLATFORMS or "").split(",") if p.strip()]
+            if not enabled:
+                enabled = ["linkedin", "meta", "google"]
+            rows = measure_audience_for_cohort(
+                cohort, included_geos=included_geos, enabled_platforms=enabled,
+            )
+            for ca in rows:
+                upsert_cohort_audience(
+                    ramp_id=ramp_id, cohort_id=cohort._stg_id,
+                    cohort_signature=cohort.name, platform=ca.platform,
+                    audience_size=ca.audience_size, status=ca.status,
+                    geos_used=ca.geos_used, rules_dropped=ca.rules_dropped,
+                )
+                upsert_cohort_targeting(
+                    ramp_id=ramp_id, cohort_id=cohort._stg_id,
+                    cohort_signature=cohort.name, platform=ca.platform,
+                    facets=ca.facets,
+                )
+            log.info(
+                "_resolve_cohorts: locale audience persisted ramp=%s cohort=%s %s",
+                ramp_id, cohort.name,
+                " ".join(f"{r.platform}={r.audience_size}({r.status})" for r in rows),
+            )
+        except Exception as exc:
+            log.warning("_resolve_cohorts: locale audience block failed (non-fatal): %s", exc)
+
+    group_name = f"Outlier {flow_id} {location}".strip()
+    return ResolvedCohorts(
+        selected=[cohort],
+        group_name=group_name,
+        project_id=project_id,
+        flow_id=flow_id,
+        location=location,
+        smart_ramp_brief=(row or {}).get("cohort_description") or (row or {}).get("ramp_summary") or "",
+    )
+
+
 def _resolve_cohorts(
     row: dict,
     *,
@@ -2012,6 +2116,18 @@ def _resolve_cohorts(
         family_exclusions_for,
         derive_icp_from_job_post,
     )
+
+    # 0. Generalist/i18n locale targeting (Bug 2). For a per-locale generalist
+    # cohort, target by language + geo instead of running Stage A beam discovery
+    # over résumé features (which produced noise cohorts — environmental
+    # engineering, adsorption+dna — for generalist ramps). Self-contained early
+    # return; the specialist beam path below is untouched.
+    if config.GENERALIST_LOCALE_TARGETING:
+        _locale = is_generalist_cohort(row)
+        if _locale:
+            return _resolve_locale_cohort(
+                row, _locale, flow_id=flow_id, location=location, project_id=project_id,
+            )
 
     # 1. Stage 1 data pull (mirrors _process_row).
     # NOTE 2026-04-28: `fetch_stage1_contributors` was referenced but never implemented
@@ -3943,7 +4059,23 @@ def _process_extra_platform_arm(
                     cohort_label=f"{getattr(cohort, '_stg_id', '?')}|{geo_group.cluster_label}",
                 )
 
-            if audience_status == "below_floor":
+            _is_generalist_locale = bool(
+                (getattr(cohort, "facet_strength", None) or {}).get("generalist_locale")
+            )
+            if audience_status == "below_floor" and _is_generalist_locale:
+                # Generalist/i18n locale cohort (Bug 2): de-narrowing already ran
+                # above; we must NOT skip even below floor — the ramp needs these
+                # users. Launch anyway. ⚠️ RELOOK: how small-but-required locale
+                # audiences should be handled (data/plan_generalist_locale_targeting.md).
+                log.warning(
+                    "_process_extra_platform_arm[%s]: audience=%s below floor for GENERALIST "
+                    "locale cohort=%s geo=%s — NOT skipping (ramp needs these users); launching "
+                    "anyway. RELOOK item: revisit small-but-required locale audience handling.",
+                    platform, audience_count,
+                    getattr(cohort, "name", "?"),
+                    getattr(geo_group, "cluster_label", "?"),
+                )
+            elif audience_status == "below_floor":
                 log.info(
                     "_process_extra_platform_arm[%s]: audience=%s below floor — skipping "
                     "cohort=%s geo=%s for this channel (other channels unaffected)",
