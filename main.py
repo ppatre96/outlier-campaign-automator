@@ -5212,10 +5212,28 @@ def _launch_ramp(ramp_id: str, decision=None) -> dict:
     """
     channels = list(decision.channels) if decision and decision.channels else None
     budgets = dict(decision.budgets) if decision and decision.budgets else None
-    return run_launch_for_ramp(
-        ramp_id, dry_run=False, prep_only=False,
-        channels=channels, budgets=budgets,
-    )
+
+    # Per-channel manual launch (feature #3): ONLY_CHANNEL restricts this run to
+    # one channel and the console's channel_locks guards concurrency. Release
+    # the lock when done (the run is the canonical signal); the console TTL is
+    # only a backstop for crashed runs.
+    only_channel = (getattr(config, "ONLY_CHANNEL", "") or "").strip().lower()
+    if only_channel:
+        channels = [only_channel]
+        log.info("_launch_ramp: ONLY_CHANNEL=%s — restricting run to channels=%s", only_channel, channels)
+    try:
+        return run_launch_for_ramp(
+            ramp_id, dry_run=False, prep_only=False,
+            channels=channels, budgets=budgets,
+        )
+    finally:
+        if only_channel:
+            try:
+                from src.ui_decisions import release_channel_lock
+                release_channel_lock(ramp_id=ramp_id, channel=only_channel)
+            except Exception as exc:
+                log.warning("_launch_ramp: channel lock release failed (%s/%s): %s — TTL will clear it",
+                            ramp_id, only_channel, exc)
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

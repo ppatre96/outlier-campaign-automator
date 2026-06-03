@@ -241,6 +241,33 @@ def upsert_cohort_audience(
                   ramp_id, cohort_signature, platform, exc)
 
 
+def release_channel_lock(*, ramp_id: str, channel: str) -> None:
+    """Release a per-channel launch lock (feature #3) when a per-channel run
+    finishes. Marks the (ramp_id, channel) lock 'released' so the console
+    re-enables the trigger. Best-effort; the table is created by the console
+    (lib/db.ts) — if it's missing here, nothing to release. Idempotent.
+    """
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE channel_locks
+                   SET status = 'released', released_at = NOW()
+                 WHERE ramp_id = %s AND channel = %s AND status = 'running'
+                """,
+                (ramp_id, (channel or "").strip().lower()),
+            )
+            conn.commit()
+            log.info("release_channel_lock: released %s/%s (%d row(s))",
+                     ramp_id, channel, cur.rowcount)
+    except UIDecisionsUnavailable as exc:
+        log.debug("release_channel_lock skipped (%s/%s): %s", ramp_id, channel, exc)
+    except Exception as exc:
+        # Never let a lock-release failure (e.g. table not yet created) break
+        # the launch — the console's TTL will expire a stuck lock anyway.
+        log.warning("release_channel_lock failed (%s/%s): %s — relying on TTL", ramp_id, channel, exc)
+
+
 def upsert_cohort_targeting(
     *,
     ramp_id: str,

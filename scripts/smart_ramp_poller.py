@@ -310,6 +310,29 @@ def run_ramp_pipeline(
                 "campaign_groups": [], "inmail_campaigns": [],
                 "static_campaigns": [], "creative_paths": {}, "per_cohort": []}
 
+    # Per-channel manual launch (feature #3). When ONLY_CHANNEL is set (console
+    # per-channel trigger), bypass the ramp-level status machine: concurrency is
+    # guarded by the console's channel_locks (per ramp × channel), and we must
+    # NOT claim 'launching' or flip to 'completed' (other channels still need
+    # launching). Requires a prior approval. _launch_ramp restricts to the one
+    # channel and releases the lock when done.
+    only_channel = (getattr(config, "ONLY_CHANNEL", "") or "").strip().lower()
+    if only_channel:
+        ok_states = {"approved", "yolo", "completed", "launching"}
+        if not decision or decision.status not in ok_states:
+            log.warning(
+                "Per-channel launch ramp=%s channel=%s but status=%s (needs prior approval) — skipping",
+                record.id, only_channel, getattr(decision, "status", None),
+            )
+            return {"ok": False, "error": "per_channel_requires_approval",
+                    "campaign_groups": [], "inmail_campaigns": [],
+                    "static_campaigns": [], "creative_paths": {}, "per_cohort": []}
+        log.info(
+            "Per-channel launch ramp=%s channel=%s (channel_locks-guarded; ramp status %s unchanged)",
+            record.id, only_channel, decision.status,
+        )
+        return _launch_ramp(record.id, decision)
+
     # No prior decision → first time we've seen this ramp post-submission.
     # Run prep (cohort mining + Triggers Sheet rows + LinkedIn briefs).
     # If briefs were generated, transition to awaiting_brief_review (new gate);
