@@ -284,14 +284,25 @@ class MetaClient(AdPlatformClient):
                 "window_days": config.META_ATTRIBUTION_WINDOW_DAYS,
             }]
 
-        # Frequency cap (Tuan 2026-05-26): 3 impressions / 7 days. Set
-        # META_FREQUENCY_CAP_IMPRESSIONS=0 to disable.
+        # Frequency cap (Tuan 2026-05-26): 3 impressions / 7 days. Meta ONLY
+        # accepts frequency_control_specs when optimization_goal is REACH —
+        # setting it on an OFFSITE_CONVERSIONS ad set is rejected (subcode
+        # 1815211 "Invalid Optimization Goal for Frequency Control Specs",
+        # which failed every GMR-0023 ad set 2026-06-04). Only attach it for
+        # REACH; otherwise skip (frequency capping isn't available for this
+        # objective at the ad-set level).
         if config.META_FREQUENCY_CAP_IMPRESSIONS > 0:
-            params[AdSet.Field.frequency_control_specs] = [{
-                "event":         "IMPRESSIONS",
-                "interval_days": config.META_FREQUENCY_CAP_INTERVAL_DAYS,
-                "max_frequency": config.META_FREQUENCY_CAP_IMPRESSIONS,
-            }]
+            if optimization_goal == AdSet.OptimizationGoal.reach:
+                params[AdSet.Field.frequency_control_specs] = [{
+                    "event":         "IMPRESSIONS",
+                    "interval_days": config.META_FREQUENCY_CAP_INTERVAL_DAYS,
+                    "max_frequency": config.META_FREQUENCY_CAP_IMPRESSIONS,
+                }]
+            else:
+                log.info(
+                    "Meta: skipping frequency_control_specs — only valid for "
+                    "REACH optimization, this ad set uses %s.", optimization_goal,
+                )
 
         try:
             account = AdAccount(self._ad_account_id)
