@@ -171,7 +171,7 @@ DEFAULT_EXCLUDE_URNS_RAW: dict[str, list[str]] = {
 # ── Multi-platform expansion (Meta + Google Ads) ──────────────────────────────
 # Comma-separated list controlling which ad platforms the pipeline targets per
 # Smart Ramp run. Order is preserved (LinkedIn first by default for back-compat).
-ENABLED_PLATFORMS    = os.getenv("ENABLED_PLATFORMS", "linkedin,meta,google")
+ENABLED_PLATFORMS    = os.getenv("ENABLED_PLATFORMS", "linkedin,meta,google,google_search")
 
 # Per-channel manual launch (feature #3). When set (e.g. "linkedin"|"meta"|
 # "google") by the console's per-channel launch trigger, this run restricts to

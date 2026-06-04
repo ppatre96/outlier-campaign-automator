@@ -33,7 +33,7 @@ from typing import Any, Literal, Optional
 import config
 
 
-PlatformName = Literal["linkedin", "meta", "google"]
+PlatformName = Literal["linkedin", "meta", "google", "google_search"]
 
 
 @dataclass(frozen=True)
@@ -110,10 +110,30 @@ GOOGLE_CONSTRAINTS = PlatformConstraints(
 )
 
 
+# Google Responsive Search Ads (RSA): text-only — headlines (30 chars) +
+# descriptions (90). No image. Separate arm from Display ("google") so a run
+# can create Search alongside Display. Registered here so enabled_platforms()
+# keeps it (it was silently dropped before → the pipeline never made Search).
+GOOGLE_SEARCH_CONSTRAINTS = PlatformConstraints(
+    name="google_search",
+    headline_max_chars=30,
+    description_max_chars=90,
+    primary_text_max_chars=None,
+    cta_max_chars=None,
+    image_aspects=(),
+    headline_count=3,
+    long_headline_max_chars=90,
+    description_count=3,
+    supports_inmail=False,
+    supports_special_ad_category=True,
+)
+
+
 PLATFORM_CONSTRAINTS: dict[str, PlatformConstraints] = {
-    "linkedin": LINKEDIN_CONSTRAINTS,
-    "meta":     META_CONSTRAINTS,
-    "google":   GOOGLE_CONSTRAINTS,
+    "linkedin":      LINKEDIN_CONSTRAINTS,
+    "meta":          META_CONSTRAINTS,
+    "google":        GOOGLE_CONSTRAINTS,
+    "google_search": GOOGLE_SEARCH_CONSTRAINTS,
 }
 
 

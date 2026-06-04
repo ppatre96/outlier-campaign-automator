@@ -3826,6 +3826,34 @@ def _process_extra_platform_arm(
                     str(base_id_e)[:12], cluster_suffix, angle_label_e, _exc,
                 )
 
+        # Google Display (RDA) needs a 1:1 SQUARE source — create_image_ad
+        # derives the required 1.91:1 landscape from it. The Meta block above
+        # rewrites the SHARED spec["png_path"] to a 4:5 photo; without our own
+        # 1:1 the Google arm inherits that 4:5 and every RDA create fails the
+        # square asset spec ("aspect ratio does not match" → 0 ads). Compose a
+        # fresh 1:1 so Display ads actually attach. (google_search is text-only.)
+        if platform == "google" and variant_e:
+            try:
+                from src.gemini_creative import generate_imagen_photo
+                from src.image_adapter import compose_ad_for_platform
+                g_bg = generate_imagen_photo(variant_e, aspect=(1, 1))
+                g_png = compose_ad_for_platform(
+                    bg_image=g_bg, copy_variant=variant_e,
+                    platform="google", angle=angle_label_e, aspect=(1, 1),
+                )
+                png_path_e = g_png
+                spec["png_path"] = g_png
+                log.info(
+                    "_process_extra_platform_arm[google]: 1:1 square PNG ready %s "
+                    "(RDA square source; 1.91:1 landscape derived at upload)", g_png,
+                )
+            except Exception as _exc:
+                log.warning(
+                    "_process_extra_platform_arm[google]: 1:1 photo gen FAILED "
+                    "cohort=%s geo=%s angle=%s — falling back to existing PNG: %s",
+                    str(base_id_e)[:12], cluster_suffix, angle_label_e, _exc,
+                )
+
         drive_url_e = ""
         if config.GDRIVE_ENABLED and png_path_e and Path(str(png_path_e)).exists():
             try:
@@ -4904,6 +4932,11 @@ def _process_row_both_modes(
         # Phase 2 — `channels` decision-row override filters the extras list.
         if channels is not None:
             allowed_extras = {c for c in channels if c != "linkedin"}
+            # A "google" channel selection covers BOTH Google arms — Display
+            # ("google") and Search ("google_search") — so the console's single
+            # Google toggle launches Search + Display together.
+            if "google" in allowed_extras:
+                allowed_extras.add("google_search")
             filtered = [p for p in platforms if p in allowed_extras]
             if filtered != platforms:
                 log.info(
