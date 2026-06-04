@@ -60,6 +60,14 @@ on:
         options:
           - "true"
           - "false"
+      verify_heal:
+        description: "Verify-and-heal (piece C): after launch, archive any campaign/ad-set left with zero ads + flag (Slack + audit log). Default off while it bakes — enable per-run to validate, then flip the Doppler prd default on."
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 jobs:
   poll:
@@ -153,6 +161,11 @@ jobs:
           # Relaunch (replace): archive only_channel's existing campaigns before
           # creating fresh ones. Read at config import time (config.REPLACE_EXISTING).
           REPLACE_EXISTING: ${{ github.event.inputs.replace }}
+          # Verify-and-heal (piece C). Empty on scheduled runs → config parses
+          # it as false (gate off). A manual dispatch can flip it on for one
+          # validation ramp. Once validated, set the Doppler prd default to
+          # "true" so scheduled runs heal too.
+          LAUNCH_VERIFY_ENABLED: ${{ github.event.inputs.verify_heal }}
         run: |
           ARGS="--once"
 
