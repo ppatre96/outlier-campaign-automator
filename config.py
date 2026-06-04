@@ -187,6 +187,13 @@ ONLY_CHANNEL         = os.getenv("ONLY_CHANNEL", "").strip().lower()
 # before creating fresh ones (console "Relaunch (replace)" → poller `replace`).
 REPLACE_EXISTING     = os.getenv("REPLACE_EXISTING", "").strip().lower() in ("1", "true", "yes")
 
+# Piece C — inline post-launch verify-and-heal. When on, each arm checks every
+# campaign/ad-set it just created for child ads; any that ended the run empty
+# (zero ads/creatives after one inline retry) is archived on-platform + flagged
+# (audit log + Slack) so no empty shell survives a launch. Gated off by default
+# while it bakes (2026-06-05); flip to "true" once validated on a live ramp.
+LAUNCH_VERIFY_ENABLED = os.getenv("LAUNCH_VERIFY_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+
 # Meta and Google both gate certain campaigns under a "special ad category" for
 # regulated verticals. Outlier tasks are 1099 contractor work which Meta/Google
 # may classify as EMPLOYMENT — the safe default is to flag this and absorb the

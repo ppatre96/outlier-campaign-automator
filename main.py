@@ -1283,6 +1283,8 @@ def _process_inmail_campaigns(
     # was 1 campaign per (cohort × geo × angle) which produced 3× the
     # campaign count and didn't match the LinkedIn campaign-group / campaign
     # / creative hierarchy the marketing team is standardizing on.
+    from src import launch_verify
+    healed_empties: list[dict] = []
     for cohort in capped_cohorts_inmail:
         for geo_group in geo_groups:
             # Cross-row dedup (run_launch_for_ramp path only): if a prior row
@@ -1466,7 +1468,8 @@ def _process_inmail_campaigns(
 
             # Attach one InMail ad per (valid) angle to the same campaign.
             base_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
-            for angle_label, variant in valid_pairs:
+
+            def _attach_inmail(angle_label, variant) -> bool:
                 # Per-angle UTM URL: shared campaign_name + distinct utm_content
                 utm_url = build_utm_url(
                     base_url=base_lp, platform="linkedin",
@@ -1478,14 +1481,23 @@ def _process_inmail_campaigns(
                     utm_content=f"{cohort._stg_id}-inmail-{angle_label}",
                 ) if base_lp else (destination_url_override or "")
 
-                creative_urn = li_client.create_inmail_ad(
-                    campaign_urn=campaign_urn,
-                    sender_urn=inmail_sender,
-                    subject=variant.subject,
-                    body=variant.body,
-                    cta_label=variant.cta_label,
-                    destination_url=utm_url,
-                )
+                try:
+                    creative_urn = li_client.create_inmail_ad(
+                        campaign_urn=campaign_urn,
+                        sender_urn=inmail_sender,
+                        subject=variant.subject,
+                        body=variant.body,
+                        cta_label=variant.cta_label,
+                        destination_url=utm_url,
+                    )
+                except Exception as _exc:
+                    log.warning(
+                        "_process_inmail_campaigns: create_inmail_ad raised cohort=%s angle=%s: %s",
+                        cohort.name, angle_label, _exc,
+                    )
+                    return False
+                if not creative_urn:
+                    return False
                 sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
 
                 try:
@@ -1513,6 +1525,42 @@ def _process_inmail_campaigns(
                     "InMail creative %s — cohort '%s' angle %s geo=%s subject: %s",
                     creative_urn, cohort.name, angle_label, geo_group.cluster_label, variant.subject,
                 )
+                return True
+
+            _im_ok = 0
+            _im_failed: list[tuple] = []
+            for angle_label, variant in valid_pairs:
+                if _attach_inmail(angle_label, variant):
+                    _im_ok += 1
+                else:
+                    _im_failed.append((angle_label, variant))
+
+            # ── Verify-and-heal (piece C). If no InMail content attached to
+            # this campaign, retry the failed angle(s) once; if still empty,
+            # archive the campaign + flag so no empty shell survives launch.
+            if config.LAUNCH_VERIFY_ENABLED and _im_ok == 0 and _im_failed:
+                log.warning(
+                    "_process_inmail_campaigns: 0/%d InMail ads attached to %s — "
+                    "retrying %d angle(s) once before heal",
+                    len(valid_pairs), campaign_urn, len(_im_failed),
+                )
+                for angle_label, variant in _im_failed:
+                    if _attach_inmail(angle_label, variant):
+                        _im_ok += 1
+                if _im_ok == 0:
+                    _summ = launch_verify.heal_empty(
+                        platform="linkedin",
+                        container_id=campaign_urn,
+                        ramp_id=ramp_id or "",
+                        campaign_name=campaign_name,
+                        reason="no InMail content attached after retry",
+                        li_client=li_client,
+                    )
+                    if _summ:
+                        healed_empties.append(_summ)
+
+    if config.LAUNCH_VERIFY_ENABLED:
+        launch_verify.notify_healed(ramp_id or "", healed_empties)
 
 
 def _retry_li_campaign(
@@ -3376,6 +3424,8 @@ def _process_static_campaigns(
         len(grouped_specs), config.ANGLES_PER_COHORT,
     )
 
+    from src import launch_verify
+    healed_empties: list[dict] = []
     for (stg_id, cluster), specs in grouped_specs.items():
         meta = group_meta[(stg_id, cluster)]
         cohort = meta["cohort"]
@@ -3471,6 +3521,12 @@ def _process_static_campaigns(
             )
             continue
 
+        # Verify-and-heal (piece C) trackers for THIS campaign: row_ids that
+        # got a real creative attached, and the retry kwargs for the ones that
+        # didn't (captured once per spec just before the attach attempt).
+        _li_attached: set[str] = set()
+        _li_payloads: dict[str, dict] = {}
+
         # ── Attach one creative per angle to the just-created campaign. ─────
         for spec in specs:
             angle_idx = spec["angle_idx"]
@@ -3554,19 +3610,23 @@ def _process_static_campaigns(
                 utm_content=f"{cohort._stg_id}-static-{angle_label}",
             ) if base_lp else (destination_url_override or "")
 
+            # Capture the attach kwargs so the verify-and-heal retry (piece C)
+            # can re-attempt this creative without recomputing UTM/copy.
+            _attach_kwargs = dict(
+                campaign_urn=campaign_urn,
+                headline=headline,
+                description=subhead,
+                intro_text=variant.get("intro_text", "") if variant else "",
+                ad_headline=variant.get("ad_headline", "") if variant else "",
+                ad_description=variant.get("ad_description", "") if variant else "",
+                cta_button=variant.get("cta_button", "APPLY") if variant else "APPLY",
+                destination_url=utm_url,
+            )
+            _li_payloads[row_id] = {"png_path": png_path, "kwargs": _attach_kwargs}
+
             try:
                 image_urn = li_client.upload_image(png_path)
-                ad_result = li_client.create_image_ad(
-                    campaign_urn=campaign_urn,
-                    image_urn=image_urn,
-                    headline=headline,
-                    description=subhead,
-                    intro_text=variant.get("intro_text", "") if variant else "",
-                    ad_headline=variant.get("ad_headline", "") if variant else "",
-                    ad_description=variant.get("ad_description", "") if variant else "",
-                    cta_button=variant.get("cta_button", "APPLY") if variant else "APPLY",
-                    destination_url=utm_url,
-                )
+                ad_result = li_client.create_image_ad(image_urn=image_urn, **_attach_kwargs)
             except Exception as exc:
                 log.warning("_process_static_campaigns: upload/attach raised for angle %s: %s", angle_label, exc)
                 creative_paths[row_id] = ""
@@ -3574,6 +3634,7 @@ def _process_static_campaigns(
 
             if ad_result.status == "ok":
                 creative_urn = ad_result.creative_urn
+                _li_attached.add(row_id)
                 sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
                 creative_paths[row_id] = creative_urn
                 log.info("_process_static_campaigns: angle=%s creative %s attached to %s",
@@ -3634,6 +3695,44 @@ def _process_static_campaigns(
                 )
                 creative_paths[row_id] = ""
 
+        # ── Verify-and-heal (piece C). If no creative attached to this
+        # campaign, retry each captured spec once; if still none, archive the
+        # campaign + flag so no empty shell survives the launch. (A DSC/MDP
+        # entitlement block is deterministic so retry won't change it — but the
+        # heal still guarantees no empty LinkedIn campaign is left behind.)
+        if config.LAUNCH_VERIFY_ENABLED and not _li_attached and _li_payloads:
+            log.warning(
+                "_process_static_campaigns: 0 creatives attached to %s — "
+                "retrying %d angle(s) once before heal",
+                campaign_urn, len(_li_payloads),
+            )
+            for _rid, _pl in _li_payloads.items():
+                _pp = _pl["png_path"]
+                if not (_pp and Path(str(_pp)).exists()):
+                    continue
+                try:
+                    _iu = li_client.upload_image(_pp)
+                    _rr = li_client.create_image_ad(image_urn=_iu, **_pl["kwargs"])
+                    if _rr.status == "ok":
+                        _li_attached.add(_rid)
+                        creative_paths[_rid] = _rr.creative_urn
+                except Exception as _exc:
+                    log.warning("_process_static_campaigns: heal retry raised for %s: %s", _rid, _exc)
+            if not _li_attached:
+                _summ = launch_verify.heal_empty(
+                    platform="linkedin",
+                    container_id=campaign_urn,
+                    ramp_id=ramp_id or "",
+                    campaign_name=campaign_name,
+                    reason="no creative attached after retry",
+                    li_client=li_client,
+                )
+                if _summ:
+                    healed_empties.append(_summ)
+
+    if config.LAUNCH_VERIFY_ENABLED:
+        launch_verify.notify_healed(ramp_id or "", healed_empties)
+
     # Reconciliation pass: registry rows are logged at campaign-creation time,
     # but PNG renders + Drive uploads may complete later (retries, async). Walk
     # Drive at the canonical hierarchy and patch any rows for this ramp that
@@ -3690,6 +3789,7 @@ def _process_extra_platform_arm(
     from src.ad_platform import CreateAdResult
     from src.campaign_registry import log_campaign as _reg_log
     from src.copy_adapter import adapt_copy_for_platform
+    from src import launch_verify
 
     out: dict = {
         "campaigns": [],
@@ -4057,6 +4157,7 @@ def _process_extra_platform_arm(
         max((len(v) for v in grouped.values()), default=0),
     )
 
+    healed_empties: list[dict] = []
     for (stg_id, cluster), specs in grouped.items():
         meta = g_meta[(stg_id, cluster)]
         cohort     = meta["cohort"]
@@ -4239,7 +4340,10 @@ def _process_extra_platform_arm(
             continue
 
         # ── Attach one ad/RDA per angle to the just-created ad set/group. ───
-        for spec in specs:
+        # Body is an inner function so the verify-and-heal retry (piece C) can
+        # re-invoke a failed spec without duplicating the upload/UTM/dispatch.
+        # Returns True iff an ad attached (ad_result.status == "ok").
+        def _attempt_and_record(spec) -> bool:
             angle_label = spec.get("angle_label", "A")
             angle_idx   = spec.get("angle_idx", 0)
             png_path    = spec.get("png_path")
@@ -4445,6 +4549,42 @@ def _process_extra_platform_arm(
                 ad_result.creative_id if ad_result.status == "ok"
                 else (str(png_path) if png_path else "")
             )
+            return ad_result.status == "ok"
+
+        # First pass: one ad per angle.
+        ads_ok = 0
+        failed_specs: list[dict] = []
+        for spec in specs:
+            if _attempt_and_record(spec):
+                ads_ok += 1
+            else:
+                failed_specs.append(spec)
+
+        # ── Verify-and-heal (piece C). If the ad set/group ended the run with
+        # zero ads, retry the failed specs once; if still empty, archive the
+        # container + flag so no empty shell survives the launch.
+        if config.LAUNCH_VERIFY_ENABLED and ads_ok == 0 and failed_specs:
+            log.warning(
+                "_process_extra_platform_arm[%s]: 0/%d ads attached to %s — "
+                "retrying %d spec(s) once before heal",
+                platform, len(specs), sub_id, len(failed_specs),
+            )
+            for spec in failed_specs:
+                if _attempt_and_record(spec):
+                    ads_ok += 1
+            if ads_ok == 0:
+                _summ = launch_verify.heal_empty(
+                    platform=platform,
+                    container_id=sub_id,
+                    ramp_id=ramp_id or "",
+                    campaign_name=campaign_name,
+                    reason=f"0/{len(specs)} ads attached after retry",
+                )
+                if _summ:
+                    healed_empties.append(_summ)
+
+    if config.LAUNCH_VERIFY_ENABLED:
+        launch_verify.notify_healed(ramp_id or "", healed_empties)
 
     return out
 
