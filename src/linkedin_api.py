@@ -299,11 +299,14 @@ class LinkedInClient(AdPlatformClient):
 
     # Prefix applied automatically to every campaign + campaign-group + creative name
     # so resources created by this pipeline are easy to find in Campaign Manager.
-    AGENT_NAME_PREFIX = "agent_"
+    # Read from config (empty by default) so names match the Smart Ramp
+    # nomenclature verbatim across all platforms. Was hardcoded "agent_".
+    AGENT_NAME_PREFIX = config.AGENT_NAME_PREFIX
 
     def _prefixed(self, name: str) -> str:
-        """Return name with AGENT_NAME_PREFIX prepended (idempotent)."""
-        if name.startswith(self.AGENT_NAME_PREFIX):
+        """Return name with AGENT_NAME_PREFIX prepended (idempotent). No-op when
+        the prefix is empty (the default)."""
+        if not self.AGENT_NAME_PREFIX or name.startswith(self.AGENT_NAME_PREFIX):
             return name
         return f"{self.AGENT_NAME_PREFIX}{name}"
 

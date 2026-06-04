@@ -189,10 +189,12 @@ REPLACE_EXISTING     = os.getenv("REPLACE_EXISTING", "").strip().lower() in ("1"
 # targeting restrictions (no narrow age/gender). Set to "NONE" to disable.
 SPECIAL_AD_CATEGORY  = os.getenv("SPECIAL_AD_CATEGORY", "EMPLOYMENT")
 
-# Common name prefix applied to every campaign / group / creative the agent
-# creates so they're easy to filter in each platform's UI. Mirrors the existing
-# LinkedInClient.AGENT_NAME_PREFIX rule.
-AGENT_NAME_PREFIX    = os.getenv("AGENT_NAME_PREFIX", "agent_")
+# Optional name prefix for created campaigns / groups / creatives. Empty by
+# default (2026-06-04): names must match the Smart Ramp nomenclature verbatim
+# (Scale-<ramp> | <Channel> | …) so they line up with attribution
+# (CAMPAIGN_NAME_ATTRIBUTED from /api/ramps/[id]/campaign-check). A non-empty
+# value (e.g. "agent_") re-enables prefixing for all platforms.
+AGENT_NAME_PREFIX    = os.getenv("AGENT_NAME_PREFIX", "")
 
 # ── outlier-campaign-console approval gate (UI) ────────────────────────────────
 # When true, the poller writes each new ramp to Vercel Postgres at
