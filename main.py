@@ -2015,6 +2015,7 @@ def _build_locale_cohort(row: dict, locale: str):
 
 def _resolve_locale_cohort(
     row: dict, locale: str, *, flow_id: str, location: str, project_id: str | None,
+    li_client=None, urn_res=None,
 ) -> "ResolvedCohorts":
     """Self-contained generalist path: build one locale cohort, persist its
     per-channel audience + targeting (idempotent, no wipe so sibling locales of
@@ -2043,6 +2044,7 @@ def _resolve_locale_cohort(
                 enabled = ["linkedin", "meta", "google"]
             rows = measure_audience_for_cohort(
                 cohort, included_geos=included_geos, enabled_platforms=enabled,
+                li_client=li_client, urn_resolver=urn_res,
             )
             for ca in rows:
                 upsert_cohort_audience(
@@ -2161,6 +2163,7 @@ def _resolve_cohorts(
         if _locale:
             return _resolve_locale_cohort(
                 row, _locale, flow_id=flow_id, location=location, project_id=project_id,
+                li_client=li_client, urn_res=urn_res,
             )
 
     # 1. Stage 1 data pull (mirrors _process_row).
@@ -3922,6 +3925,21 @@ def _process_extra_platform_arm(
         for g in (spec.get("group_geos") or [])
         if g
     })
+    # Empty-geo generalist locale cohorts (e.g. ko-KR/vi-VN — ramp left
+    # included_geos empty): the ad-set resolver falls back to the locale region
+    # for targeting, so the parent campaign's special_ad_category_country must
+    # carry that region too — otherwise the ad set is "outside" the (empty) SAC
+    # countries and Meta rejects it (subcode 2909035). Mirror the resolver's
+    # fallback here so both levels agree.
+    if not union_geos:
+        from src.locales import region_for_locale
+        union_geos = sorted({
+            r for spec in campaign_specs
+            for r in [region_for_locale(
+                (getattr(spec.get("cohort"), "facet_strength", None) or {}).get("generalist_locale")
+            )]
+            if r
+        })
     try:
         group_id = client.create_campaign_group(group_name, geos=union_geos)
     except Exception as exc:
@@ -4979,6 +4997,22 @@ def _ramp_to_rows(ramp) -> list[dict]:
             "job_post_language_code": getattr(cohort, "job_post_language_code", None),
             "campaign_state": getattr(cohort, "campaign_state", None),
         })
+    # ONLY_LOCALES env filter (manual one-off reruns): comma-separated BCP-47
+    # locales (e.g. "th-th,ko-kr,vi-vn"). When set, restrict to cohorts whose
+    # matched_locales intersect the list, so a targeted rerun materializes just
+    # the named locale cohorts without re-touching the others. Mirrors the
+    # OUTLIER_CHANNELS / OUTLIER_ARMS env overrides.
+    _only_locales = (os.environ.get("ONLY_LOCALES") or "").strip()
+    if _only_locales:
+        _want = {l.strip().lower().replace("_", "-")
+                 for l in _only_locales.split(",") if l.strip()}
+        _before = len(rows)
+        rows = [
+            r for r in rows
+            if _want & {str(m).lower().replace("_", "-")
+                        for m in (r.get("matched_locales") or [])}
+        ]
+        log.info("ONLY_LOCALES=%s → %d of %d cohorts kept", sorted(_want), len(rows), _before)
     return rows
 
 

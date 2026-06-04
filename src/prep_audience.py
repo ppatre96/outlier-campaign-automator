@@ -46,6 +46,8 @@ def measure_audience_for_cohort(
     included_geos: list[str],
     enabled_platforms: list[str],
     li_audience_size: Optional[int] = None,
+    li_client=None,
+    urn_resolver=None,
 ) -> list[ChannelAudience]:
     """
     Return audience estimates for every enabled platform for one cohort.
@@ -63,11 +65,49 @@ def measure_audience_for_cohort(
 
     # ── LinkedIn ──
     if "linkedin" in enabled or li_audience_size is not None:
+        _gen_locale = (getattr(cohort, "facet_strength", None) or {}).get("generalist_locale")
+        # Geos to size on: the ramp's included_geos, falling back to the locale
+        # region for generalist cohorts the ramp left empty (e.g. ko-KR → KR).
+        est_geos = list(geos)
+        if not est_geos and _gen_locale:
+            from src.locales import region_for_locale
+            _r = region_for_locale(_gen_locale)
+            if _r:
+                est_geos = [_r]
+
         size = li_audience_size if li_audience_size is not None else getattr(cohort, "audience_size", None)
+        # Live LinkedIn reach estimate based on the cohort's facets, so the
+        # console shows TRUE reach every run rather than the unset default.
+        # Stage C already sizes specialist cohorts (passed as li_audience_size);
+        # the generalist locale path skips the beam, so audience_size defaults
+        # to 0 and the console showed a misleading "0 (below floor)". When a
+        # client + URN resolver are available and there's no Stage C number,
+        # query audienceCounts on the geo facet — LinkedIn targets these
+        # cohorts by geo (the languages aren't LinkedIn interface locales).
+        if li_audience_size is None and li_client is not None and urn_resolver is not None and est_geos:
+            try:
+                geo_urns: list[str] = []
+                for _c in est_geos:
+                    _u = urn_resolver.resolve("profileLocations", _c)
+                    if _u:
+                        geo_urns.append(_u)
+                if geo_urns:
+                    live = li_client.get_audience_count({"profileLocations": geo_urns})
+                    if live and live > 0:
+                        size = live
+                        log.info(
+                            "LinkedIn live geo audience: cohort=%s geos=%s → %d",
+                            getattr(cohort, "name", "?"), est_geos, live,
+                        )
+            except Exception as exc:
+                log.warning(
+                    "LinkedIn live geo audience estimate failed for cohort=%s: %s",
+                    getattr(cohort, "name", "?"), exc,
+                )
+
         status = "measured" if size is not None else "skipped"
         if size is not None and size < config.AUDIENCE_SIZE_MIN:
             status = "below_floor"
-        _gen_locale = (getattr(cohort, "facet_strength", None) or {}).get("generalist_locale")
         if _gen_locale:
             # Generalist locale cohort → LinkedIn targets by geo only (v1).
             # Surface human-readable facets instead of the raw synthetic rule.
@@ -76,14 +116,14 @@ def measure_audience_for_cohort(
             li_facets = {
                 "locale": _gen_locale,
                 "language": (_lt.display_language if _lt else _gen_locale),
-                "geos": geos,
+                "geos": est_geos,
                 "geo_only": True,
             }
         else:
             li_facets = {"rules": [str(feat) for feat, _val in (getattr(cohort, "rules", None) or [])]}
         results.append(ChannelAudience(
             platform="linkedin", audience_size=size,
-            status=status, geos_used=geos,
+            status=status, geos_used=est_geos,
             facets=li_facets,
         ))
 

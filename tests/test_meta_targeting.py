@@ -68,6 +68,19 @@ def test_employment_special_category_drops_age(tmp_path, monkeypatch):
     assert "age_min" not in out and "age_max" not in out
 
 
+def test_employment_thailand_never_sets_custom_age(tmp_path, monkeypatch):
+    """Meta forbids ANY custom age under EMPLOYMENT SAC (subcode 2909037 —
+    "Custom age selection is unavailable…", which broke the TH/MY/SG cluster of
+    GMR-0023). Even for a cluster containing Thailand we must leave age unset so
+    the ad set runs the mandatory 18-65+."""
+    import config
+    monkeypatch.setattr(config, "SPECIAL_AD_CATEGORY", "EMPLOYMENT")
+    cache = tmp_path / "cache.json"
+    r = MetaInterestResolver(access_token="dummy", cache_path=cache)
+    out = r.resolve_cohort(_FakeCohort(rules=[]), geos=["TH", "MY", "SG"])
+    assert "age_min" not in out and "age_max" not in out
+
+
 def test_no_special_category_keeps_age(tmp_path, monkeypatch):
     import config
     monkeypatch.setattr(config, "SPECIAL_AD_CATEGORY", "NONE")

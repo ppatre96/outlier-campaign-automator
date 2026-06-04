@@ -101,11 +101,11 @@ class MetaInterestResolver(TargetingResolver):
         # (ko-KR → KR) so the EMPLOYMENT SAC country requirement is satisfied
         # instead of the ad set failing on empty geo_locations.
         if not countries:
+            from src.locales import region_for_locale
             _gl = (getattr(cohort, "facet_strength", None) or {}).get("generalist_locale")
-            if _gl and "-" in str(_gl):
-                _region = str(_gl).split("-")[-1].strip().upper()
-                if _region:
-                    countries = [_region]
+            _region = region_for_locale(_gl)
+            if _region:
+                countries = [_region]
         if category in {"EMPLOYMENT", "HOUSING", "CREDIT"} and not countries:
             raise ValueError(
                 f"Meta SAC={category} requires non-empty geo_locations.countries; "
@@ -174,7 +174,10 @@ class MetaInterestResolver(TargetingResolver):
         if category != "EMPLOYMENT":
             out["age_min"] = 21
             out["age_max"] = 65
-        # Under EMPLOYMENT/HOUSING/CREDIT: skip age + gender (Meta enforces).
+        # Under EMPLOYMENT/HOUSING/CREDIT: skip age + gender. Meta forbids any
+        # custom age here — the ad set MUST run 18-65+ (a custom age_min, even
+        # one a country's labour law would require, is rejected with subcode
+        # 2909037 "Custom age selection is unavailable…"). So we never set age.
 
         # Suppress already-active contributors (the four "Actives" custom
         # audiences Tuan provided 2026-05-26). Applied to every prospecting

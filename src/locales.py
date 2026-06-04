@@ -92,6 +92,21 @@ LOCALES: dict[str, LocaleTargeting] = {
 }
 
 
+def region_for_locale(locale: str | None) -> str | None:
+    """Return the ISO-2 country/region from a BCP-47 locale ("ko-kr" → "KR").
+
+    Used as the geo fallback for generalist locale cohorts whose ramp leaves
+    included_geos empty: Meta's EMPLOYMENT SAC needs a non-empty country list
+    on BOTH the ad set's targeting AND the parent campaign's
+    special_ad_category_country (mismatch → subcode 2909035). Returns None when
+    the locale has no region segment.
+    """
+    if not locale or "-" not in str(locale):
+        return None
+    region = str(locale).split("-")[-1].strip().upper()
+    return region or None
+
+
 def get_locale(locale: str | None) -> LocaleTargeting | None:
     """Look up targeting data for a BCP-47 locale (case/format-insensitive).
 
