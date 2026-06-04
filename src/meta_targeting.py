@@ -96,6 +96,16 @@ class MetaInterestResolver(TargetingResolver):
         # "targeting validation" without naming the field. Raise here so the
         # caller's per-(cohort × geo) try/except logs a specific reason.
         countries = [g.upper() for g in (geos or []) if g]
+        # Generalist locale cohort with an empty/"Global" geo cluster (e.g.
+        # Korean/Vietnamese on GMR-0023) → fall back to the locale's own region
+        # (ko-KR → KR) so the EMPLOYMENT SAC country requirement is satisfied
+        # instead of the ad set failing on empty geo_locations.
+        if not countries:
+            _gl = (getattr(cohort, "facet_strength", None) or {}).get("generalist_locale")
+            if _gl and "-" in str(_gl):
+                _region = str(_gl).split("-")[-1].strip().upper()
+                if _region:
+                    countries = [_region]
         if category in {"EMPLOYMENT", "HOUSING", "CREDIT"} and not countries:
             raise ValueError(
                 f"Meta SAC={category} requires non-empty geo_locations.countries; "
