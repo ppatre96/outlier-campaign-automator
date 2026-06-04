@@ -192,28 +192,23 @@ class GoogleAdsClient(AdPlatformClient):
             # activates the oneof; target_cpa_micros=0 = no CPA target.
             c.maximize_conversions.target_cpa_micros = 0
 
-        # Conversion-action attach (Tuan 2026-05-27 — Google conversion
-        # action `7625599821` for the `worker_skill_all` event). Constrains
-        # this campaign's optimization to THIS conversion action specifically
-        # (instead of all conversion actions on the customer account).
-        # Independent of bid strategy — both MAX_CONVERSIONS and
-        # MAX_CONVERSION_VALUE benefit from focused attribution.
-        # Set GOOGLE_CONVERSION_ACTION_ID="" in Doppler to disable.
+        # Conversion-action focus (Tuan 2026-05-27 — Google conversion action
+        # `7625599821` for the `worker_skill_all` event). This is applied via a
+        # best-effort post-create UPDATE below, NOT on the create op: Google
+        # rejects `selective_optimization.conversion_actions` at create time
+        # under MAXIMIZE_CONVERSION_VALUE (INVALID_ARGUMENT — failed every
+        # GMR-0023 Google campaign 2026-06-03). Computing the resource here;
+        # the update happens after the campaign exists so creation never
+        # blocks on it. Set GOOGLE_CONVERSION_ACTION_ID="" in Doppler to skip.
         _conversion_action_id = (
             _os.getenv("GOOGLE_CONVERSION_ACTION_ID")
             or config.GOOGLE_CONVERSION_ACTION_ID
             or ""
         ).strip()
-        if _conversion_action_id:
-            ca_resource = (
-                f"customers/{self._customer_id_str}/conversionActions/"
-                f"{_conversion_action_id}"
-            )
-            c.selective_optimization.conversion_actions.append(ca_resource)
-            log.info(
-                "Google campaign optimizing on conversion action %s (%s)",
-                _conversion_action_id, ca_resource,
-            )
+        _ca_resource = (
+            f"customers/{self._customer_id_str}/conversionActions/{_conversion_action_id}"
+            if _conversion_action_id else ""
+        )
         # EU political advertising declaration — required field in Google
         # Ads v21+ (2026-05-08 verified). Outlier's tasking ads are not
         # political; explicitly declare DOES_NOT_CONTAIN.
@@ -263,6 +258,33 @@ class GoogleAdsClient(AdPlatformClient):
             raise
         resource = resp.results[0].resource_name
         log.info("Google campaign created %s (name=%s, special=%s)", resource, name, category)
+
+        # Best-effort: focus optimization on the worker_skill_all conversion
+        # action via a SEPARATE update (rejected when set in the create op).
+        # Non-fatal — the campaign already exists; on failure it optimizes on
+        # the account-default conversion goals instead of blocking creation.
+        if _ca_resource:
+            try:
+                upd_op = client.get_type("CampaignOperation")
+                upd = upd_op.update
+                upd.resource_name = resource
+                upd.selective_optimization.conversion_actions.append(_ca_resource)
+                try:
+                    from google.api_core import protobuf_helpers
+                    upd_op.update_mask.CopyFrom(protobuf_helpers.field_mask(None, upd._pb))
+                except Exception:
+                    upd_op.update_mask.paths.append("selective_optimization")
+                campaign_service.mutate_campaigns(
+                    customer_id=self._customer_id_str, operations=[upd_op],
+                )
+                log.info("Google campaign %s focused on conversion action %s",
+                         resource, _conversion_action_id)
+            except Exception as exc:
+                log.warning(
+                    "Google selective_optimization update failed for %s (%s) — "
+                    "campaign optimizes on account-default goals instead (non-fatal).",
+                    resource, exc,
+                )
         return resource
 
     # ── Ad Group (one per cohort×geo×angle) ──────────────────────────────────

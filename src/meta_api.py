@@ -264,13 +264,21 @@ class MetaClient(AdPlatformClient):
         }
 
         if optimize_for_conversions:
-            # custom_conversion_id is sufficient — Meta resolves the parent
-            # pixel from the conversion. pixel_id is still required when
-            # optimizing on a standard event (PURCHASE / LEAD / etc).
-            params[AdSet.Field.promoted_object] = {
-                "pixel_id": config.META_PIXEL_ID,
-                "custom_conversion_id": config.META_CUSTOM_CONVERSION_ID,
-            }
+            # For a CUSTOM conversion, the promoted_object must carry ONLY the
+            # custom_conversion_id — Meta resolves the parent pixel from it.
+            # Sending both pixel_id AND custom_conversion_id is an invalid
+            # combination (error_subcode 1885014 "Promoted Object Invalid",
+            # which failed every GMR-0023 ad set 2026-06-03). Fall back to
+            # {pixel_id + custom_event_type} only when no custom conversion is
+            # configured (standard-event optimization).
+            if config.META_CUSTOM_CONVERSION_ID:
+                params[AdSet.Field.promoted_object] = {
+                    "custom_conversion_id": config.META_CUSTOM_CONVERSION_ID,
+                }
+            else:
+                params[AdSet.Field.promoted_object] = {
+                    "pixel_id": config.META_PIXEL_ID,
+                }
             params[AdSet.Field.attribution_spec] = [{
                 "event_type":  "CLICK_THROUGH",
                 "window_days": config.META_ATTRIBUTION_WINDOW_DAYS,
