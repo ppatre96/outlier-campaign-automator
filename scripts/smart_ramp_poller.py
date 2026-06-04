@@ -427,6 +427,21 @@ def run_ramp_pipeline(
 
     # Approved or YOLO — try to atomically claim and launch.
     if decision.status in ("approved", "yolo"):
+        # Per-channel launch model (feature #3): approval is the GATE only.
+        # Unless AUTO_LAUNCH_APPROVED is set, the scheduled poller does NOT
+        # auto-launch approved ramps — launching is explicit + per-channel via
+        # the console (which dispatches with only_channel, handled by the
+        # per-channel branch above). This leaves the ramp 'approved' so each
+        # channel can be fired independently.
+        if not getattr(config, "AUTO_LAUNCH_APPROVED", False):
+            log.info(
+                "UI gate: ramp %s is %s — auto-launch disabled "
+                "(AUTO_LAUNCH_APPROVED=false); awaiting explicit per-channel "
+                "launch from the console.", record.id, decision.status,
+            )
+            return {"ok": True, "ui_gated": True, "status": "awaiting_manual_launch",
+                    "campaign_groups": [], "inmail_campaigns": [],
+                    "static_campaigns": [], "creative_paths": {}, "per_cohort": []}
         claimed = claim_ramp(record.id)
         if claimed is None:
             log.info("UI gate: ramp %s claim raced (likely concurrent poller) — skipping",

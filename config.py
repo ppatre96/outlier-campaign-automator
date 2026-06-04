@@ -301,6 +301,15 @@ META_LAL_BUDGET_SPLIT_PCT    = int(os.getenv("META_LAL_BUDGET_SPLIT_PCT", "70"))
 # to fall back to beam discovery for every cohort.
 GENERALIST_LOCALE_TARGETING  = os.getenv("GENERALIST_LOCALE_TARGETING", "true").lower() in ("1", "true", "yes")
 
+# Per-channel launch model (feature #3, 2026-06-04). When False (default),
+# approving a ramp in the console is the GATE only — the scheduled poller does
+# NOT auto-launch approved ramps. Launching is explicit + per-channel (Diego →
+# LinkedIn, Bryan → Google) via the console's "Launch by channel" section,
+# which dispatches the poller with only_channel set. Set True to restore the
+# legacy behavior where an approved ramp auto-launches all channels on the next
+# poll tick.
+AUTO_LAUNCH_APPROVED         = os.getenv("AUTO_LAUNCH_APPROVED", "false").lower() in ("1", "true", "yes")
+
 # ── Google Ads ────────────────────────────────────────────────────────────────
 GOOGLE_ADS_CLIENT_ID         = os.getenv("GOOGLE_ADS_CLIENT_ID", "")
 GOOGLE_ADS_CLIENT_SECRET     = os.getenv("GOOGLE_ADS_CLIENT_SECRET", "")
