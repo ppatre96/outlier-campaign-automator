@@ -377,6 +377,85 @@ def upsert_cohort_icp(
                   ramp_id, cohort_signature, exc)
 
 
+def upsert_campaign(entry: dict) -> None:
+    """Persist one Campaign Registry row to Postgres so the console can render
+    Briefs & Campaigns WITHOUT depending on the Google Sheet.
+
+    The Sheet write silently no-ops in CI whenever credentials.json is absent
+    (SheetsClient falls back to NullSheetsClient), which left GMR-0023's
+    console empty even though the campaigns were created on every platform.
+    Postgres uses DATABASE_URL (no credentials.json), so this path works in CI
+    and locally — same store the ICP/targeting cards already read from.
+
+    `entry` is the registry `entry_dict` (asdict(CampaignEntry)). Idempotent on
+    (ramp_id, platform, campaign_type, cohort_signature, geo_cluster, angle): a
+    re-run updates the slot in place (latest campaign id / creative wins),
+    mirroring how the console dedups the append-only sheet. Best-effort.
+    """
+    ramp_id = (entry or {}).get("smart_ramp_id") or ""
+    if not ramp_id:
+        return
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS campaigns (
+                    id                   BIGSERIAL PRIMARY KEY,
+                    ramp_id              TEXT NOT NULL,
+                    platform             TEXT NOT NULL DEFAULT '',
+                    campaign_type        TEXT NOT NULL DEFAULT '',
+                    cohort_signature     TEXT NOT NULL DEFAULT '',
+                    geo_cluster          TEXT NOT NULL DEFAULT '',
+                    angle                TEXT NOT NULL DEFAULT '',
+                    cohort_id            TEXT,
+                    platform_campaign_id TEXT,
+                    platform_creative_id TEXT,
+                    campaign_name        TEXT,
+                    creative_image_path  TEXT,
+                    data                 JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (ramp_id, platform, campaign_type, cohort_signature, geo_cluster, angle)
+                )
+                """
+            )
+            cur.execute(
+                """
+                INSERT INTO campaigns (
+                    ramp_id, platform, campaign_type, cohort_signature, geo_cluster, angle,
+                    cohort_id, platform_campaign_id, platform_creative_id,
+                    campaign_name, creative_image_path, data
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                ON CONFLICT (ramp_id, platform, campaign_type, cohort_signature, geo_cluster, angle)
+                DO UPDATE SET
+                    cohort_id            = EXCLUDED.cohort_id,
+                    platform_campaign_id = EXCLUDED.platform_campaign_id,
+                    platform_creative_id = EXCLUDED.platform_creative_id,
+                    campaign_name        = EXCLUDED.campaign_name,
+                    creative_image_path  = EXCLUDED.creative_image_path,
+                    data                 = EXCLUDED.data,
+                    updated_at           = NOW()
+                """,
+                (
+                    ramp_id,
+                    entry.get("platform", "") or "",
+                    entry.get("campaign_type", "") or "",
+                    entry.get("cohort_signature", "") or "",
+                    entry.get("geo_cluster", "") or "",
+                    entry.get("angle", "") or "",
+                    entry.get("cohort_id"),
+                    entry.get("platform_campaign_id", "") or "",
+                    entry.get("platform_creative_id", "") or "",
+                    entry.get("campaign_name", "") or "",
+                    entry.get("creative_image_path", "") or "",
+                    json.dumps(entry or {}),
+                ),
+            )
+            conn.commit()
+    except UIDecisionsUnavailable as exc:
+        log.debug("upsert_campaign skipped (%s): %s", ramp_id, exc)
+
+
 def upsert_cohort_brief_rationale(
     *,
     ramp_id: str,

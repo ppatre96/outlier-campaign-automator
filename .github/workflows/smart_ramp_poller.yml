@@ -125,6 +125,16 @@ jobs:
       - name: Install Doppler CLI
         uses: dopplerhq/cli-action@v4
 
+      # Materialize the Google service-account key the same way launch.yml does.
+      # Without this, SheetsClient() init throws → the registry logger silently
+      # falls back to NullSheetsClient (no-op) and Drive creative upload fails,
+      # so campaigns created by the poller never reach the registry Sheet /
+      # Drive (this is exactly why GMR-0023's console came up empty).
+      - name: Write Google credentials
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: doppler run -- bash -c 'echo "$GOOGLE_CREDENTIALS_JSON" > credentials.json'
+
       - name: Run poller
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}

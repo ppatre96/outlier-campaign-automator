@@ -453,6 +453,14 @@ def log_campaign(
         _get_sheets().write_registry_row(entry_dict)
     except Exception as exc:
         log.warning("Registry sheet write failed (non-fatal): %s", exc)
+    # Also persist to Postgres so the console can render Briefs & Campaigns
+    # without the Sheet (which silently no-ops in CI when credentials.json is
+    # absent). DATABASE_URL has no credentials.json dependency. Best-effort.
+    try:
+        from src.ui_decisions import upsert_campaign
+        upsert_campaign(entry_dict)
+    except Exception as exc:
+        log.warning("Registry Postgres write failed (non-fatal): %s", exc)
 
 
 def _id_match(rec: dict, campaign_id: str) -> bool:

@@ -121,7 +121,18 @@ class SheetsClient:
     def __new__(cls):
         """Return NullSheetsClient when credentials are unavailable."""
         if not _credentials_available():
-            log.info("Google credentials not found — using NullSheetsClient (env-var fallback, writes no-op)")
+            # LOUD on purpose: this fallback silently no-ops every registry
+            # Sheet write AND Drive creative upload. In CI (missing
+            # credentials.json) that left GMR-0023's console empty while the
+            # workflow still reported success. Surface it at ERROR so a missing
+            # key is obvious in the run log instead of hiding behind "success".
+            log.error(
+                "Google credentials NOT found at %s — falling back to NullSheetsClient. "
+                "Registry Sheet writes + Drive creative uploads will be SILENTLY SKIPPED "
+                "(the console reads the registry Sheet, so campaigns will not appear there). "
+                "In CI, ensure the 'Write Google credentials' step ran (GOOGLE_CREDENTIALS_JSON).",
+                config.GOOGLE_CREDENTIALS,
+            )
             return NullSheetsClient()
         return super().__new__(cls)
 
