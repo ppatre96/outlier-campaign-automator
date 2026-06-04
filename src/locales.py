@@ -92,6 +92,72 @@ LOCALES: dict[str, LocaleTargeting] = {
 }
 
 
+# LinkedIn language SKILL URNs (Diego 2026-06-04: "on skills you can look for
+# languages"). LinkedIn has no interface-locale facet for most of these, but it
+# DOES expose each language as a skill — so a generalist locale cohort targets
+# people with the language skill WITHIN the geo, not just everyone in the geo.
+# Resolved via typeahead_facet('skills', display_language); id-id/zh-cn use the
+# closest language-skill match (Bahasa Indonesia / Chinese).
+LINKEDIN_LANGUAGE_SKILL: dict[str, str] = {
+    "bn-in": "urn:li:skill:12523",   # Bengali
+    "de-de": "urn:li:skill:927",     # German
+    "fr-fr": "urn:li:skill:605",     # French
+    "hi-in": "urn:li:skill:2851",    # Hindi
+    "id-id": "urn:li:skill:16250",   # Bahasa Indonesia
+    "it-it": "urn:li:skill:1510",    # Italian
+    "ko-kr": "urn:li:skill:5747",    # Korean
+    "pt-br": "urn:li:skill:13954",   # Brazilian Portuguese
+    "th-th": "urn:li:skill:31219",   # Thai
+    "tl-ph": "urn:li:skill:12884",   # Tagalog
+    "vi-vn": "urn:li:skill:8669",    # Vietnamese
+    "zh-cn": "urn:li:skill:2473",    # Chinese
+    "ar-eg": "urn:li:skill:25093",   # Egyptian Arabic
+}
+
+
+def linkedin_skill_urn(locale: str | None) -> str | None:
+    """LinkedIn language-skill URN for a BCP-47 locale ("bn-in" → Bengali skill).
+    Case/format-insensitive. None when unknown → caller falls back to geo-only."""
+    if not locale:
+        return None
+    return LINKEDIN_LANGUAGE_SKILL.get(locale.strip().lower().replace("_", "-"))
+
+
+# ISO-2 → LinkedIn-friendly country name. Smart Ramp included_geos are ISO-2
+# codes, but LinkedIn's profileLocations facet matches by NAME — a raw "BD"
+# fuzzy-matches nothing (geo silently dropped) and "IN" mis-matches. Explicit
+# for the names where the ISO official name wouldn't fuzzy-match LinkedIn's
+# label (South Korea / Vietnam / United Kingdom / …); pycountry fills the rest.
+_ISO2_COUNTRY_NAME: dict[str, str] = {
+    "BD": "Bangladesh", "IN": "India", "DE": "Germany", "FR": "France",
+    "ID": "Indonesia", "IT": "Italy", "KR": "South Korea", "BR": "Brazil",
+    "TH": "Thailand", "PH": "Philippines", "VN": "Vietnam", "CN": "China",
+    "EG": "Egypt", "US": "United States", "CA": "Canada", "GB": "United Kingdom",
+    "AU": "Australia", "NZ": "New Zealand", "MY": "Malaysia", "SG": "Singapore",
+}
+
+
+def country_name_for(code: str | None) -> str | None:
+    """ISO-2 country code → full country name for LinkedIn geo resolution
+    ("BD" → "Bangladesh"). Returns the input unchanged for non-2-letter values
+    (already a name) or unknown codes."""
+    if not code or not isinstance(code, str):
+        return code
+    c = code.strip().upper()
+    if len(c) != 2 or not c.isalpha():
+        return code
+    if c in _ISO2_COUNTRY_NAME:
+        return _ISO2_COUNTRY_NAME[c]
+    try:
+        import pycountry
+        x = pycountry.countries.get(alpha_2=c)
+        if x is not None:
+            return getattr(x, "common_name", None) or x.name
+    except Exception:
+        pass
+    return code
+
+
 def region_for_locale(locale: str | None) -> str | None:
     """Return the ISO-2 country/region from a BCP-47 locale ("ko-kr" → "KR").
 

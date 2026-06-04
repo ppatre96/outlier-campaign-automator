@@ -1378,6 +1378,7 @@ def _process_inmail_campaigns(
                 facet_urns = urn_res.resolve_cohort_rules(cohort.rules)
                 if group_geos:
                     facet_urns = _apply_geo_overrides(facet_urns, group_geos, urn_res)
+                facet_urns = _apply_generalist_language_skill(facet_urns, cohort)
 
                 # Per-geo audience recheck (2026-05-20). See matching block in
                 # _process_static_campaigns. InMail audience reach is gated by
@@ -1922,6 +1923,29 @@ def _apply_geo_overrides(
         return out
 
     return facet_urns
+
+
+def _apply_generalist_language_skill(facet_urns: dict[str, list[str]], cohort) -> dict[str, list[str]]:
+    """For a generalist locale cohort, add the LinkedIn language SKILL facet
+    (Diego 2026-06-04: "on skills you can look for languages"). LinkedIn has no
+    interface-locale facet for most of these languages, so we target the
+    language as a skill — people with e.g. the Bengali skill, within the geo —
+    instead of everyone in the geo. No-op for specialist cohorts or locales
+    without a known skill URN (falls back to geo-only)."""
+    locale = (getattr(cohort, "facet_strength", None) or {}).get("generalist_locale")
+    if not locale:
+        return facet_urns
+    from src.locales import linkedin_skill_urn
+    urn = linkedin_skill_urn(locale)
+    if not urn:
+        return facet_urns
+    out = dict(facet_urns)
+    skills = list(out.get("skills") or [])
+    if urn not in skills:
+        skills.append(urn)
+    out["skills"] = skills
+    log.info("Applied generalist language skill: locale=%s → %s", locale, urn)
+    return out
 
 
 # ── Phase 2.6: Smart Ramp dual-arm pipeline ──────────────────────────────────
@@ -3366,6 +3390,7 @@ def _process_static_campaigns(
             facet_urns = urn_res.resolve_cohort_rules(cohort.rules)
             if group_geos:
                 facet_urns = _apply_geo_overrides(facet_urns, group_geos, urn_res)
+            facet_urns = _apply_generalist_language_skill(facet_urns, cohort)
 
             # Per-geo audience recheck (2026-05-20). Stage C's audience check
             # used the cohort's facet URNs without geo intersection. A cohort

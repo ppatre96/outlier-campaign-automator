@@ -126,6 +126,14 @@ class UrnResolver(TargetingResolver):
             log.debug("No tab mapping for facet '%s'", facet_key)
             return None
 
+        # Smart Ramp included_geos are ISO-2 codes ("BD","IN"), but LinkedIn's
+        # profileLocations facet matches location NAMES — "BD" fuzzy-matches
+        # nothing (geo silently dropped) and "IN" mis-matches. Expand ISO-2 →
+        # country name first so geo targeting resolves correctly.
+        if facet_key == "profileLocations":
+            from src.locales import country_name_for
+            value = country_name_for(value) or value
+
         # Fast path: cached fuzzy match.
         entries = self._load_tab(tab_name)
         if entries:

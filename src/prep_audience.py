@@ -84,6 +84,13 @@ def measure_audience_for_cohort(
         # client + URN resolver are available and there's no Stage C number,
         # query audienceCounts on the geo facet — LinkedIn targets these
         # cohorts by geo (the languages aren't LinkedIn interface locales).
+        # Language skill (Diego 2026-06-04): generalist cohorts target the
+        # language as a LinkedIn skill within the geo, so the estimate must use
+        # skill + geo to match the real campaign targeting (geo-only over-counts).
+        _skill_urn = None
+        if _gen_locale:
+            from src.locales import linkedin_skill_urn
+            _skill_urn = linkedin_skill_urn(_gen_locale)
         if li_audience_size is None and li_client is not None and urn_resolver is not None and est_geos:
             try:
                 geo_urns: list[str] = []
@@ -92,12 +99,15 @@ def measure_audience_for_cohort(
                     if _u:
                         geo_urns.append(_u)
                 if geo_urns:
-                    live = li_client.get_audience_count({"profileLocations": geo_urns})
+                    _facets = {"profileLocations": geo_urns}
+                    if _skill_urn:
+                        _facets["skills"] = [_skill_urn]
+                    live = li_client.get_audience_count(_facets)
                     if live and live > 0:
                         size = live
                         log.info(
-                            "LinkedIn live geo audience: cohort=%s geos=%s → %d",
-                            getattr(cohort, "name", "?"), est_geos, live,
+                            "LinkedIn live audience: cohort=%s geos=%s skill=%s → %d",
+                            getattr(cohort, "name", "?"), est_geos, _skill_urn or "(geo-only)", live,
                         )
             except Exception as exc:
                 log.warning(
@@ -117,7 +127,8 @@ def measure_audience_for_cohort(
                 "locale": _gen_locale,
                 "language": (_lt.display_language if _lt else _gen_locale),
                 "geos": est_geos,
-                "geo_only": True,
+                "language_skill_urn": _skill_urn,
+                "geo_only": _skill_urn is None,
             }
         else:
             li_facets = {"rules": [str(feat) for feat, _val in (getattr(cohort, "rules", None) or [])]}
