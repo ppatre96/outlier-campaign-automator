@@ -2064,6 +2064,40 @@ def _resolve_locale_cohort(
         except Exception as exc:
             log.warning("_resolve_cohorts: locale audience block failed (non-fatal): %s", exc)
 
+        # Persist a lightweight localized ICP so the locale cohort shows in the
+        # console's combined ICP card (the beam path's LLM ICP needs a résumé
+        # sample, which generalist cohorts don't have — use a template instead).
+        try:
+            from src.ui_decisions import upsert_cohort_icp
+            from src.locales import get_locale
+            _lt = get_locale(locale)
+            _lang = _lt.display_language if _lt else locale
+            upsert_cohort_icp(
+                ramp_id=ramp_id, cohort_id=cohort._stg_id, cohort_signature=cohort.name,
+                icp_dict={
+                    "cohort_description": cohort.name,
+                    "top_motivations": [
+                        "Flexible, fully remote schedule",
+                        f"Earn working in {_lang}",
+                        "Generalist tasks — no specialized degree required",
+                    ],
+                    "decision_drivers": [
+                        "Current tasking rate",
+                        f"Work in {_lang}",
+                        "Flexible hours",
+                        "Reputable platform (Outlier / Scale)",
+                    ],
+                    "content_prefs": [f"Localized copy in {_lang}", "Authentic local imagery"],
+                    "creative_liberty": "medium",
+                    "language_pref": _lang,
+                    "skill_priorities": [],
+                    "sample_size_n": None,
+                    "model_version": "generalist-locale-template-v1",
+                },
+            )
+        except Exception as exc:
+            log.warning("_resolve_cohorts: locale ICP persist failed (non-fatal): %s", exc)
+
     group_name = f"Outlier {flow_id} {location}".strip()
     return ResolvedCohorts(
         selected=[cohort],

@@ -67,11 +67,24 @@ def measure_audience_for_cohort(
         status = "measured" if size is not None else "skipped"
         if size is not None and size < config.AUDIENCE_SIZE_MIN:
             status = "below_floor"
-        li_rules = [str(feat) for feat, _val in (getattr(cohort, "rules", None) or [])]
+        _gen_locale = (getattr(cohort, "facet_strength", None) or {}).get("generalist_locale")
+        if _gen_locale:
+            # Generalist locale cohort → LinkedIn targets by geo only (v1).
+            # Surface human-readable facets instead of the raw synthetic rule.
+            from src.locales import get_locale
+            _lt = get_locale(_gen_locale)
+            li_facets = {
+                "locale": _gen_locale,
+                "language": (_lt.display_language if _lt else _gen_locale),
+                "geos": geos,
+                "geo_only": True,
+            }
+        else:
+            li_facets = {"rules": [str(feat) for feat, _val in (getattr(cohort, "rules", None) or [])]}
         results.append(ChannelAudience(
             platform="linkedin", audience_size=size,
             status=status, geos_used=geos,
-            facets={"rules": li_rules},
+            facets=li_facets,
         ))
 
     # ── Meta ──
