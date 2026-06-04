@@ -689,10 +689,12 @@ class GoogleAdsClient(AdPlatformClient):
         # is attached and the create call WILL fail on aspect mismatch — kept
         # as a defensive default so callers that hand-roll uploads don't break.
         local_png_path: Optional[str] = None,
+        ad_name: Optional[str] = None,
     ) -> CreateAdResult:
         """Create a Responsive Display Ad. `campaign_id` is actually the
         Google ad_group resource name (we kept the kwarg name for ABC
-        consistency).
+        consistency). `ad_name` (when provided) names the ad with the canonical
+        campaign name + angle segment (… | ALL | A).
 
         Required RDA inputs:
           - headlines:               3-5 short headlines (each ≤30 chars)
@@ -713,7 +715,7 @@ class GoogleAdsClient(AdPlatformClient):
             aga.status = client.enums.AdGroupAdStatusEnum.PAUSED
 
             ad = aga.ad
-            ad.name = self._prefixed(f"rda_{Path(image_id).name}")
+            ad.name = self._prefixed(ad_name or f"rda_{Path(image_id).name}")
 
             # Per Google Ads API spec, `final_urls` stores only the destination
             # URL (no tracking params), and tracking params go in
@@ -821,6 +823,7 @@ class GoogleAdsClient(AdPlatformClient):
         descriptions: list[str],
         destination_url: Optional[str] = None,
         final_url_path: Optional[str] = None,
+        ad_name: Optional[str] = None,
     ) -> CreateAdResult:
         """Create a Responsive Search Ad in the given ad-group.
 
@@ -853,6 +856,8 @@ class GoogleAdsClient(AdPlatformClient):
             if _parts.query:
                 ad.final_url_suffix = _parts.query
 
+            if ad_name:
+                ad.name = self._prefixed(ad_name)
             rsa = ad.responsive_search_ad
             # Headlines — Google needs 3-15. Truncate each to 30 chars.
             valid_headlines = [h.strip() for h in (headlines or []) if h and h.strip()]

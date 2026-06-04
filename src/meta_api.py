@@ -463,8 +463,13 @@ class MetaClient(AdPlatformClient):
         intro_text: Optional[str] = None,    # unused — kept for ABC compat
         cta: Optional[str] = None,
         destination_url: Optional[str] = None,
+        ad_name: Optional[str] = None,
     ) -> CreateAdResult:
         """Create AdCreative + Ad referencing the given ad set + image.
+
+        `ad_name` (when provided) names the ad — the canonical campaign name plus
+        the angle segment, e.g. "Scale-GMR-0023 | Meta | … | ALL | A" — so the
+        A/B/C variant is visible per ad. Falls back to "ad_<id>".
 
         - `campaign_id` is actually the Meta ad_set_id (we kept the kwarg name
           `campaign_id` for ABC consistency).
@@ -521,7 +526,7 @@ class MetaClient(AdPlatformClient):
             creative_id = str(creative["id"])
 
             ad = account.create_ad(params={
-                Ad.Field.name:        self._prefixed(f"ad_{campaign_id}"),
+                Ad.Field.name:        self._prefixed(ad_name or f"ad_{campaign_id}"),
                 Ad.Field.adset_id:    campaign_id,
                 Ad.Field.creative:    {"creative_id": creative_id},
                 Ad.Field.status:      Ad.Status.paused,

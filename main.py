@@ -4368,6 +4368,7 @@ def _process_extra_platform_arm(
                         headlines=_rsa_headlines,
                         descriptions=_rsa_descs,
                         destination_url=utm_url,
+                        ad_name=f"{campaign_name} | {angle_label}",
                     )
                 elif platform == "google":
                     ad_result = client.create_image_ad(
@@ -4383,6 +4384,7 @@ def _process_extra_platform_arm(
                         # create_image_ad can generate the 1.91:1
                         # landscape variant Google RDA requires.
                         local_png_path=str(png_path) if png_path else None,
+                        ad_name=f"{campaign_name} | {angle_label}",
                     )
                 else:  # meta
                     ad_result = client.create_image_ad(
@@ -4393,6 +4395,7 @@ def _process_extra_platform_arm(
                         primary_text=platform_copy.get("primary_text"),
                         cta=platform_copy.get("cta"),
                         destination_url=utm_url,
+                        ad_name=f"{campaign_name} | {angle_label}",
                     )
 
             # Registry: one row per (cohort × geo × angle), shared
