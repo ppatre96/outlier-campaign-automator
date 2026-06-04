@@ -456,6 +456,45 @@ def upsert_campaign(entry: dict) -> None:
         log.debug("upsert_campaign skipped (%s): %s", ramp_id, exc)
 
 
+def list_campaign_platform_ids(ramp_id: str, platform: str) -> list[str]:
+    """Distinct platform_campaign_id for a (ramp × platform), newest first.
+    Used by the relaunch-replace path to know which campaigns to archive."""
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT platform_campaign_id FROM campaigns "
+                "WHERE ramp_id = %s AND platform = %s "
+                "AND coalesce(platform_campaign_id, '') <> ''",
+                (ramp_id, platform),
+            )
+            return [r[0] for r in cur.fetchall()]
+    except Exception as exc:  # missing table / no DATABASE_URL → nothing to archive
+        log.debug("list_campaign_platform_ids unavailable (%s/%s): %s", ramp_id, platform, exc)
+        return []
+
+
+def delete_campaign_rows(ramp_id: str, platform: str, platform_campaign_ids: list[str]) -> int:
+    """Drop campaigns-table rows for the given (ramp × platform × ids) after they
+    were archived on-platform, so the console's per-channel "created" count
+    reflects only live campaigns. Best-effort."""
+    ids = [i for i in (platform_campaign_ids or []) if i]
+    if not ids:
+        return 0
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM campaigns WHERE ramp_id = %s AND platform = %s "
+                "AND platform_campaign_id = ANY(%s)",
+                (ramp_id, platform, ids),
+            )
+            n = cur.rowcount
+            conn.commit()
+            return n or 0
+    except Exception as exc:
+        log.warning("delete_campaign_rows failed (%s/%s): %s", ramp_id, platform, exc)
+        return 0
+
+
 def upsert_cohort_brief_rationale(
     *,
     ramp_id: str,

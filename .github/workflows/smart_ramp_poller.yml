@@ -52,6 +52,14 @@ on:
           - "linkedin"
           - "meta"
           - "google"
+      replace:
+        description: "Relaunch (replace): archive only_channel's existing campaigns for this ramp BEFORE creating fresh ones (no duplicates). Requires only_channel + ramp_id."
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 jobs:
   poll:
@@ -142,6 +150,9 @@ jobs:
           # restricts the run to one channel + triggers the channel_locks
           # release path. Blank for normal (all-channel) runs.
           ONLY_CHANNEL: ${{ github.event.inputs.only_channel }}
+          # Relaunch (replace): archive only_channel's existing campaigns before
+          # creating fresh ones. Read at config import time (config.REPLACE_EXISTING).
+          REPLACE_EXISTING: ${{ github.event.inputs.replace }}
         run: |
           ARGS="--once"
 

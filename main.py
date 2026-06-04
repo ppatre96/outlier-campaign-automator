@@ -5292,6 +5292,23 @@ def _launch_ramp(ramp_id: str, decision=None) -> dict:
     if only_channel:
         channels = [only_channel]
         log.info("_launch_ramp: ONLY_CHANNEL=%s — restricting run to channels=%s", only_channel, channels)
+
+    # Relaunch (replace): archive this channel's existing campaigns before
+    # creating fresh ones, so a re-launch doesn't pile up duplicates. Requires
+    # ONLY_CHANNEL (we archive one channel at a time). Best-effort — never
+    # blocks the fresh launch.
+    if only_channel and getattr(config, "REPLACE_EXISTING", False):
+        try:
+            from src.relaunch import archive_channel_campaigns
+            summary = archive_channel_campaigns(ramp_id, only_channel)
+            log.info("_launch_ramp: relaunch-replace archived %s", summary)
+            try:
+                from src.ui_decisions import log_event
+                log_event(ramp_id, "relaunch_replace_archived", summary, None)
+            except Exception:
+                pass
+        except Exception as exc:
+            log.warning("_launch_ramp: relaunch-replace archive failed (%s) — continuing to fresh launch", exc)
     try:
         return run_launch_for_ramp(
             ramp_id, dry_run=False, prep_only=False,

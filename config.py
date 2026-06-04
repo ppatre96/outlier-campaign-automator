@@ -179,6 +179,9 @@ ENABLED_PLATFORMS    = os.getenv("ENABLED_PLATFORMS", "linkedin,meta,google")
 # is guarded by the console's `channel_locks` table (per ramp × channel), and
 # the ramp is NOT flipped to completed so other channels can still launch.
 ONLY_CHANNEL         = os.getenv("ONLY_CHANNEL", "").strip().lower()
+# Relaunch (replace): archive ONLY_CHANNEL's existing campaigns for the ramp
+# before creating fresh ones (console "Relaunch (replace)" → poller `replace`).
+REPLACE_EXISTING     = os.getenv("REPLACE_EXISTING", "").strip().lower() in ("1", "true", "yes")
 
 # Meta and Google both gate certain campaigns under a "special ad category" for
 # regulated verticals. Outlier tasks are 1099 contractor work which Meta/Google
