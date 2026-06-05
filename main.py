@@ -2184,6 +2184,125 @@ def _resolve_locale_cohort(
     )
 
 
+def _resolve_cold_start_cohort(
+    row: dict,
+    *,
+    snowflake,
+    li_client,
+    urn_res,
+    project_id: str | None,
+    flow_id: str,
+    location: str,
+) -> ResolvedCohorts:
+    """Frame-independent cold start — used when the Snowflake screening frame is
+    EMPTY (brand-new / ultra-niche project with no contributor history, e.g.
+    GMR-0024's BLV-accessibility ramp).
+
+    The in-frame ICP-fallback (`_try_icp_fallback`) can't help here: it anchors
+    the synthetic cohort on skills that matched *columns in the data frame*, and
+    there is no frame. So we derive an ICP straight from the job post / Smart
+    Ramp brief and synthesize ONE targetable cohort from its required skills —
+    giving the ramp an ICP + cohort + (downstream) test angles in the console
+    instead of nothing. Targeting (LinkedIn skill+geo / Meta / Google keyword
+    forecast) is all rule-based, so it works with no warehouse rows behind it.
+
+    Returns a ResolvedCohorts with one synthetic cohort, or an empty result when
+    there's no job post / brief / skill to anchor on (truly nothing to target).
+    """
+    from src.analysis import Cohort
+    from src.icp_from_jobpost import resolve_job_post, derive_icp_from_job_post
+
+    ramp_summary = (row.get("ramp_summary") or "").strip()
+    cohort_description = (row.get("cohort_description") or "").strip()
+    brief = "\n".join(filter(None, [ramp_summary, cohort_description])).strip()
+    try:
+        raw_post = resolve_job_post(
+            snowflake, project_id=project_id or "", signup_flow_id=flow_id,
+            override_text=(row.get("job_post_override") if isinstance(row, dict) else None),
+        )
+    except Exception as exc:
+        log.warning("cold_start: resolve_job_post failed (%s)", exc)
+        raw_post = ""
+    # Same description shape the stats path feeds the LLM: Smart Ramp brief first,
+    # then the Snowflake job-post HTML.
+    description = "\n\n".join(filter(None, [brief, raw_post or ""]))
+    icp_spec = derive_icp_from_job_post(description) if description else {}
+    skills = [s for s in (icp_spec.get("required_skills") or []) if (s or "").strip()][:5]
+    label = (
+        icp_spec.get("derived_tg_label")
+        or icp_spec.get("derived_label")
+        or (brief.splitlines()[0][:60] if brief else "")
+    ).strip()
+    if not skills and not label:
+        log.warning(
+            "cold_start: no job post / brief / skills for project=%s flow=%s — empty result",
+            project_id, flow_id,
+        )
+        return ResolvedCohorts(flow_id=flow_id, location=location, project_id=project_id)
+
+    rules = [
+        (f"skills__{s.strip().lower().replace(' ', '_').replace('-', '_')}", 1)
+        for s in skills
+    ]
+    cohort = Cohort(
+        name=label or "ICP cold-start cohort", rules=rules,
+        n=0, passes=0, pass_rate=0.0, lift_pp=0.0, p_value=1.0,
+        score=1.0, support=0, coverage=0.0,
+    )
+    cohort._stg_id = make_stg_id()
+    cohort._stg_name = _cohort_display_name(cohort, flow_id, location)
+    log.warning(
+        "cold_start: synthesized 1 job-post cohort %r from %d skill(s) %s — no "
+        "contributor frame, targeting is job-post-derived (looser than Stage A)",
+        cohort.name, len(rules), [r[0] for r in rules],
+    )
+
+    ramp_id = (row or {}).get("ramp_id") or ""
+    if ramp_id:
+        # ICP card.
+        try:
+            from src.icp_enrichment import enrich as enrich_icp
+            from src.ui_decisions import upsert_cohort_icp
+            locale_hint = (f"en-{location.upper()[:2]}" if location and len(location) >= 2 else None)
+            icp = enrich_icp(cohort, resume_sample=[], locale_hint=locale_hint)
+            cohort._icp = icp
+            upsert_cohort_icp(
+                ramp_id=ramp_id, cohort_id=cohort._stg_id,
+                cohort_signature=cohort.name, icp_dict=icp.to_dict(),
+            )
+        except Exception as exc:
+            log.warning("cold_start: ICP enrich/persist failed (non-fatal): %s", exc)
+        # Reach-per-channel card (frame-independent estimates).
+        try:
+            from src.prep_audience import measure_audience_for_cohort
+            from src.ui_decisions import upsert_cohort_audience, upsert_cohort_targeting
+            enabled = [p.strip().lower() for p in (config.ENABLED_PLATFORMS or "").split(",") if p.strip()] \
+                or ["linkedin", "meta", "google"]
+            included_geos = list((row or {}).get("included_geos") or [])
+            for ca in measure_audience_for_cohort(
+                cohort, included_geos=included_geos, enabled_platforms=enabled,
+                li_client=li_client, urn_resolver=urn_res,
+            ):
+                upsert_cohort_audience(
+                    ramp_id=ramp_id, cohort_id=cohort._stg_id, cohort_signature=cohort.name,
+                    platform=ca.platform, audience_size=ca.audience_size, status=ca.status,
+                    geos_used=ca.geos_used, rules_dropped=ca.rules_dropped, forecast=ca.forecast,
+                )
+                upsert_cohort_targeting(
+                    ramp_id=ramp_id, cohort_id=cohort._stg_id, cohort_signature=cohort.name,
+                    platform=ca.platform, facets=ca.facets,
+                )
+        except Exception as exc:
+            log.warning("cold_start: audience persist failed (non-fatal): %s", exc)
+
+    return ResolvedCohorts(
+        selected=[cohort],
+        group_name=f"Outlier {flow_id} {location}".strip(),
+        project_id=project_id, flow_id=flow_id, location=location,
+        smart_ramp_brief=brief,
+    )
+
+
 def _resolve_cohorts(
     row: dict,
     *,
@@ -2258,11 +2377,21 @@ def _resolve_cohorts(
             end_date=date.today().isoformat(),
         )
     if df_raw.empty:
+        # Empty screening frame (brand-new / ultra-niche project, no contributor
+        # history). The in-frame ICP-fallback below can't run — it anchors on
+        # skills matched against frame columns, and there's no frame. Route to a
+        # frame-independent cold start that derives an ICP + 1 cohort from the
+        # job post / brief, so the console still shows ICP + cohort + angles
+        # instead of empty cards. Returns empty only when there's no job post.
         log.warning(
-            "_resolve_cohorts: no Stage 1 data for project=%s flow=%s — empty result",
+            "_resolve_cohorts: no Stage 1 data for project=%s flow=%s — "
+            "routing to job-post cold start",
             project_id, flow_id,
         )
-        return ResolvedCohorts(flow_id=flow_id, location=location, project_id=project_id)
+        return _resolve_cold_start_cohort(
+            row, snowflake=snowflake, li_client=li_client, urn_res=urn_res,
+            project_id=project_id, flow_id=flow_id, location=location,
+        )
 
     log.info("_resolve_cohorts: raw data %d rows", len(df_raw))
 
