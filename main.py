@@ -4982,8 +4982,8 @@ def _process_row_both_modes(
     if prep_only:
         briefs_generated = 0
         try:
-            from src.brief_generator import build_briefs
-            from src.ui_decisions import upsert_brief
+            from src.brief_generator import build_briefs, _DEFAULT_ANGLE_LABELS
+            from src.ui_decisions import upsert_brief, upsert_cohort_brief_rationale
             from src.geo_tiers import group_geos_for_campaigns, GeoCampaignGroup
             import config as _cfg
 
@@ -5038,15 +5038,44 @@ def _process_row_both_modes(
                             )
                             continue
                         for brief in briefs:
+                            _bid = cohort_id_override or getattr(cohort, "_stg_id", "") or cohort.name
+                            _angle = brief.get("angle", "A")
                             upsert_brief(
                                 ramp_id=ramp_id,
-                                cohort_id=cohort_id_override or getattr(cohort, "_stg_id", "") or cohort.name,
+                                cohort_id=_bid,
                                 cohort_signature=cohort.name,
                                 geo_cluster=geo_group.cluster or "global_mix",
                                 channel=channel,
-                                angle=brief.get("angle", "A"),
+                                angle=_angle,
                                 brief=brief,
                             )
+                            # Also persist the per-angle rationale so the
+                            # console's "Angles we'd test" card (AnglesCard reads
+                            # cohort_brief_rationale) fills at PREP time. Without
+                            # this it only populated at launch via
+                            # _persist_cohort_rationales, so pre-launch ramps
+                            # showed an empty card. Maps the Phase-1 brief's
+                            # directional fields; launch later overwrites the
+                            # same (ramp,cohort,channel,angle,geo) row with final
+                            # Phase-2 copy.
+                            try:
+                                upsert_cohort_brief_rationale(
+                                    ramp_id=ramp_id,
+                                    cohort_id=_bid,
+                                    cohort_signature=cohort.name,
+                                    channel=channel,
+                                    angle=_angle,
+                                    geo_cluster=geo_group.cluster or "global_mix",
+                                    angle_label=brief.get("angle_label")
+                                        or _DEFAULT_ANGLE_LABELS.get(_angle, ""),
+                                    headline=brief.get("headline_direction", "") or "",
+                                    subheadline=brief.get("subheadline_direction", "") or "",
+                                    photo_subject=brief.get("photo_direction", "") or "",
+                                    rationale=brief.get("angle_hook", "") or "",
+                                    competitor_signal=brief.get("competitor_signal", "") or "",
+                                )
+                            except Exception as _exc:
+                                log.debug("prep rationale persist skipped (%s)", _exc)
                             briefs_generated += 1
             log.info(
                 "_process_row_both_modes[prep_only]: %d brief(s) persisted to cohort_briefs",
