@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 class ChannelAudience:
     platform: str
     audience_size: Optional[int]
-    status: str               # measured | denarrowed | below_floor | skipped
+    status: str               # measured | denarrowed | below_floor | skipped | forecast
     geos_used: list[str]
     rules_dropped: int = 0
     # Resolved targeting facets for this channel, persisted to cohort_targeting
@@ -38,6 +38,10 @@ class ChannelAudience:
     # channel. Meta/Google hold the resolver's targeting dict; LinkedIn holds
     # the cohort rule features.
     facets: dict = field(default_factory=dict)
+    # Google Search keyword forecast (estimated clicks/conversions/cost). Empty
+    # for every other channel. status='forecast' when populated; the console
+    # renders this instead of an audience-size badge for the Search row.
+    forecast: dict = field(default_factory=dict)
 
 
 def measure_audience_for_cohort(
@@ -146,6 +150,14 @@ def measure_audience_for_cohort(
     if "google" in enabled:
         results.append(_measure_google(cohort, geos))
 
+    # ── Google Search (keyword forecast) ──
+    # Search isn't auto-created (Bryan builds it), but the forecast — estimated
+    # clicks + conversions for the cohort's keyword pool — is a useful review
+    # signal, and the right "number" for a keyword-targeted channel (audience
+    # size never fit Search). Produced whenever Google is in play.
+    if "google" in enabled or "google_search" in enabled:
+        results.append(_measure_google_search(cohort, geos))
+
     return results
 
 
@@ -208,4 +220,48 @@ def _measure_google(cohort, geos: list[str]) -> ChannelAudience:
         return ChannelAudience(
             platform="google", audience_size=None,
             status="skipped", geos_used=geos,
+        )
+
+
+def _measure_google_search(cohort, geos: list[str]) -> ChannelAudience:
+    """Best-effort Google Search keyword forecast (estimated clicks +
+    conversions for the cohort's keyword pool). status='forecast' on success;
+    'skipped' on any failure so the row still persists for the UI."""
+    # Generalist locale cohorts may have empty included_geos → fall back to the
+    # locale region so the forecast has a geo to scope to (mirrors LinkedIn).
+    est_geos = list(geos)
+    _gen_locale = (getattr(cohort, "facet_strength", None) or {}).get("generalist_locale")
+    if not est_geos and _gen_locale:
+        from src.locales import region_for_locale
+        _r = region_for_locale(_gen_locale)
+        if _r:
+            est_geos = [_r]
+    try:
+        from src.google_ads_api import GoogleAdsClient
+        from src.google_targeting import GoogleSegmentResolver
+
+        resolver = GoogleSegmentResolver()
+        targeting = resolver.resolve_cohort(cohort, geos=est_geos)
+        client = GoogleAdsClient(channel="search")
+        forecast = client.get_keyword_forecast(targeting)
+        if not forecast:
+            return ChannelAudience(
+                platform="google_search", audience_size=None,
+                status="skipped", geos_used=est_geos,
+                facets={"keywords": (targeting.get("keyword_ideas") or [])[:30]},
+            )
+        return ChannelAudience(
+            platform="google_search", audience_size=None,
+            status="forecast", geos_used=est_geos,
+            facets={"keywords": (targeting.get("keyword_ideas") or [])[:30]},
+            forecast=forecast,
+        )
+    except Exception as exc:
+        log.info(
+            "prep_audience[google_search]: skipped for cohort=%s — %s: %s",
+            getattr(cohort, "name", "?"), type(exc).__name__, exc,
+        )
+        return ChannelAudience(
+            platform="google_search", audience_size=None,
+            status="skipped", geos_used=est_geos,
         )

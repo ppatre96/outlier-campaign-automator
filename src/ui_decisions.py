@@ -206,26 +206,35 @@ def upsert_cohort_audience(
     status: str,
     geos_used: Optional[list[str]] = None,
     rules_dropped: int = 0,
+    forecast: Optional[dict] = None,
 ) -> None:
     """Persist a per-channel audience estimate for a (ramp × cohort × platform).
+
+    `forecast` carries the Google Search keyword forecast (estimated clicks /
+    conversions / cost) for the google_search platform; null for every other
+    channel. Stored in a JSONB column the console renders instead of an
+    audience-size badge for Search rows.
 
     Idempotent on (ramp_id, cohort_signature, platform). Best-effort: swallows
     UIDecisionsUnavailable so a Postgres outage never blocks cohort selection.
     """
     try:
         with _connect() as conn, conn.cursor() as cur:
+            # Idempotent add for the forecast column (table predates it).
+            cur.execute("ALTER TABLE cohort_audience ADD COLUMN IF NOT EXISTS forecast JSONB")
             cur.execute(
                 """
                 INSERT INTO cohort_audience (
                     ramp_id, cohort_id, cohort_signature, platform,
-                    audience_size, status, geos_used, rules_dropped
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                    audience_size, status, geos_used, rules_dropped, forecast
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb)
                 ON CONFLICT (ramp_id, cohort_signature, platform) DO UPDATE SET
                     cohort_id     = EXCLUDED.cohort_id,
                     audience_size = EXCLUDED.audience_size,
                     status        = EXCLUDED.status,
                     geos_used     = EXCLUDED.geos_used,
                     rules_dropped = EXCLUDED.rules_dropped,
+                    forecast      = EXCLUDED.forecast,
                     measured_at   = NOW()
                 """,
                 (
@@ -233,6 +242,7 @@ def upsert_cohort_audience(
                     audience_size, status,
                     json.dumps(geos_used or []),
                     rules_dropped,
+                    json.dumps(forecast) if forecast else None,
                 ),
             )
             conn.commit()

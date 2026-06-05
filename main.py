@@ -2124,6 +2124,7 @@ def _resolve_locale_cohort(
                     cohort_signature=cohort.name, platform=ca.platform,
                     audience_size=ca.audience_size, status=ca.status,
                     geos_used=ca.geos_used, rules_dropped=ca.rules_dropped,
+                    forecast=ca.forecast,
                 )
                 upsert_cohort_targeting(
                     ramp_id=ramp_id, cohort_id=cohort._stg_id,
@@ -2786,6 +2787,7 @@ def _resolve_cohorts(
                         status=ca.status,
                         geos_used=ca.geos_used,
                         rules_dropped=ca.rules_dropped,
+                        forecast=ca.forecast,
                     )
                     upsert_cohort_targeting(
                         ramp_id=ramp_id_for_icp,

@@ -616,6 +616,118 @@ class GoogleAdsClient(AdPlatformClient):
             log.warning("Google get_reach_estimate failed: %s — skipping gate", exc)
             return None
 
+    # ── Search keyword forecast (estimated clicks + conversions) ─────────────
+
+    def get_keyword_forecast(
+        self,
+        targeting: dict[str, Any],
+        *,
+        daily_budget_micros: int = 100_000_000,   # $100/day — Diego's default
+        days: int = 30,
+    ) -> Optional[dict]:
+        """Forecast Search performance for the cohort's keyword pool via
+        KeywordPlanIdeaService.GenerateKeywordForecastMetrics.
+
+        Returns {clicks, conversions, cost_micros, average_cpc_micros,
+        average_cpa_micros, daily_budget_micros, days} or None on any failure.
+
+        Two calls: the API returns clicks XOR conversions depending on the
+        bidding strategy (maximize_clicks → clicks/cost/cpc; maximize_conversions
+        → conversions/cpa, clicks=0). We run both and merge so the console can
+        show estimated clicks AND conversions. Best-effort — never raises.
+
+        Reads `keyword_ideas` (the Search arm's keyword pool), `geo_targets`
+        (ISO→[geo_target_constant] from _resolve_geos), and optional
+        `language_constant` from the resolver's targeting dict. Geo is required
+        — the forecast is geo-scoped; returns None if none resolve.
+        """
+        from datetime import date, timedelta
+
+        keywords = [str(k).strip() for k in (targeting or {}).get("keyword_ideas", []) if str(k).strip()]
+        if not keywords:
+            return None
+
+        # Flatten geo_targets (dict ISO→[resource]) to resource names.
+        geo_resources: list[str] = []
+        gt = (targeting or {}).get("geo_targets")
+        if isinstance(gt, dict):
+            for vals in gt.values():
+                geo_resources.extend(vals or [])
+        elif isinstance(gt, list):
+            geo_resources.extend(gt)
+        geo_resources = [g for g in geo_resources if g]
+        if not geo_resources:
+            log.info("Google get_keyword_forecast: no geo resolved — skipping forecast")
+            return None
+
+        language = (targeting or {}).get("language_constant") or "languageConstants/1000"
+
+        try:
+            client = self._ensure_client()
+        except Exception as exc:
+            log.warning("Google get_keyword_forecast: client init failed: %s", exc)
+            return None
+        svc = client.get_service("KeywordPlanIdeaService")
+        start = date.today() + timedelta(days=1)
+        end = start + timedelta(days=days)
+
+        def _run(strategy: str) -> Optional[Any]:
+            req = client.get_type("GenerateKeywordForecastMetricsRequest")
+            req.customer_id = self._customer_id_str
+            req.currency_code = "USD"
+            req.forecast_period.start_date = start.isoformat()
+            req.forecast_period.end_date = end.isoformat()
+            camp = req.campaign
+            camp.language_constants.append(language)
+            for g in geo_resources[:10]:
+                camp.geo_target_constants.append(g)
+            if strategy == "clicks":
+                camp.bidding_strategy.maximize_clicks_bidding_strategy.daily_target_spend_micros = daily_budget_micros
+            else:
+                camp.bidding_strategy.maximize_conversions_bidding_strategy.daily_target_spend_micros = daily_budget_micros
+            ag = client.get_type("ForecastAdGroup")
+            for kw in keywords[:30]:
+                ki = client.get_type("KeywordInfo")
+                ki.text = kw
+                ki.match_type = client.enums.KeywordMatchTypeEnum.PHRASE
+                ag.keywords.append(ki)
+            camp.ad_groups.append(ag)
+            import time as _time
+            for attempt in range(3):
+                try:
+                    return svc.generate_keyword_forecast_metrics(request=req).campaign_forecast_metrics
+                except Exception as exc:
+                    msg = str(exc)
+                    # Forecasts run two-per-cohort in a loop → the keyword
+                    # planner quota throttles (429 RESOURCE_EXHAUSTED, "Retry in
+                    # N seconds"). Back off and retry; give up on other errors.
+                    if ("exhausted" in msg.lower() or "RESOURCE_EXHAUSTED" in msg) and attempt < 2:
+                        _time.sleep(5 * (attempt + 1))
+                        continue
+                    log.warning("Google forecast (%s) failed: %s", strategy, msg[:200])
+                    return None
+            return None
+
+        m_clicks = _run("clicks")
+        m_conv = _run("conversions")
+        if m_clicks is None and m_conv is None:
+            return None
+        out = {
+            "clicks":             round(getattr(m_clicks, "clicks", 0.0) or 0.0),
+            "conversions":        round(getattr(m_conv, "conversions", 0.0) or 0.0, 1),
+            "cost_micros":        int(getattr(m_clicks, "cost_micros", 0) or getattr(m_conv, "cost_micros", 0) or 0),
+            "average_cpc_micros": int(getattr(m_clicks, "average_cpc_micros", 0) or 0),
+            "average_cpa_micros": int(getattr(m_conv, "average_cpa_micros", 0) or 0),
+            "daily_budget_micros": daily_budget_micros,
+            "days":               days,
+        }
+        log.info(
+            "Google keyword forecast: %d kw, %d geo → ~%d clicks / ~%s conv over %dd @ $%d/day",
+            len(keywords[:30]), len(geo_resources), out["clicks"], out["conversions"],
+            days, daily_budget_micros // 1_000_000,
+        )
+        return out
+
     # ── Image asset ──────────────────────────────────────────────────────────
 
     def upload_image(self, image_path: str | Path) -> str:
