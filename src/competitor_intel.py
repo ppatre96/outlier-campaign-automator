@@ -1194,37 +1194,97 @@ def analyze_angle_distribution(ads: list[AdCreative]) -> dict:
 
 # ── Differentiator scoring ────────────────────────────────────────────────────
 
+# Curated, factually-true Outlier differentiators. `themes` drive per-TG
+# relevance ranking (A); the trustpilot entry is a TEMPLATE whose rating is
+# live-grounded from the scraped Outlier Trustpilot at selection time (B) — never
+# a hardcoded number. The $500M / GPT-5-class etc. remain curated marketing
+# constants; keep them current here (no live source in the pipeline).
+_UNIQUENESS_RANK = {"high": 2, "medium": 1, "low": 0}
+
 OUTLIER_DIFFERENTIATORS = [
-    {"claim": "$500M+ paid out to contributors", "angle": "B", "uniqueness": "high"},
-    {"claim": "Scale AI enterprise backing — the same infrastructure powering GPT-4 labeling", "angle": "A", "uniqueness": "high"},
-    {"claim": "4.1/5 Trustpilot rating — earned, not manufactured", "angle": "B", "uniqueness": "medium"},
-    {"claim": "Access to frontier model training tasks (GPT-5 class, Claude Sonnet)", "angle": "A", "uniqueness": "high"},
-    {"claim": "Outlier Community — active Discord, no competitor has this at scale", "angle": "C", "uniqueness": "high"},
-    {"claim": "Weekly payment — not monthly, not upon request", "angle": "B", "uniqueness": "medium"},
-    {"claim": "Domain-specific tasks — your exact expertise, not generic tagging", "angle": "A", "uniqueness": "high"},
+    {"claim": "$500M+ paid out to contributors", "angle": "B", "uniqueness": "high",
+     "themes": ["earn", "pay", "paid", "money", "income", "salary", "wage", "cash"]},
+    {"claim": "Scale AI enterprise backing — the same infrastructure powering GPT-4 labeling", "angle": "A", "uniqueness": "high",
+     "themes": ["expert", "enterprise", "quality", "professional", "engineer", "phd", "scientist", "specialist", "ai"]},
+    {"claim": "{trustpilot} — earned, not manufactured", "angle": "B", "uniqueness": "medium",
+     "themes": ["trust", "legit", "scam", "review", "reliable", "safe", "real"], "live": "trustpilot"},
+    {"claim": "Access to frontier model training tasks (GPT-5 class, Claude Sonnet)", "angle": "A", "uniqueness": "high",
+     "themes": ["expert", "ai", "model", "frontier", "research", "training", "engineer", "coder", "developer", "phd", "technical"]},
+    {"claim": "Outlier Community — active Discord, no competitor has this at scale", "angle": "C", "uniqueness": "high",
+     "themes": ["community", "support", "discord", "help", "team", "belong"]},
+    {"claim": "Weekly payment — not monthly, not upon request", "angle": "B", "uniqueness": "medium",
+     "themes": ["earn", "pay", "weekly", "fast", "money", "income", "flexible", "quick"]},
+    {"claim": "Domain-specific tasks — your exact expertise, not generic tagging", "angle": "A", "uniqueness": "high",
+     "themes": ["expert", "domain", "specialist", "professional", "skill", "nurse", "doctor", "lawyer", "engineer", "niche"]},
 ]
 
 
-def score_differentiators(competitor_ads: list[AdCreative]) -> list[dict]:
+def score_differentiators(competitor_ads: list[AdCreative], tg_label: str = "") -> list[dict]:
     """
-    Score each Outlier differentiator by how much competitors are claiming the same thing.
-    Higher score = more differentiated = more valuable to lead with.
+    Rank Outlier differentiators for THIS ramp by combining:
+      - whitespace: how little the ramp's actual competitors claim the same
+        thing (scans hook + body + earnings_claim). More whitespace = more
+        differentiated.
+      - relevance: how well the claim's themes match the TG label (so a coding
+        ramp surfaces the frontier-model / expertise claims, a gig-seeker ramp
+        surfaces earnings / flexibility, etc.). This is what makes the top-3
+        vary per ramp instead of being a static list.
+
+    combined = 0.5·whitespace + 0.5·relevance (+ a small uniqueness tiebreak).
     """
     competitor_copy = " ".join(
-        f"{ad.hook} {ad.body}".lower() for ad in competitor_ads
+        f"{ad.hook} {ad.body} {ad.earnings_claim or ''}".lower() for ad in competitor_ads
     )
+    tg_lower = (tg_label or "").lower()
 
     scored = []
     for diff in OUTLIER_DIFFERENTIATORS:
-        claim_lower = diff["claim"].lower()
-        # Check if competitors are saying anything similar
-        key_terms = claim_lower.split()[:4]
-        competitor_coverage = sum(1 for t in key_terms if t in competitor_copy) / len(key_terms)
-        # Lower competitor coverage = more whitespace for Outlier
+        key_terms = diff["claim"].lower().replace("{trustpilot}", "").split()[:4]
+        competitor_coverage = (
+            sum(1 for t in key_terms if t and t in competitor_copy) / len(key_terms)
+            if key_terms else 0.0
+        )
         whitespace_score = 1.0 - competitor_coverage
-        scored.append({**diff, "whitespace_score": round(whitespace_score, 2)})
 
-    return sorted(scored, key=lambda x: x["whitespace_score"], reverse=True)
+        themes = diff.get("themes") or []
+        relevance_score = (
+            sum(1 for t in themes if t in tg_lower) / len(themes)
+            if (themes and tg_lower) else 0.0
+        )
+
+        combined = (
+            0.5 * whitespace_score
+            + 0.5 * relevance_score
+            + 0.02 * _UNIQUENESS_RANK.get(diff.get("uniqueness", "low"), 0)
+        )
+        scored.append({
+            **diff,
+            "whitespace_score": round(whitespace_score, 2),
+            "relevance_score": round(relevance_score, 2),
+            "score": round(combined, 3),
+        })
+
+    return sorted(scored, key=lambda x: x["score"], reverse=True)
+
+
+def _finalize_differentiators(scored: list[dict], intel: "CompetitorIntel") -> list[str]:
+    """Top-3 claim strings, with the Trustpilot claim LIVE-grounded from the
+    scraped Outlier rating (B). Never emits a hardcoded rating: when the live
+    scrape is unavailable, drops the number rather than inventing one."""
+    out: list[str] = []
+    for d in scored[:3]:
+        claim = d["claim"]
+        if d.get("live") == "trustpilot":
+            tp = (intel.trustpilot_ratings or {}).get("Outlier") or {}
+            rating = tp.get("rating")
+            n = tp.get("review_count")
+            if rating:
+                rc = f" ({int(n):,} reviews)" if n else ""
+                claim = f"{float(rating):.1f}/5 Trustpilot rating{rc} — earned, not manufactured"
+            else:
+                claim = "Independent Trustpilot reviews — earned, not manufactured"
+        out.append(claim)
+    return out
 
 
 # ── Main orchestration ────────────────────────────────────────────────────────
@@ -1284,7 +1344,7 @@ def run_competitor_intel(
 
     # 3. Trustpilot ratings
     if include_trustpilot:
-        # Competitors
+        # Competitors (the slow part — 8 pages × polite sleep)
         for comp_key in competitors:
             comp = COMPETITORS[comp_key]
             rating_data = fetch_trustpilot(comp["trustpilot_slug"], comp["name"])
@@ -1292,10 +1352,16 @@ def run_competitor_intel(
                 intel.trustpilot_ratings[comp["name"]] = rating_data
             time.sleep(1)
 
-        # Outlier itself
+    # Outlier's OWN Trustpilot — ALWAYS (one cheap fetch), independent of the
+    # competitor sweep flag. Grounds the live differentiator rating (B); the
+    # pipeline runs with include_trustpilot=False, so gating this would leave
+    # the differentiator with no live number to ground on.
+    try:
         outlier_tp = fetch_trustpilot(OUTLIER_INTEL["trustpilot_slug"], "Outlier")
         if outlier_tp:
             intel.trustpilot_ratings["Outlier"] = outlier_tp
+    except Exception as exc:
+        log.warning("Outlier self-Trustpilot scrape failed (non-fatal): %s", exc)
 
     # 4. Reddit signals
     if include_reddit:
@@ -1336,9 +1402,10 @@ def run_competitor_intel(
         s.theme for s in competitor_signals if s.sentiment == "negative"
     })
 
-    # 9. Score differentiators
-    scored = score_differentiators(intel.competitor_ads)
-    intel.differentiators = [d["claim"] for d in scored[:3]]  # top 3 with most whitespace
+    # 9. Score differentiators — per-TG (relevance) × competitor whitespace,
+    # then live-ground the Trustpilot claim from the scraped Outlier rating.
+    scored = score_differentiators(intel.competitor_ads, tg_label)
+    intel.differentiators = _finalize_differentiators(scored, intel)
 
     # 10. Generate copy recommendations
     intel.copy_recommendations = _generate_copy_recommendations(intel, tg_label)
