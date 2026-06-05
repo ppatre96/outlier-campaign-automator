@@ -468,7 +468,20 @@ class GoogleAdsClient(AdPlatformClient):
             # attach it as a CustomAudience criterion. This is the Path-1
             # equivalent of Customer Match's Similar Audiences and bypasses
             # the broken user_interest taxonomy for cohort-specific keywords.
+            #
+            # COMPLIANCE (2026-06-05): under the EMPLOYMENT special ad category
+            # Google PROHIBITS custom/remarketing/lookalike segments (verified
+            # against the Personalized-advertising policy). Affinity + in-market
+            # (the user_interest criteria above) remain allowed. Skip custom
+            # audiences when running EMPLOYMENT so the ad group stays compliant.
             ci_resource = targeting.get("custom_intent_audience")
+            if ci_resource and (config.SPECIAL_AD_CATEGORY or "").upper() == "EMPLOYMENT":
+                log.info(
+                    "Skipping custom-intent audience %s — prohibited under EMPLOYMENT "
+                    "special ad category (affinity + in-market still applied)",
+                    ci_resource,
+                )
+                ci_resource = None
             if ci_resource:
                 op = client.get_type("AdGroupCriterionOperation")
                 c = op.create

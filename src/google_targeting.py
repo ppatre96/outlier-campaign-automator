@@ -69,6 +69,19 @@ _FALLBACK_AFFINITY_KEYWORDS = {
     "teacher":           ["Education"],
 }
 
+# Baseline Display audience layer for cohorts that produce no skill/title
+# signal terms — chiefly the generalist/i18n LOCALE cohorts (their only rule
+# is ("interface_locale", …), which yields zero terms, so the Display ad group
+# would otherwise ship geo-only with no audience targeting at all). The name
+# resolves via the live user_interest LIKE lookup (verified 2026-06-05:
+# "Business Professionals" → userInterests/92913 AFFINITY). Affinity is
+# EMPLOYMENT special-ad-category SAFE (Google permits affinity + in-market
+# under Employment; only age/gender/parental/marital + ZIP + remarketing/
+# custom/lookalike are prohibited). Kept to the single clean on-target affinity
+# — broader hints like "Employment" also LIKE-match noise ("Labor & Employment
+# Law" vertical), which mis-targets the generalist contributor audience.
+_GENERALIST_AUDIENCE_HINTS = ["Business Professionals"]
+
 
 # Reuse the same degree → Meta education map but emit Google's enum values.
 # Google's CriterionTypeEnum has UserInterest (audience) only; demographic
@@ -171,6 +184,25 @@ class GoogleSegmentResolver(TargetingResolver):
                     if kw_norm and kw_norm not in seen_keywords and len(out["keyword_ideas"]) < 30:
                         seen_keywords.add(kw_norm)
                         out["keyword_ideas"].append(kw)
+
+        # Display audience baseline. Generalist-locale cohorts (and any cohort
+        # whose signals didn't resolve to a single segment) would otherwise
+        # ship the Display ad group geo-only — no audience layer. Seed a broad
+        # EMPLOYMENT-safe professional affinity + in-market layer so the RDA
+        # actually targets working professionals in-locale. Resolved by name
+        # via the live user_interest lookup; best-effort (empty on API failure).
+        if not out["audience_segments"]:
+            try:
+                baseline = self._search_user_interest(_GENERALIST_AUDIENCE_HINTS)
+            except Exception as exc:
+                log.warning("Google baseline audience lookup failed (%s) — geo-only", exc)
+                baseline = []
+            for seg in baseline:
+                if seg not in seen_segments:
+                    seen_segments.add(seg)
+                    out["audience_segments"].append(seg)
+                    if len(out["audience_segments"]) >= 5:
+                        break
 
         # Sum keyword-volume signal across all cohort terms. Reads from the
         # cache populated by _generate_keyword_ideas above (no extra API
