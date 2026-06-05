@@ -2194,17 +2194,20 @@ def _resolve_cold_start_cohort(
     flow_id: str,
     location: str,
 ) -> ResolvedCohorts:
-    """Frame-independent cold start — used when the Snowflake screening frame is
-    EMPTY (brand-new / ultra-niche project with no contributor history, e.g.
-    GMR-0024's BLV-accessibility ramp).
+    """Frame-independent cold start — the last resort across the whole
+    cold-start regime (n_icp < MIN_POSITIVES_FOR_STATS, i.e. < 30 qualified CBs,
+    INCLUDING the extreme empty-screening-frame case like GMR-0024's
+    BLV-accessibility ramp).
 
-    The in-frame ICP-fallback (`_try_icp_fallback`) can't help here: it anchors
-    the synthetic cohort on skills that matched *columns in the data frame*, and
-    there is no frame. So we derive an ICP straight from the job post / Smart
-    Ramp brief and synthesize ONE targetable cohort from its required skills —
-    giving the ramp an ICP + cohort + (downstream) test angles in the console
-    instead of nothing. Targeting (LinkedIn skill+geo / Meta / Google keyword
-    forecast) is all rule-based, so it works with no warehouse rows behind it.
+    The in-frame ICP-fallback (`_try_icp_fallback`) is tried first; it anchors
+    the synthetic cohort on skills that matched *columns in the data frame*. It
+    returns nothing when the frame is empty (no columns) OR when the LLM's ICP
+    skills don't match any corpus column. In both cases we land here: derive an
+    ICP straight from the job post / Smart Ramp brief and synthesize ONE
+    targetable cohort from its required skills — giving the ramp an ICP + cohort
+    + (downstream) test angles in the console instead of nothing. Targeting
+    (LinkedIn skill+geo / Meta / Google keyword forecast) is all rule-based, so
+    it works with no warehouse rows behind it.
 
     Returns a ResolvedCohorts with one synthetic cohort, or an empty result when
     there's no job post / brief / skill to anchor on (truly nothing to target).
@@ -2646,7 +2649,15 @@ def _resolve_cohorts(
         )
         cohorts_a = _try_icp_fallback(reason=reason)
         if not cohorts_a:
-            return ResolvedCohorts(flow_id=flow_id, location=location, project_id=project_id)
+            # n_icp < 30 IS the cold-start regime (not just exact-zero). The
+            # in-frame fallback found no LLM skill anchors in the corpus, so
+            # fall back to the frame-independent job-post cold start instead of
+            # returning 0 cohorts (which left the console ICP/cohorts/angles
+            # cards empty).
+            return _resolve_cold_start_cohort(
+                row, snowflake=snowflake, li_client=li_client, urn_res=urn_res,
+                project_id=project_id, flow_id=flow_id, location=location,
+            )
         # The synthetic cohort has no statistical lift signal; Stage B (which
         # computes additional lift facets) would produce nonsense. Skip it.
         skip_stage_b = True
@@ -2667,7 +2678,11 @@ def _resolve_cohorts(
         log.warning("_resolve_cohorts: Stage A returned no cohorts — attempting ICP-fallback")
         cohorts_a = _try_icp_fallback(reason="stage_a_empty")
         if not cohorts_a:
-            return ResolvedCohorts(flow_id=flow_id, location=location, project_id=project_id)
+            # In-frame fallback also empty → job-post cold start (last resort).
+            return _resolve_cold_start_cohort(
+                row, snowflake=snowflake, li_client=li_client, urn_res=urn_res,
+                project_id=project_id, flow_id=flow_id, location=location,
+            )
         skip_stage_b = True
 
     # Stage B (skip when Stage A came from support mode OR was bypassed via
