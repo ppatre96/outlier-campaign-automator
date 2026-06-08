@@ -136,7 +136,11 @@ def adapt_copy_for_platform(
     constraints = get_constraints(platform)
     if platform == "meta":
         return _adapt_for_meta(variant, constraints, icp=icp)
-    if platform == "google":
+    if platform in ("google", "google_search"):
+        # RSA (Search) uses the same headline/description copy shape as Display
+        # RDA; the constraints differ (per-field limits) but the adapter logic
+        # is shared. Routing google_search here fixes the arm aborting with
+        # "unknown platform 'google_search'" before any Search campaign was made.
         return _adapt_for_google(variant, constraints, icp=icp)
     raise ValueError(f"adapt_copy_for_platform: unknown platform {platform!r}")
 
