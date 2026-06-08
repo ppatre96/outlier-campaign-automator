@@ -2340,6 +2340,28 @@ def _resolve_cold_start_cohort(
         from src.ui_decisions import (
             upsert_cohort_icp, upsert_cohort_audience, upsert_cohort_targeting,
         )
+        # Wipe prior-run cohort rows for this ramp before re-persisting. The
+        # normal `_resolve_cohorts` path does this, but cold start returns early
+        # (before that block), so without this a re-run whose labels shifted
+        # left orphan cohorts in the console. Mirror that cleanup (+ targeting).
+        current_sigs = sorted({c.name for c in cohorts if getattr(c, "name", None)})
+        try:
+            from src.ui_decisions import _connect
+            with _connect() as conn, conn.cursor() as cur:
+                cur.execute("DELETE FROM cohort_icp WHERE ramp_id = %s", (ramp_id,))
+                cur.execute("DELETE FROM cohort_audience WHERE ramp_id = %s", (ramp_id,))
+                cur.execute("DELETE FROM cohort_targeting WHERE ramp_id = %s", (ramp_id,))
+                if current_sigs:
+                    cur.execute(
+                        "DELETE FROM cohort_brief_rationale WHERE ramp_id = %s AND cohort_signature NOT IN %s",
+                        (ramp_id, tuple(current_sigs)),
+                    )
+                else:
+                    cur.execute("DELETE FROM cohort_brief_rationale WHERE ramp_id = %s", (ramp_id,))
+                conn.commit()
+            log.info("cold_start: cleared prior cohort rows for ramp=%s (keeping %s)", ramp_id, current_sigs)
+        except Exception as exc:
+            log.warning("cold_start: prior-row cleanup skipped (non-fatal): %s", exc)
         enabled = [p.strip().lower() for p in (config.ENABLED_PLATFORMS or "").split(",") if p.strip()] \
             or ["linkedin", "meta", "google"]
         row_geos = list((row or {}).get("included_geos") or [])
