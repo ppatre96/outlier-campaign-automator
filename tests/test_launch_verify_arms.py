@@ -67,6 +67,9 @@ def test_inmail_empty_after_retry_heals(monkeypatch):
     _, kw = heal.call_args
     assert kw["platform"] == "linkedin"
     assert kw["container_id"] == "urn:li:sponsoredCampaign:42"
+    # The REAL platform error threads through to the heal reason (not a generic
+    # "no content attached") so the console + Slack show WHY it was blocked.
+    assert "createInMailCreative 400" in kw["reason"]
     notify.assert_called_once()
     assert len(notify.call_args[0][1]) == 1  # one healed empty reported
 

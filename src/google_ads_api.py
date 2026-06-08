@@ -83,6 +83,10 @@ class GoogleAdsClient(AdPlatformClient):
             raise ValueError(f"GoogleAdsClient channel must be 'display' or 'search', got {channel!r}")
         self._channel = ch
         self._client = None  # lazy
+        # Keywords _apply_keyword_criteria had to drop (policy/invalid) keyed by
+        # ad_group_resource — read by the launch arm to surface "campaign live
+        # but N keywords rejected" on the console + Slack.
+        self.dropped_keywords: dict[str, list[str]] = {}
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -556,6 +560,8 @@ class GoogleAdsClient(AdPlatformClient):
                     "Attached %d keyword criteria to %s (dropped %d policy/invalid: %s)",
                     len(keywords), ad_group_resource, len(dropped), dropped or "none",
                 )
+                if dropped:
+                    self.dropped_keywords[ad_group_resource] = list(dropped)
                 return
             except GoogleAdsException as ex:
                 bad: set[int] = set()
@@ -583,6 +589,8 @@ class GoogleAdsClient(AdPlatformClient):
             "Google keyword attach: gave up for %s after dropping %s",
             ad_group_resource, dropped,
         )
+        if dropped:
+            self.dropped_keywords[ad_group_resource] = list(dropped)
 
     # ── Reach estimation (pre-campaign audience check) ──────────────────────
 

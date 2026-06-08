@@ -1495,8 +1495,10 @@ def _process_inmail_campaigns(
                         "_process_inmail_campaigns: create_inmail_ad raised cohort=%s angle=%s: %s",
                         cohort.name, angle_label, _exc,
                     )
+                    _im_errors.append(f"{type(_exc).__name__}: {str(_exc)[:200]}")
                     return False
                 if not creative_urn:
+                    _im_errors.append("create_inmail_ad returned no creative URN")
                     return False
                 sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
 
@@ -1529,6 +1531,7 @@ def _process_inmail_campaigns(
 
             _im_ok = 0
             _im_failed: list[tuple] = []
+            _im_errors: list[str] = []  # failure reasons for verify-and-heal surfacing
             for angle_label, variant in valid_pairs:
                 if _attach_inmail(angle_label, variant):
                     _im_ok += 1
@@ -1548,12 +1551,16 @@ def _process_inmail_campaigns(
                     if _attach_inmail(angle_label, variant):
                         _im_ok += 1
                 if _im_ok == 0:
+                    _reason = (
+                        "; ".join(dict.fromkeys(_im_errors))[:400] if _im_errors
+                        else "no InMail content attached after retry"
+                    )
                     _summ = launch_verify.heal_empty(
                         platform="linkedin",
                         container_id=campaign_urn,
                         ramp_id=ramp_id or "",
                         campaign_name=campaign_name,
-                        reason="no InMail content attached after retry",
+                        reason=_reason,
                         li_client=li_client,
                     )
                     if _summ:
@@ -3769,6 +3776,7 @@ def _process_static_campaigns(
         # didn't (captured once per spec just before the attach attempt).
         _li_attached: set[str] = set()
         _li_payloads: dict[str, dict] = {}
+        _li_errors: list[str] = []  # failure reasons for verify-and-heal surfacing
 
         # ── Attach one creative per angle to the just-created campaign. ─────
         for spec in specs:
@@ -3873,6 +3881,7 @@ def _process_static_campaigns(
             except Exception as exc:
                 log.warning("_process_static_campaigns: upload/attach raised for angle %s: %s", angle_label, exc)
                 creative_paths[row_id] = ""
+                _li_errors.append(f"{type(exc).__name__}: {str(exc)[:200]}")
                 continue
 
             if ad_result.status == "ok":
@@ -3931,12 +3940,18 @@ def _process_static_campaigns(
                     angle_label, ad_result.error_class, ad_result.error_message,
                     drive_url or "(upload failed)",
                 )
+                _li_errors.append(
+                    f"{ad_result.error_class or 'blocked'}: {ad_result.error_message or 'creative attach blocked'}"[:200]
+                )
             else:  # status == "error"
                 log.error(
                     "_process_static_campaigns: create_image_ad hard error angle=%s: %s — %s",
                     angle_label, ad_result.error_class, ad_result.error_message,
                 )
                 creative_paths[row_id] = ""
+                _li_errors.append(
+                    f"{ad_result.error_class or 'error'}: {ad_result.error_message or 'unknown'}"[:200]
+                )
 
         # ── Verify-and-heal (piece C). If no creative attached to this
         # campaign, retry each captured spec once; if still none, archive the
@@ -3959,15 +3974,24 @@ def _process_static_campaigns(
                     if _rr.status == "ok":
                         _li_attached.add(_rid)
                         creative_paths[_rid] = _rr.creative_urn
+                    else:
+                        _li_errors.append(
+                            f"{_rr.error_class or 'error'}: {_rr.error_message or 'unknown'}"[:200]
+                        )
                 except Exception as _exc:
                     log.warning("_process_static_campaigns: heal retry raised for %s: %s", _rid, _exc)
+                    _li_errors.append(f"{type(_exc).__name__}: {str(_exc)[:200]}")
             if not _li_attached:
+                _reason = (
+                    "; ".join(dict.fromkeys(_li_errors))[:400] if _li_errors
+                    else "no creative attached after retry"
+                )
                 _summ = launch_verify.heal_empty(
                     platform="linkedin",
                     container_id=campaign_urn,
                     ramp_id=ramp_id or "",
                     campaign_name=campaign_name,
-                    reason="no creative attached after retry",
+                    reason=_reason,
                     li_client=li_client,
                 )
                 if _summ:
@@ -4401,6 +4425,7 @@ def _process_extra_platform_arm(
     )
 
     healed_empties: list[dict] = []
+    keyword_drops: list[dict] = []  # Search keywords Google rejected (needs review)
     for (stg_id, cluster), specs in grouped.items():
         meta = g_meta[(stg_id, cluster)]
         cohort     = meta["cohort"]
@@ -4792,6 +4817,13 @@ def _process_extra_platform_arm(
                 ad_result.creative_id if ad_result.status == "ok"
                 else (str(png_path) if png_path else "")
             )
+            if ad_result.status != "ok":
+                # Stash the real failure so verify-and-heal can surface WHY this
+                # ad couldn't be created (console + Slack), not just "0 ads".
+                spec["_last_error"] = (
+                    f"{ad_result.error_class or 'error'}: "
+                    f"{ad_result.error_message or 'unknown'}"
+                )[:300]
             return ad_result.status == "ok"
 
         # First pass: one ad per angle.
@@ -4816,18 +4848,41 @@ def _process_extra_platform_arm(
                 if _attempt_and_record(spec):
                     ads_ok += 1
             if ads_ok == 0:
+                _errs = list(dict.fromkeys(
+                    s["_last_error"] for s in specs if s.get("_last_error")
+                ))
+                _reason = (
+                    "; ".join(_errs)[:400] if _errs
+                    else f"0/{len(specs)} ads attached after retry"
+                )
                 _summ = launch_verify.heal_empty(
                     platform=platform,
                     container_id=sub_id,
                     ramp_id=ramp_id or "",
                     campaign_name=campaign_name,
-                    reason=f"0/{len(specs)} ads attached after retry",
+                    reason=_reason,
                 )
                 if _summ:
                     healed_empties.append(_summ)
 
+        # Surface keywords Google rejected on an otherwise-healthy Search
+        # campaign (live with the survivors — not an empty heal, a "needs
+        # review"). dropped_keywords is keyed by ad_group_resource (= sub_id).
+        if config.LAUNCH_VERIFY_ENABLED and platform == "google_search" and ads_ok > 0:
+            _dropped_kw = (getattr(client, "dropped_keywords", {}) or {}).get(sub_id) or []
+            if _dropped_kw:
+                _note = launch_verify.record_keywords_dropped(
+                    ramp_id=ramp_id or "",
+                    container_id=sub_id,
+                    campaign_name=campaign_name,
+                    dropped=_dropped_kw,
+                )
+                if _note:
+                    keyword_drops.append(_note)
+
     if config.LAUNCH_VERIFY_ENABLED:
         launch_verify.notify_healed(ramp_id or "", healed_empties)
+        launch_verify.notify_keywords_dropped(ramp_id or "", keyword_drops)
 
     return out
 
