@@ -1,8 +1,9 @@
 """Frame-independent cold start (_resolve_cold_start_cohort).
 
-When the Snowflake screening frame is empty (brand-new / niche project, e.g.
-GMR-0024 BLV accessibility), prep should still synthesize ONE cohort from the
-job-post / brief ICP so the console isn't empty. Network/LLM mocked.
+When the screening frame is empty (brand-new / niche project, e.g. GMR-0024 BLV
+accessibility), prep synthesizes targeted cohort(s) from the job-post/brief so
+the console isn't empty. Multi-cohort (COLD_START_MULTI_COHORT) derives 1..N
+specs with rules across every channel-usable prefix. Network/LLM mocked.
 """
 import os
 import sys
@@ -11,59 +12,92 @@ from unittest.mock import MagicMock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import main as M
+import config
 import src.icp_from_jobpost as jp
 
 
-def test_cold_start_synthesizes_cohort_from_skills(monkeypatch):
-    monkeypatch.setattr(jp, "resolve_job_post", lambda *a, **k: "")  # no snowflake post
-    monkeypatch.setattr(jp, "derive_icp_from_job_post", lambda txt: {
-        "derived_tg_label": "Backend Engineers (US)",
-        "required_skills": ["Python", "SQL Databases", "Go or Java", "Backend Engineering", "Docker", "Kubernetes"],
-    })
-    row = {"ramp_summary": "need backend engineers in the US", "included_geos": ["US"]}  # no ramp_id → skip persistence
-
-    res = M._resolve_cold_start_cohort(
-        row, snowflake=MagicMock(), li_client=None, urn_res=None,
-        project_id="p1", flow_id="f1", location="US",
-    )
-
-    assert len(res.selected) == 1
-    c = res.selected[0]
-    assert c.name == "Backend Engineers (US)"
-    # capped at 5 skills, slugified to skills__ rules
-    assert c.rules == [
-        ("skills__python", 1),
-        ("skills__sql_databases", 1),
-        ("skills__go_or_java", 1),
-        ("skills__backend_engineering", 1),
-        ("skills__docker", 1),
-    ]
-    assert getattr(c, "_stg_id", None)
-    assert res.flow_id == "f1" and res.project_id == "p1"
-
-
-def test_cold_start_empty_when_no_jobpost_no_brief(monkeypatch):
+def _patch(monkeypatch, *, cohorts=None, icp=None, multi=True, base_roles=None):
+    monkeypatch.setattr(config, "COLD_START_MULTI_COHORT", multi)
     monkeypatch.setattr(jp, "resolve_job_post", lambda *a, **k: "")
-    monkeypatch.setattr(jp, "derive_icp_from_job_post", lambda txt: {})
-    row = {"included_geos": ["US"]}  # no brief, no post
+    monkeypatch.setattr(jp, "derive_cohorts_from_job_post", lambda *a, **k: list(cohorts or []))
+    monkeypatch.setattr(jp, "derive_icp_from_job_post", lambda *a, **k: dict(icp or {}))
+    monkeypatch.setattr(jp, "extract_base_role_candidates", lambda **k: list(base_roles or []))
+    monkeypatch.setattr(jp, "family_exclusions_for", lambda **k: [])
 
-    res = M._resolve_cold_start_cohort(
-        row, snowflake=MagicMock(), li_client=None, urn_res=None,
-        project_id="p1", flow_id="f1", location="US",
+
+def _run(row=None):
+    return M._resolve_cold_start_cohort(
+        row if row is not None else {"ramp_summary": "we need contributors"},
+        snowflake=MagicMock(), li_client=None, urn_res=None,
+        project_id="p", flow_id="f", location="US",
     )
+
+
+def test_multi_cohort_distinct_with_all_rule_prefixes(monkeypatch):
+    _patch(monkeypatch, cohorts=[
+        {"label": "Backend Engineers (US)", "required_skills": ["Python", "Go"],
+         "job_titles": ["Software Engineer"], "fields_of_study": ["computer science"],
+         "degrees": ["bachelors"], "geos": ["US"]},
+        {"label": "Data Scientists (IN)", "required_skills": ["Pandas"],
+         "job_titles": ["Data Scientist"], "fields_of_study": [], "degrees": ["masters"], "geos": ["IN"]},
+    ])
+    res = _run()
+    assert len(res.selected) == 2
+    assert {c.name for c in res.selected} == {"Backend Engineers (US)", "Data Scientists (IN)"}
+    assert len({c._stg_id for c in res.selected}) == 2  # distinct ids
+    c0 = next(c for c in res.selected if c.name.startswith("Backend"))
+    rules = {r[0] for r in c0.rules}
+    assert {"skills__python", "skills__go", "job_titles_norm__software_engineer",
+            "fields_of_study__computer_science", "highest_degree_level__bachelors"} <= rules
+
+
+def test_degrade_to_single_when_multi_empty(monkeypatch):
+    # multi returns [] → single ICP fallback; flag ON → richer single cohort.
+    _patch(monkeypatch, cohorts=[], icp={
+        "derived_tg_label": "Statisticians", "required_skills": ["R"],
+        "required_fields": ["statistics"], "required_degrees": ["PhD in Statistics"],
+    })
+    res = _run()
+    assert len(res.selected) == 1
+    rules = {r[0] for r in res.selected[0].rules}
+    assert "skills__r" in rules
+    assert "fields_of_study__statistics" in rules
+    assert "highest_degree_level__phd" in rules  # normalized from "PhD in Statistics"
+
+
+def test_flag_off_is_skills_only(monkeypatch):
+    _patch(monkeypatch, cohorts=[], multi=False, icp={
+        "derived_tg_label": "Statisticians", "required_skills": ["R"],
+        "required_fields": ["statistics"], "required_degrees": ["PhD"],
+    })
+    res = _run()
+    assert len(res.selected) == 1
+    # legacy behavior: skills only, no fields/degrees/titles
+    assert {r[0] for r in res.selected[0].rules} == {"skills__r"}
+
+
+def test_degrade_to_empty_when_no_signal(monkeypatch):
+    _patch(monkeypatch, cohorts=[], icp={})
+    res = _run(row={})  # no brief, no job post → nothing targetable
     assert res.selected == []
 
 
-def test_cold_start_uses_brief_label_when_icp_unlabeled(monkeypatch):
-    # Job post yields skills but no label → fall back to the brief's first line.
-    monkeypatch.setattr(jp, "resolve_job_post", lambda *a, **k: "")
-    monkeypatch.setattr(jp, "derive_icp_from_job_post", lambda txt: {"required_skills": ["TalkBack", "Accessibility"]})
-    row = {"ramp_summary": "Legally blind US TalkBack contributors for BLV eval\nmore detail"}
+def test_duplicate_labels_disambiguated(monkeypatch):
+    _patch(monkeypatch, cohorts=[
+        {"label": "Coders", "required_skills": ["Python"], "geos": ["US"]},
+        {"label": "Coders", "required_skills": ["Java"], "geos": ["IN"]},
+    ])
+    res = _run()
+    names = [c.name for c in res.selected]
+    assert len(set(names)) == 2, f"labels must be disambiguated: {names}"
+    assert "Coders" in names  # first keeps the clean label
 
-    res = M._resolve_cold_start_cohort(
-        row, snowflake=MagicMock(), li_client=None, urn_res=None,
-        project_id="p", flow_id="f", location="US",
-    )
-    assert len(res.selected) == 1
-    assert res.selected[0].name == "Legally blind US TalkBack contributors for BLV eval"[:60]
-    assert res.selected[0].rules == [("skills__talkback", 1), ("skills__accessibility", 1)]
+
+def test_base_role_titles_folded_in(monkeypatch):
+    # extract_base_role_candidates contributes title rules off the label.
+    _patch(monkeypatch, cohorts=[{"label": "ML folks", "required_skills": ["pytorch"]}],
+           base_roles=["ML Engineer", "Machine Learning Engineer"])
+    res = _run()
+    rules = {r[0] for r in res.selected[0].rules}
+    assert "skills__pytorch" in rules
+    assert "job_titles_norm__ml_engineer" in rules

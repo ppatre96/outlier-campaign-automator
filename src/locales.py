@@ -137,6 +137,41 @@ _ISO2_COUNTRY_NAME: dict[str, str] = {
 }
 
 
+_COUNTRY_NAME_TO_ISO2: dict[str, str] = {
+    name.lower(): iso for iso, name in _ISO2_COUNTRY_NAME.items()
+}
+# A few aliases the LLM commonly emits in the ICP `geography` field.
+_COUNTRY_NAME_TO_ISO2.update({
+    "usa": "US", "u.s.": "US", "u.s.a.": "US", "united states of america": "US",
+    "uk": "GB", "u.k.": "GB", "britain": "GB", "england": "GB",
+    "korea": "KR", "republic of korea": "KR", "south korea": "KR",
+})
+
+
+def country_name_to_iso2(name: str | None) -> str | None:
+    """Full country name → ISO-2 ("India" → "IN"). Inverse of country_name_for,
+    used to map the job-post ICP `geography` field to a targetable geo when the
+    ramp left included_geos empty. Returns None for "Global"/regions/unknowns."""
+    if not name or not isinstance(name, str):
+        return None
+    n = name.strip().lower()
+    if not n or n in ("global", "worldwide", "remote", "anywhere"):
+        return None
+    if len(n) == 2 and n.upper() in _ISO2_COUNTRY_NAME:
+        return n.upper()
+    if n in _COUNTRY_NAME_TO_ISO2:
+        return _COUNTRY_NAME_TO_ISO2[n]
+    try:
+        import pycountry
+        x = (pycountry.countries.get(name=name.strip())
+             or pycountry.countries.get(common_name=name.strip()))
+        if x is not None:
+            return x.alpha_2
+    except Exception:
+        pass
+    return None
+
+
 def country_name_for(code: str | None) -> str | None:
     """ISO-2 country code → full country name for LinkedIn geo resolution
     ("BD" → "Bangladesh"). Returns the input unchanged for non-2-letter values

@@ -99,28 +99,29 @@ def _clean_html(raw: str) -> str:
 
 
 
+def _as_str(v: Any, max_len: int) -> str:
+    if v is None:
+        return ""
+    return str(v).strip()[:max_len]
+
+
+def _as_str_list(v: Any, max_items: int = 20, max_item_len: int = 80) -> list[str]:
+    if v is None:
+        return []
+    if isinstance(v, str):
+        parts = [p.strip() for p in re.split(r"[,;|]\s*", v) if p.strip()]
+    elif isinstance(v, (list, tuple, set)):
+        parts = [str(p).strip() for p in v if p is not None and str(p).strip()]
+    else:
+        return []
+    return [p[:max_item_len] for p in parts[:max_items]]
+
+
 def _coerce(obj: Any) -> dict[str, Any]:
     """Merge LLM output into the canonical schema, coercing types and dropping garbage."""
     out: dict[str, Any] = dict(EMPTY_ICP)
     if not isinstance(obj, dict):
         return out
-
-    def _as_str(v: Any, max_len: int) -> str:
-        if v is None:
-            return ""
-        s = str(v).strip()
-        return s[:max_len]
-
-    def _as_str_list(v: Any, max_items: int = 20, max_item_len: int = 80) -> list[str]:
-        if v is None:
-            return []
-        if isinstance(v, str):
-            parts = [p.strip() for p in re.split(r"[,;|]\s*", v) if p.strip()]
-        elif isinstance(v, (list, tuple, set)):
-            parts = [str(p).strip() for p in v if p is not None and str(p).strip()]
-        else:
-            return []
-        return [p[:max_item_len] for p in parts[:max_items]]
 
     out["derived_tg_label"]  = _as_str(obj.get("derived_tg_label"), 60)
     out["required_skills"]   = _as_str_list(obj.get("required_skills"))
@@ -197,6 +198,138 @@ def derive_icp_from_job_post(html_text: str) -> dict[str, Any]:
         len(icp["required_skills"]), len(icp["required_degrees"]),
     )
     return icp
+
+
+# ── Multi-cohort cold-start extraction ────────────────────────────────────────
+#
+# `derive_icp_from_job_post` returns ONE ICP. Cold start (no contributor frame)
+# wants 1..N TARGETED cohorts so brand-new/niche ramps don't ship one broad
+# skills-only cohort. This sibling reads the same job description and returns a
+# list of cohort specs, each carrying the targeting fields the per-channel
+# resolvers consume (skills/titles/fields/degrees → skills__/job_titles_norm__/
+# fields_of_study__/highest_degree_level__ rules). Same Claude + JSON pattern.
+
+_COHORT_SYSTEM_PROMPT = (
+    "You are a paid-acquisition targeting strategist for Outlier, an AI-training "
+    "platform that matches domain experts to paid remote tasks. You read a "
+    "project's job post / request and return the distinct contributor cohort(s) "
+    "worth targeting, with the concrete attributes an ad platform can target on. "
+    "Return ONLY JSON — no prose, no code fences."
+)
+
+_COHORT_INSTRUCTIONS = """\
+From the request below, identify the distinct contributor cohort(s) to target and return ONLY a JSON object:
+
+  {"cohorts": [ {
+      "label":           short human label (≤60 chars), e.g. "Backend Engineers (US/CA)",
+      "required_skills": list of must-have hard skills (each ≤40 chars),
+      "job_titles":      list of role titles these people hold (distinct from skills), e.g. ["Software Engineer","Backend Developer"],
+      "fields_of_study": list of lowercase study fields, e.g. ["computer science"],
+      "degrees":         list of degree levels among ["bachelors","masters","phd"] (only if the post implies a credential),
+      "geos":            list of ISO-2 country codes IF this cohort names a geography, else []
+  }, ... ]}
+
+RULES:
+- MOST requests describe ONE audience — return EXACTLY one cohort unless the post EXPLICITLY names distinct sub-groups (e.g. "two cohorts: cardiologists in India AND radiologists in the US", or an HCC-countries post + a separate global post). Never split one audience into synthetic A/B variants.
+- Return at most {max_cohorts} cohorts.
+- Use the people's real platform-targetable attributes — skills they list on a profile, titles they hold, fields they studied. Do NOT restate the task; describe the PERSON.
+- Use [] where unknown. Map degrees to bachelors/masters/phd only. Output MUST parse as JSON, no markdown fencing.
+"""
+
+_DEGREE_LEVELS = {
+    "phd": "phd", "ph.d": "phd", "ph.d.": "phd", "doctorate": "phd", "doctoral": "phd", "dphil": "phd",
+    "master": "masters", "masters": "masters", "master's": "masters", "ms": "masters", "msc": "masters",
+    "m.s.": "masters", "mba": "masters", "meng": "masters",
+    "bachelor": "bachelors", "bachelors": "bachelors", "bachelor's": "bachelors",
+    "bs": "bachelors", "bsc": "bachelors", "b.s.": "bachelors", "ba": "bachelors", "beng": "bachelors",
+}
+
+
+def _normalize_degrees(raw: list[str]) -> list[str]:
+    """Map free-text degree strings to {bachelors,masters,phd} (lowercase — the
+    form LinkedIn's Degrees facet fuzzy-matches AND Meta's _DEGREE_EDU_MAP keys).
+    Drops anything that doesn't map. Deduped, order-preserving."""
+    out: list[str] = []
+    for d in raw or []:
+        key = (d or "").strip().lower()
+        level = _DEGREE_LEVELS.get(key)
+        if not level:
+            # tolerate "phd in statistics", "master of science", etc.
+            for token, lvl in (("phd", "phd"), ("doctor", "phd"),
+                               ("master", "masters"), ("bachelor", "bachelors")):
+                if token in key:
+                    level = lvl
+                    break
+        if level and level not in out:
+            out.append(level)
+    return out
+
+
+def _coerce_cohort_spec(obj: Any) -> dict | None:
+    """Validate one cohort spec from the LLM. Returns None when there's nothing
+    targetable (no label AND no skills AND no titles)."""
+    if not isinstance(obj, dict):
+        return None
+    spec = {
+        "label":           _as_str(obj.get("label"), 60),
+        "required_skills": _as_str_list(obj.get("required_skills"), max_items=8, max_item_len=40),
+        "job_titles":      _as_str_list(obj.get("job_titles"), max_items=5, max_item_len=60),
+        "fields_of_study": [f.lower() for f in _as_str_list(obj.get("fields_of_study"), max_items=5, max_item_len=40)],
+        "degrees":         _normalize_degrees(_as_str_list(obj.get("degrees"), max_items=4, max_item_len=40)),
+        "geos":            [g.strip().upper() for g in _as_str_list(obj.get("geos"), max_items=12, max_item_len=8) if len(g.strip()) == 2 and g.strip().isalpha()],
+    }
+    if not spec["label"] and not spec["required_skills"] and not spec["job_titles"]:
+        return None
+    return spec
+
+
+def derive_cohorts_from_job_post(html_text: str, *, max_cohorts: int = 3) -> list[dict]:
+    """Return 1..max_cohorts targeted cohort specs from the job post. Each spec:
+    {label, required_skills, job_titles, fields_of_study, degrees, geos}.
+
+    Returns [] on empty/short input or any LLM/parse failure — callers fall back
+    to the single `derive_icp_from_job_post` cohort, then to empty.
+    """
+    cleaned = _clean_html(html_text or "")
+    if len(cleaned) < 40:
+        return []
+
+    prompt = (
+        f"{_COHORT_INSTRUCTIONS.replace('{max_cohorts}', str(max_cohorts))}\n"
+        f"--- REQUEST (cleaned) ---\n{cleaned[:6000]}\n--- END REQUEST ---"
+    )
+    try:
+        raw = call_claude(
+            messages=[{"role": "user", "content": prompt}],
+            system=_COHORT_SYSTEM_PROMPT,
+            cache_system=True,
+            max_tokens=1536,
+        )
+    except Exception as exc:
+        log.warning("Claude cohort extraction failed: %s (%s)", exc, type(exc).__name__)
+        return []
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.IGNORECASE)
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            log.warning("LLM returned non-JSON for cohort extraction: %s (%s)", exc, raw[:200])
+            return []
+
+    raw_specs = parsed.get("cohorts") if isinstance(parsed, dict) else (parsed if isinstance(parsed, list) else [])
+    specs: list[dict] = []
+    for o in (raw_specs or [])[:max_cohorts]:
+        s = _coerce_cohort_spec(o)
+        if s:
+            specs.append(s)
+    log.info(
+        "Derived %d cold-start cohort(s) from job post: %s",
+        len(specs), [s["label"] for s in specs],
+    )
+    return specs
 
 
 def resolve_job_post(

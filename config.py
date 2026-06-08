@@ -317,6 +317,13 @@ META_LAL_BUDGET_SPLIT_PCT    = int(os.getenv("META_LAL_BUDGET_SPLIT_PCT", "70"))
 # to fall back to beam discovery for every cohort.
 GENERALIST_LOCALE_TARGETING  = os.getenv("GENERALIST_LOCALE_TARGETING", "true").lower() in ("1", "true", "yes")
 
+# Cold start (no contributor frame — brand-new / ultra-niche ramps). When True
+# (default), `_resolve_cold_start_cohort` derives 1..N targeted cohorts from the
+# job description (skills + titles + fields + degrees + lookalike exclusions per
+# channel) instead of one broad skills-only cohort. Set False to fall back to
+# the legacy single skills-only cohort (exact prior behavior; rollback).
+COLD_START_MULTI_COHORT      = os.getenv("COLD_START_MULTI_COHORT", "true").lower() in ("1", "true", "yes")
+
 # Per-channel launch model (feature #3, 2026-06-04). When False (default),
 # approving a ramp in the console is the GATE only — the scheduled poller does
 # NOT auto-launch approved ramps. Launching is explicit + per-channel (Diego →

@@ -2202,18 +2202,27 @@ def _resolve_cold_start_cohort(
     The in-frame ICP-fallback (`_try_icp_fallback`) is tried first; it anchors
     the synthetic cohort on skills that matched *columns in the data frame*. It
     returns nothing when the frame is empty (no columns) OR when the LLM's ICP
-    skills don't match any corpus column. In both cases we land here: derive an
-    ICP straight from the job post / Smart Ramp brief and synthesize ONE
-    targetable cohort from its required skills — giving the ramp an ICP + cohort
-    + (downstream) test angles in the console instead of nothing. Targeting
-    (LinkedIn skill+geo / Meta / Google keyword forecast) is all rule-based, so
-    it works with no warehouse rows behind it.
+    skills don't match any corpus column. In both cases we land here: read the
+    job post / Smart Ramp brief and (when COLD_START_MULTI_COHORT) derive 1..N
+    TARGETED cohorts — each carrying rules across every channel-usable prefix
+    (skills__, job_titles_norm__, fields_of_study__, highest_degree_level__) plus
+    lookalike-title exclusions — so each channel resolver produces focused
+    targeting instead of broad geo-only. Multiple cohorts are produced only when
+    the request explicitly names distinct sub-groups. Targeting is all rule-based
+    so it works with no warehouse rows behind it.
 
-    Returns a ResolvedCohorts with one synthetic cohort, or an empty result when
-    there's no job post / brief / skill to anchor on (truly nothing to target).
+    Cascade: multi-cohort LLM specs → single-ICP fallback (skills-only when the
+    flag is off) → empty when there's no job post / brief / targetable attribute.
+    Returns a ResolvedCohorts with the synthesized cohort(s); each gets its ICP +
+    reach-per-channel + (downstream) test-angle cards in the console.
     """
+    import re as _re
     from src.analysis import Cohort
-    from src.icp_from_jobpost import resolve_job_post, derive_icp_from_job_post
+    from src.icp_from_jobpost import (
+        resolve_job_post, derive_icp_from_job_post, derive_cohorts_from_job_post,
+        extract_base_role_candidates, family_exclusions_for, _normalize_degrees,
+    )
+    from src.locales import country_name_to_iso2
 
     ramp_summary = (row.get("ramp_summary") or "").strip()
     cohort_description = (row.get("cohort_description") or "").strip()
@@ -2229,77 +2238,143 @@ def _resolve_cold_start_cohort(
     # Same description shape the stats path feeds the LLM: Smart Ramp brief first,
     # then the Snowflake job-post HTML.
     description = "\n\n".join(filter(None, [brief, raw_post or ""]))
-    icp_spec = derive_icp_from_job_post(description) if description else {}
-    skills = [s for s in (icp_spec.get("required_skills") or []) if (s or "").strip()][:5]
-    label = (
-        icp_spec.get("derived_tg_label")
-        or icp_spec.get("derived_label")
-        or (brief.splitlines()[0][:60] if brief else "")
-    ).strip()
-    if not skills and not label:
+
+    # ── Build cohort specs ────────────────────────────────────────────────────
+    # Multi-cohort (default): one richer LLM call returns 1..N targeted specs.
+    # Falls back to the single-ICP extraction (and, with the flag off, to the
+    # legacy skills-only spec) so a niche/new ramp still gets targeting, not
+    # nothing. A "spec" = {label, required_skills, job_titles, fields_of_study,
+    # degrees, geos}.
+    fallback_geo = ""
+    specs: list[dict] = []
+    if config.COLD_START_MULTI_COHORT and description:
+        specs = derive_cohorts_from_job_post(description, max_cohorts=config.MAX_COHORTS_PER_GEO_CLUSTER)
+    if not specs:
+        icp = derive_icp_from_job_post(description) if description else {}
+        label0 = (icp.get("derived_tg_label") or (brief.splitlines()[0][:60] if brief else "")).strip()
+        skills0 = [s for s in (icp.get("required_skills") or []) if (s or "").strip()][:8]
+        fallback_geo = country_name_to_iso2(icp.get("geography")) or ""
+        if config.COLD_START_MULTI_COHORT:
+            # Richer single cohort (titles come from the label via base-role match).
+            specs = [{
+                "label": label0, "required_skills": skills0, "job_titles": [],
+                "fields_of_study": [f for f in (icp.get("required_fields") or [])][:5],
+                "degrees": _normalize_degrees(icp.get("required_degrees") or []),
+                "geos": [],
+            }] if (skills0 or label0) else []
+        else:
+            # Legacy: skills-only single cohort (exact prior behavior).
+            specs = [{"label": label0, "required_skills": skills0, "job_titles": [],
+                      "fields_of_study": [], "degrees": [], "geos": []}] if (skills0 or label0) else []
+
+    if not specs:
         log.warning(
-            "cold_start: no job post / brief / skills for project=%s flow=%s — empty result",
+            "cold_start: no job post / brief / targetable spec for project=%s flow=%s — empty result",
             project_id, flow_id,
         )
         return ResolvedCohorts(flow_id=flow_id, location=location, project_id=project_id)
 
-    rules = [
-        (f"skills__{s.strip().lower().replace(' ', '_').replace('-', '_')}", 1)
-        for s in skills
-    ]
-    cohort = Cohort(
-        name=label or "ICP cold-start cohort", rules=rules,
-        n=0, passes=0, pass_rate=0.0, lift_pp=0.0, p_value=1.0,
-        score=1.0, support=0, coverage=0.0,
-    )
-    cohort._stg_id = make_stg_id()
-    cohort._stg_name = _cohort_display_name(cohort, flow_id, location)
-    log.warning(
-        "cold_start: synthesized 1 job-post cohort %r from %d skill(s) %s — no "
-        "contributor frame, targeting is job-post-derived (looser than Stage A)",
-        cohort.name, len(rules), [r[0] for r in rules],
-    )
+    def _slug(v: str) -> str:
+        return _re.sub(r"[^a-z0-9]+", "_", (v or "").strip().lower()).strip("_")
 
+    # ── Spec → Cohort (rules across every channel-usable prefix) ──────────────
+    cohorts: list = []
+    seen_names: set[str] = set()
+    for spec in specs:
+        label = (spec.get("label") or "ICP cold-start cohort").strip()
+        rules: list[tuple[str, int]] = []
+        seen_rules: set[str] = set()
+
+        def _add(prefix: str, value: str):
+            slug = _slug(value)
+            key = f"{prefix}__{slug}"
+            if slug and key not in seen_rules:
+                seen_rules.add(key)
+                rules.append((key, 1))
+
+        for s in spec.get("required_skills", [])[:5]:
+            _add("skills", s)
+        # Titles: explicit spec titles + base-role family matched off the label.
+        titles = list(spec.get("job_titles", []))
+        titles += extract_base_role_candidates(derived_tg_label=label)
+        for t in titles:
+            _add("job_titles_norm", t)
+        for f in spec.get("fields_of_study", [])[:3]:
+            _add("fields_of_study", f)
+        for d in spec.get("degrees", [])[:2]:
+            _add("highest_degree_level", d)
+
+        # Disambiguate duplicate labels so cohort_signature stays unique
+        # (cohort_icp/cohort_audience/cohort_targeting key on it).
+        name = label
+        if name in seen_names:
+            disc = (spec.get("required_skills") or spec.get("geos") or [""])[0]
+            name = f"{label} ({disc})".strip()[:80] if disc else f"{label} #{len(seen_names)+1}"
+        seen_names.add(name)
+
+        cohort = Cohort(
+            name=name or "ICP cold-start cohort", rules=rules,
+            n=0, passes=0, pass_rate=0.0, lift_pp=0.0, p_value=1.0,
+            score=1.0, support=0, coverage=0.0,
+        )
+        cohort.exclude_add = family_exclusions_for(derived_tg_label=label)
+        cohort._stg_id = make_stg_id()
+        cohort._stg_name = _cohort_display_name(cohort, flow_id, location)
+        # Stash the cohort's geo preference for the audience estimate (spec.geos
+        # → ramp included_geos → ICP geography). NOTE: only the cold-start reach
+        # estimate honors per-cohort geos; the launched arms use row-level
+        # included_geos (geo is row-level downstream — documented constraint).
+        cohort._cold_start_geos = list(spec.get("geos") or [])
+        cohorts.append(cohort)
+        log.warning(
+            "cold_start: synthesized cohort %r with %d rule(s) %s exclude=%d — "
+            "job-post-derived targeting (looser than Stage A)",
+            name, len(rules), [r[0] for r in rules], len(cohort.exclude_add or []),
+        )
+
+    # ── Per-cohort persistence (ICP + reach-per-channel cards) ────────────────
     ramp_id = (row or {}).get("ramp_id") or ""
     if ramp_id:
-        # ICP card.
-        try:
-            from src.icp_enrichment import enrich as enrich_icp
-            from src.ui_decisions import upsert_cohort_icp
-            locale_hint = (f"en-{location.upper()[:2]}" if location and len(location) >= 2 else None)
-            icp = enrich_icp(cohort, resume_sample=[], locale_hint=locale_hint)
-            cohort._icp = icp
-            upsert_cohort_icp(
-                ramp_id=ramp_id, cohort_id=cohort._stg_id,
-                cohort_signature=cohort.name, icp_dict=icp.to_dict(),
-            )
-        except Exception as exc:
-            log.warning("cold_start: ICP enrich/persist failed (non-fatal): %s", exc)
-        # Reach-per-channel card (frame-independent estimates).
-        try:
-            from src.prep_audience import measure_audience_for_cohort
-            from src.ui_decisions import upsert_cohort_audience, upsert_cohort_targeting
-            enabled = [p.strip().lower() for p in (config.ENABLED_PLATFORMS or "").split(",") if p.strip()] \
-                or ["linkedin", "meta", "google"]
-            included_geos = list((row or {}).get("included_geos") or [])
-            for ca in measure_audience_for_cohort(
-                cohort, included_geos=included_geos, enabled_platforms=enabled,
-                li_client=li_client, urn_resolver=urn_res,
-            ):
-                upsert_cohort_audience(
-                    ramp_id=ramp_id, cohort_id=cohort._stg_id, cohort_signature=cohort.name,
-                    platform=ca.platform, audience_size=ca.audience_size, status=ca.status,
-                    geos_used=ca.geos_used, rules_dropped=ca.rules_dropped, forecast=ca.forecast,
+        from src.icp_enrichment import enrich as enrich_icp
+        from src.prep_audience import measure_audience_for_cohort
+        from src.ui_decisions import (
+            upsert_cohort_icp, upsert_cohort_audience, upsert_cohort_targeting,
+        )
+        enabled = [p.strip().lower() for p in (config.ENABLED_PLATFORMS or "").split(",") if p.strip()] \
+            or ["linkedin", "meta", "google"]
+        row_geos = list((row or {}).get("included_geos") or [])
+        locale_hint = (f"en-{location.upper()[:2]}" if location and len(location) >= 2 else None)
+        for cohort in cohorts:
+            try:
+                icp_obj = enrich_icp(cohort, resume_sample=[], locale_hint=locale_hint)
+                cohort._icp = icp_obj
+                upsert_cohort_icp(
+                    ramp_id=ramp_id, cohort_id=cohort._stg_id,
+                    cohort_signature=cohort.name, icp_dict=icp_obj.to_dict(),
                 )
-                upsert_cohort_targeting(
-                    ramp_id=ramp_id, cohort_id=cohort._stg_id, cohort_signature=cohort.name,
-                    platform=ca.platform, facets=ca.facets,
-                )
-        except Exception as exc:
-            log.warning("cold_start: audience persist failed (non-fatal): %s", exc)
+            except Exception as exc:
+                log.warning("cold_start: ICP enrich/persist failed for %r (non-fatal): %s", cohort.name, exc)
+            try:
+                geos = list(getattr(cohort, "_cold_start_geos", []) or []) or row_geos \
+                    or ([fallback_geo] if fallback_geo else [])
+                for ca in measure_audience_for_cohort(
+                    cohort, included_geos=geos, enabled_platforms=enabled,
+                    li_client=li_client, urn_resolver=urn_res,
+                ):
+                    upsert_cohort_audience(
+                        ramp_id=ramp_id, cohort_id=cohort._stg_id, cohort_signature=cohort.name,
+                        platform=ca.platform, audience_size=ca.audience_size, status=ca.status,
+                        geos_used=ca.geos_used, rules_dropped=ca.rules_dropped, forecast=ca.forecast,
+                    )
+                    upsert_cohort_targeting(
+                        ramp_id=ramp_id, cohort_id=cohort._stg_id, cohort_signature=cohort.name,
+                        platform=ca.platform, facets=ca.facets,
+                    )
+            except Exception as exc:
+                log.warning("cold_start: audience persist failed for %r (non-fatal): %s", cohort.name, exc)
 
     return ResolvedCohorts(
-        selected=[cohort],
+        selected=cohorts,
         group_name=f"Outlier {flow_id} {location}".strip(),
         project_id=project_id, flow_id=flow_id, location=location,
         smart_ramp_brief=brief,
