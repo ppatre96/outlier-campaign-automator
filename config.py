@@ -171,11 +171,10 @@ DEFAULT_EXCLUDE_URNS_RAW: dict[str, list[str]] = {
 # ── Multi-platform expansion (Meta + Google Ads) ──────────────────────────────
 # Comma-separated list controlling which ad platforms the pipeline targets per
 # Smart Ramp run. Order is preserved (LinkedIn first by default for back-compat).
-# google_search is registered + wired but OFF by default until coordinated with
-# Bryan (he creates Search manually — enabling by default would duplicate). Add
-# "google_search" to ENABLED_PLATFORMS to turn it on; a console "google" launch
-# then fires both Display + Search.
-ENABLED_PLATFORMS    = os.getenv("ENABLED_PLATFORMS", "linkedin,meta,google")
+# The pipeline OWNS Google Search creation (Responsive Search Ads + keywords) —
+# `google_search` is on by default (2026-06-08); a console "google" launch fires
+# both Display + Search. (Do NOT also build Search by hand — that duplicates.)
+ENABLED_PLATFORMS    = os.getenv("ENABLED_PLATFORMS", "linkedin,meta,google,google_search")
 
 # Per-channel manual launch (feature #3). When set (e.g. "linkedin"|"meta"|
 # "google") by the console's per-channel launch trigger, this run restricts to
