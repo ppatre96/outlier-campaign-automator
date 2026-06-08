@@ -513,32 +513,76 @@ class GoogleAdsClient(AdPlatformClient):
 
         Cap at 30 keywords/ad-group. Mass-mutate in one API call.
         """
+        # Atomic-mutate gotcha: mutate_ad_group_criteria is all-or-nothing, so a
+        # SINGLE policy-violating keyword (e.g. a sensitive-health term Google
+        # PROHIBITS) rejects the WHOLE batch — the ad group ends with zero
+        # keywords. PROHIBITED policy violations are non-exemptible, so the only
+        # path is to drop the offending term(s) the API names and retry with the
+        # rest. We parse the failing operation indices from the error, remove
+        # them, and re-mutate (a few passes covers multiple bad keywords).
         try:
             client = self._ensure_client()
-            criterion_service = client.get_service("AdGroupCriterionService")
-            kws = (targeting or {}).get("keyword_ideas") or []
-            if not kws:
-                log.info("Search ad-group %s has no keyword_ideas to attach", ad_group_resource)
-                return
+        except Exception as exc:
+            log.warning("Google keyword attach: client init failed: %s", exc)
+            return
+        from google.ads.googleads.errors import GoogleAdsException
+        criterion_service = client.get_service("AdGroupCriterionService")
+        keywords = [str(k).strip() for k in ((targeting or {}).get("keyword_ideas") or [])[:30] if str(k).strip()]
+        if not keywords:
+            log.info("Search ad-group %s has no keyword_ideas to attach", ad_group_resource)
+            return
+
+        def _build_ops(kw_list):
             ops = []
-            for kw in kws[:30]:
-                if not (kw or "").strip():
-                    continue
+            for kw in kw_list:
                 op = client.get_type("AdGroupCriterionOperation")
                 c = op.create
                 c.ad_group = ad_group_resource
                 c.status = client.enums.AdGroupCriterionStatusEnum.ENABLED
-                c.keyword.text = str(kw).strip()
+                c.keyword.text = kw
                 c.keyword.match_type = client.enums.KeywordMatchTypeEnum.PHRASE
                 ops.append(op)
-            if ops:
+            return ops
+
+        dropped: list[str] = []
+        for _attempt in range(4):
+            if not keywords:
+                break
+            try:
                 criterion_service.mutate_ad_group_criteria(
-                    customer_id=self._customer_id_str,
-                    operations=ops,
+                    customer_id=self._customer_id_str, operations=_build_ops(keywords),
                 )
-                log.info("Attached %d keyword criteria to %s", len(ops), ad_group_resource)
-        except Exception as exc:
-            log.warning("Google keyword criteria attach failed (non-fatal): %s", exc)
+                log.info(
+                    "Attached %d keyword criteria to %s (dropped %d policy/invalid: %s)",
+                    len(keywords), ad_group_resource, len(dropped), dropped or "none",
+                )
+                return
+            except GoogleAdsException as ex:
+                bad: set[int] = set()
+                for err in ex.failure.errors:
+                    for el in err.location.field_path_elements:
+                        if el.field_name == "operations":
+                            try:
+                                if el._pb.HasField("index"):
+                                    bad.add(el.index)
+                            except Exception:
+                                pass
+                if not bad:
+                    log.warning("Google keyword attach failed (no droppable op index): %s", str(ex)[:200])
+                    return
+                dropped += [keywords[i] for i in sorted(bad) if i < len(keywords)]
+                keywords = [k for i, k in enumerate(keywords) if i not in bad]
+                log.warning(
+                    "Google keyword attach: dropped %d policy/invalid keyword(s) %s — retrying with %d",
+                    len(bad), dropped[-len(bad):], len(keywords),
+                )
+            except Exception as exc:
+                log.warning("Google keyword criteria attach failed (non-fatal): %s", exc)
+                return
+        log.warning(
+            "Google keyword attach: gave up for %s after dropping %s",
+            ad_group_resource, dropped,
+        )
 
     # ── Reach estimation (pre-campaign audience check) ──────────────────────
 
