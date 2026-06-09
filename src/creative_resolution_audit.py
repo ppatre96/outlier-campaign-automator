@@ -76,6 +76,7 @@ def audit_creative_resolution(
     autofix: Optional[bool] = None,
     dim_reader: Callable[[str], Optional[tuple[int, int]]] = _default_dim_reader,
     pauser: Callable[[str, str], bool] = _default_pauser,
+    exclude_containers: Optional[set] = None,
 ) -> dict:
     """Scan `rows` (campaign-registry rows) for sub-minimum creatives.
 
@@ -86,6 +87,7 @@ def audit_creative_resolution(
     """
     min_px = config.MIN_CREATIVE_DIMENSION if min_px is None else min_px
     autofix = config.AUDIT_AUTOFIX_LOWRES if autofix is None else autofix
+    exclude_containers = exclude_containers or set()
 
     checked = 0
     violations: list[dict] = []
@@ -123,7 +125,9 @@ def audit_creative_resolution(
         seen: set[tuple[str, str]] = set()
         for v in violations:
             key = (v["platform"], v["container_id"])
-            if not v["container_id"] or key in seen:
+            # Skip containers already handled (e.g. a prior audit_ramp iteration)
+            # so a re-check never re-pauses the same container.
+            if not v["container_id"] or key in seen or v["container_id"] in exclude_containers:
                 continue
             seen.add(key)
             reason = (

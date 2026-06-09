@@ -270,6 +270,10 @@ MIN_CREATIVE_DIMENSION       = int(os.getenv("MIN_CREATIVE_DIMENSION", "600"))
 # Google ad group / LinkedIn campaign) via the proven launch_verify archivers
 # and writes a creative_lowres_paused audit row. Set false to detect+report only.
 AUDIT_AUTOFIX_LOWRES         = os.getenv("AUDIT_AUTOFIX_LOWRES", "true").lower() in ("1", "true", "yes")
+# Run the consolidated per-ramp audit (src/ramp_audit.audit_ramp) as the last
+# step of every ramp LAUNCH — check→fix→re-check the just-created campaigns to a
+# fixpoint. Set false to disable the per-ramp pass (the weekly auditor still runs).
+RAMP_AUDIT_ENABLED           = os.getenv("RAMP_AUDIT_ENABLED", "true").lower() in ("1", "true", "yes")
 
 # Custom audiences to exclude on every prospecting ad set (provided 2026-05-26
 # by Tuan — the four active-contributor audiences from Outlier's Meta account).

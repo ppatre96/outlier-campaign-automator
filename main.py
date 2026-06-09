@@ -5788,6 +5788,17 @@ def run_launch_for_ramp(
             )
             continue
 
+    # Last step of every LAUNCH: consolidated per-ramp audit — recursively
+    # check + auto-fix the campaigns just created for this ramp (creative
+    # resolution today; extensible) before the run summary goes back to the
+    # poller. Skipped for prep_only / dry_run. Best-effort, never aborts.
+    if not prep_only and not dry_run:
+        try:
+            from src.ramp_audit import audit_ramp
+            aggregated["audit"] = audit_ramp(ramp_id)
+        except Exception as exc:
+            log.warning("run_launch_for_ramp: per-ramp audit failed (non-fatal): %s", exc)
+
     return aggregated
 
 
