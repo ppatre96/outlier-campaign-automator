@@ -96,6 +96,35 @@ def classify_violation(violation: str) -> str:
     return "other"
 
 
+def list_approved_negative_keywords(ramp_id: str) -> list[str]:
+    """Return the negative keywords Bryan APPROVED for this ramp via the console
+    (negative_keyword_overrides where approved=true). Merged on top of the
+    confident config defaults by the Google Search arm. Never raises — missing
+    DB/table returns []."""
+    db_url = os.environ.get("DATABASE_URL", "")
+    if not db_url or not ramp_id:
+        return []
+    try:
+        import psycopg
+    except ImportError:
+        return []
+    try:
+        with psycopg.connect(db_url, connect_timeout=10) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT keyword FROM negative_keyword_overrides "
+                    "WHERE ramp_id = %s AND approved = TRUE",
+                    (ramp_id,),
+                )
+                kws = [str(row[0]) for row in cur.fetchall() if row and row[0]]
+                if kws:
+                    log.info("Loaded %d approved negative keyword(s) for ramp=%s", len(kws), ramp_id)
+                return kws
+    except Exception as exc:
+        log.debug("negative_keyword_overrides read failed (ramp=%s): %s", ramp_id, exc)
+        return []
+
+
 def get_lp_url_override(ramp_id: str, platform: str) -> str:
     """Return the reviewer-set LP URL override for (ramp_id × platform),
     or "" when no override exists. Read by utm_builder.resolve_base_lp_url

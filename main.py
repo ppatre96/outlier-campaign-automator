@@ -4587,6 +4587,20 @@ def _process_extra_platform_arm(
                 {"daily_budget_cents": daily_budget_cents}
                 if daily_budget_cents is not None else {}
             )
+            # Google Search: fold in the negative keywords Bryan approved on the
+            # console for this ramp (on top of the confident config defaults that
+            # _apply_negative_keywords always adds).
+            if platform == "google_search" and ramp_id:
+                try:
+                    from src.console_db import list_approved_negative_keywords
+                    _approved_neg = list_approved_negative_keywords(ramp_id)
+                    if _approved_neg:
+                        targeting = dict(targeting or {})
+                        targeting["negative_keywords"] = (
+                            list((targeting or {}).get("negative_keywords") or []) + _approved_neg
+                        )
+                except Exception as _exc:
+                    log.warning("extra-arm: approved-negative-keyword merge failed (non-fatal): %s", _exc)
             sub_id = client.create_campaign(
                 name=campaign_name,
                 campaign_group_id=group_id,
