@@ -64,3 +64,26 @@ def test_notify_healed_noop_on_empty(monkeypatch):
     monkeypatch.setattr(nf, "_send_to_all_targets", lambda *a, **k: called.__setitem__("n", called["n"] + 1))
     lv.notify_healed("r", [])
     assert called["n"] == 0
+
+
+def test_record_keywords_dropped_flags_and_returns(monkeypatch):
+    events = []
+    import src.ui_decisions as ui
+    monkeypatch.setattr(ui, "log_event", lambda r, e, p, **k: events.append((r, e, p)))
+
+    summ = lv.record_keywords_dropped(
+        ramp_id="GMR-0099", container_id="customers/1/adGroups/9",
+        campaign_name="Scale-GMR-0099 | Search | …",
+        dropped=["assistive technology daily use", "screen reader jobs"],
+    )
+    assert summ is not None
+    assert summ["dropped"] == ["assistive technology daily use", "screen reader jobs"]
+    assert "2 keyword(s) rejected" in summ["reason"]
+    # One audit row written with the launch_keywords_dropped event type.
+    assert len(events) == 1 and events[0][1] == "launch_keywords_dropped"
+
+
+def test_record_keywords_dropped_noop_on_empty():
+    assert lv.record_keywords_dropped(
+        ramp_id="r", container_id="x", campaign_name="c", dropped=[],
+    ) is None

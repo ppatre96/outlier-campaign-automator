@@ -236,17 +236,61 @@ META_API_VERSION     = os.getenv("META_API_VERSION", "v21.0")
 # "local_fallback" and the PNG is saved locally for manual upload.
 META_PAGE_ID         = os.getenv("META_PAGE_ID", "260786120451494")
 
-# Meta Pixel + Custom Conversion (provided 2026-05-26 by Tuan):
-#   Pixel ID:             637714478283926
-#   Custom Conversion ID: 986478843749388  (event: worker_skill_all)
-#   Conversion window:    7-day click only
-# When META_CUSTOM_CONVERSION_ID is set, the Meta arm switches the ad set
-# optimization_goal from LINK_CLICKS → OFFSITE_CONVERSIONS, attaches
-# promoted_object.custom_conversion_id, and sets attribution_spec to N-day
-# click-through. Leave empty to fall back to LINK_CLICKS (back-compat).
+# Meta Pixel + conversion optimization (Tuan).
+#   Pixel ID:          637714478283926  (worker_skill_all — Active, CAPI ~15.6K events/day)
+#   Optimize on event: worker_skill_all  (custom_event_type=OTHER + custom_event_str)
+#   Conversion window: 7-day click only
+# 2026-06-09 — STOPPED using a custom_conversion_id. The custom conversion
+# (986478843749388) was ARCHIVED in Meta, and archived custom conversions track
+# NOTHING — so all 14 GMR-0023 language ad sets recorded 0 conversions despite
+# real traffic (the pixel event itself was healthy). Tuan's fix: optimize
+# directly on the pixel event via promoted_object {pixel_id, custom_event_type:
+# OTHER, custom_event_str}, which sidesteps the archived-conversion trap.
+# When META_PIXEL_ID + META_CUSTOM_EVENT_STR are set, the Meta arm switches the
+# ad set optimization_goal LINK_CLICKS → OFFSITE_CONVERSIONS + sets the
+# attribution window. Empty META_CUSTOM_EVENT_STR → fall back to LINK_CLICKS.
 META_PIXEL_ID                = os.getenv("META_PIXEL_ID", "637714478283926")
-META_CUSTOM_CONVERSION_ID    = os.getenv("META_CUSTOM_CONVERSION_ID", "986478843749388")
+META_CUSTOM_EVENT_STR        = os.getenv("META_CUSTOM_EVENT_STR", "worker_skill_all")
+# Retired 2026-06-09 (archived in Meta); kept only for audit display, NOT used
+# for ad-set promoted_object anymore.
+META_CUSTOM_CONVERSION_ID    = os.getenv("META_CUSTOM_CONVERSION_ID", "")
 META_ATTRIBUTION_WINDOW_DAYS = int(os.getenv("META_ATTRIBUTION_WINDOW_DAYS", "7"))
+
+# Minimum short-side px a creative must have before ANY platform's upload_image
+# will send it (Meta, LinkedIn, Google). Real pipeline creatives are ≥1080 on
+# every side (4:5=1080×1350, 1:1=1080, 9:16=1080×1920); a floor of 600 cleanly
+# rejects thumbnail-sized images (e.g. the 64×64 native-language B/C variants
+# Tuan flagged on GMR-0023 2026-06-09) without ever false-rejecting a valid
+# creative. A rejected upload raises → the arm's verify-and-heal surfaces the
+# reason on console + Slack instead of shipping a pixelated ad. Enforced via
+# src/image_adapter.assert_min_dimensions; also checked by the weekly auditor.
+MIN_CREATIVE_DIMENSION       = int(os.getenv("MIN_CREATIVE_DIMENSION", "600"))
+# When true, the weekly auditor doesn't just FLAG sub-minimum (pixelated)
+# creatives it finds live — it PAUSES the offending container (Meta ad set /
+# Google ad group / LinkedIn campaign) via the proven launch_verify archivers
+# and writes a creative_lowres_paused audit row. Set false to detect+report only.
+AUDIT_AUTOFIX_LOWRES         = os.getenv("AUDIT_AUTOFIX_LOWRES", "true").lower() in ("1", "true", "yes")
+# When true, the per-ramp/weekly audit PAUSES any LinkedIn campaign it finds
+# targeting geo-only (no narrowing skill/title facet — the GMR-0024 ~290M
+# country-wide class that a cold-start facet collapse can ship). Set false to
+# detect+report only. linkedin_targeting_guard prevents these at create time;
+# this is the post-hoc net.
+AUDIT_AUTOFIX_GEO_ONLY       = os.getenv("AUDIT_AUTOFIX_GEO_ONLY", "true").lower() in ("1", "true", "yes")
+# Run the consolidated per-ramp audit (src/ramp_audit.audit_ramp) as the last
+# step of every ramp LAUNCH — check→fix→re-check the just-created campaigns to a
+# fixpoint. Set false to disable the per-ramp pass (the weekly auditor still runs).
+RAMP_AUDIT_ENABLED           = os.getenv("RAMP_AUDIT_ENABLED", "true").lower() in ("1", "true", "yes")
+# Master autofix gate for the per-ramp audit (src/ramp_audit). When false the
+# per-ramp pass DETECTS + reports but applies no fixes (pause/repair). Set false
+# for a detect-only trial before trusting auto-fix on every launch.
+RAMP_AUDIT_AUTOFIX           = os.getenv("RAMP_AUDIT_AUTOFIX", "true").lower() in ("1", "true", "yes")
+# When the meta_tracking check finds a PUBLISHED ad set with wrong tracking
+# (can't be patched in place — Meta subcode 3260011), auto-REBUILD it: deep-copy
+# the ad set (incl. ads) into a fresh PAUSED draft, fix the tracking on the copy
+# (editable since unpublished), and pause the old one. DEFAULT OFF — it creates
+# live ad sets and the Meta copy path isn't yet live-verified; validate on one
+# ad set, then flip on. When off, such ad sets are flagged needs_rebuild only.
+META_TRACKING_AUTO_REBUILD   = os.getenv("META_TRACKING_AUTO_REBUILD", "false").lower() in ("1", "true", "yes")
 
 # Custom audiences to exclude on every prospecting ad set (provided 2026-05-26
 # by Tuan — the four active-contributor audiences from Outlier's Meta account).
@@ -323,6 +367,32 @@ GENERALIST_LOCALE_TARGETING  = os.getenv("GENERALIST_LOCALE_TARGETING", "true").
 # the legacy single skills-only cohort (exact prior behavior; rollback).
 COLD_START_MULTI_COHORT      = os.getenv("COLD_START_MULTI_COHORT", "true").lower() in ("1", "true", "yes")
 
+# Per-ramp cohort targeting overrides (manual). When a ramp's auto-derived
+# cold-start targeting is wrong for a channel — e.g. GMR-0024's BLV ramp, where
+# "legally blind contributor" is a personal attribute LinkedIn can't target —
+# pin the cohort spec(s) here, keyed by ramp_id. Each spec uses the same shape
+# `derive_cohorts_from_job_post()` returns. `skills_only: True` suppresses the
+# base-role title fold so the cohort stays a single-facet (skills-only) audience
+# instead of ANDing titles + skills down to a tiny intersection.
+#
+# GMR-0024 → target accessibility / assistive-technology PROFESSIONALS (who reach
+# blind contributors and are often blind/low-vision themselves) via LinkedIn
+# skill facets. All facets validated live against typeahead (≈4.1M US). Geo is
+# sourced from Smart Ramp (US-only) at launch, not here.
+COHORT_SPEC_OVERRIDES: dict[str, list[dict]] = {
+    "GMR-0024": [
+        {
+            "label": "Accessibility & assistive-technology professionals",
+            "required_skills": ["Assistive Technology", "Accessibility", "JAWS", "WCAG", "Section 508"],
+            "job_titles": [],
+            "fields_of_study": [],
+            "degrees": [],
+            "geos": ["US"],
+            "skills_only": True,
+        },
+    ],
+}
+
 # Per-channel launch model (feature #3, 2026-06-04). When False (default),
 # approving a ramp in the console is the GATE only — the scheduled poller does
 # NOT auto-launch approved ramps. Launching is explicit + per-channel (Diego →
@@ -360,6 +430,30 @@ GOOGLE_CONVERSION_ACTION_ID  = os.getenv("GOOGLE_CONVERSION_ACTION_ID", "7625599
 # do NOT auto-migrate when the default changes — they retain their original
 # strategy until edited via the Ads UI.
 GOOGLE_BID_STRATEGY          = os.getenv("GOOGLE_BID_STRATEGY", "MAXIMIZE_CONVERSION_VALUE")
+
+# Negative keywords attached to every Google Search ad group (BROAD-match
+# exclusions) so spend isn't wasted on wrong-intent queries. Conservative
+# default — research/brand-defensive/existing-user terms that rarely convert for
+# a contributor-acquisition Search ad. CURATE per campaign as Diego/Bryan learn
+# the search-term report; override the whole list via the JSON env. Per-cohort
+# extras can also be passed in targeting["negative_keywords"].
+# CONFIDENT auto-add set only — unambiguous non-prospect intent: brand-trust
+# research (scam/legit/reviews/complaints), existing users (login/sign in), and
+# account-offboarding. Debatable terms (free, salary, jobs, course, training,
+# work from home, …) are NOT auto-added — they go to Bryan for approval first,
+# since they can suppress real prospects. Override the whole list via the JSON env.
+DEFAULT_GOOGLE_SEARCH_NEGATIVE_KEYWORDS: list[str] = [
+    "scam", "legit", "reviews", "complaints",
+    "login", "sign in", "log in",
+    "remove account", "delete account", "cancel account",
+]
+try:
+    _gneg_env = os.getenv("GOOGLE_SEARCH_NEGATIVE_KEYWORDS_JSON", "")
+    GOOGLE_SEARCH_NEGATIVE_KEYWORDS = (
+        _json.loads(_gneg_env) if _gneg_env else DEFAULT_GOOGLE_SEARCH_NEGATIVE_KEYWORDS
+    )
+except Exception:
+    GOOGLE_SEARCH_NEGATIVE_KEYWORDS = DEFAULT_GOOGLE_SEARCH_NEGATIVE_KEYWORDS
 
 # ── LiteLLM proxy (kept for image-gen fallback via /images/generations) ───────
 # Public endpoint (no VPN required). Internal: litellm-proxy.ml-serving-internal.scale.com/v1

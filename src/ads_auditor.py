@@ -71,6 +71,17 @@ def run_weekly_audit(
     recent = _filter_recent(rows, lookback_days, now_utc=now_utc)
     by_platform = _group_by_platform(recent)
 
+    # Deterministic creative-resolution check on EVERY audit run — catches (and,
+    # when AUDIT_AUTOFIX_LOWRES is on, pauses) thumbnail-resolution creatives
+    # that reached a platform (GMR-0023 64×64 native-language variants). Runs
+    # before the LLM passes; never raises into the audit.
+    try:
+        from src.creative_resolution_audit import audit_creative_resolution
+        creative_resolution = audit_creative_resolution(recent)
+    except Exception as exc:
+        log.exception("ads_auditor: creative-resolution check failed (%s)", exc)
+        creative_resolution = {"checked": 0, "violations": [], "paused": [], "error": str(exc)[:200]}
+
     findings: dict[str, dict[str, Any]] = {}
     for platform in _SUPPORTED_PLATFORMS:
         platform_rows = by_platform.get(platform, [])
@@ -93,6 +104,7 @@ def run_weekly_audit(
         "registry_path":  str(registry_path),
         "total_audited":  sum(f.get("campaigns_audited", 0) for f in findings.values()),
         "platforms":      findings,
+        "creative_resolution": creative_resolution,
     }
 
 
@@ -252,11 +264,13 @@ def _build_deployment_context(platform: str) -> str:
         if acct and not acct.startswith("act_"):
             acct = f"act_{acct}"
         conv_line = (
-            f"- Custom Conversion: {config.META_CUSTOM_CONVERSION_ID} (worker_skill_all) — "
-            "value-based, T1=$50/T2=$75/T3=$100 injected upstream via "
-            "ifnd_6a161027c1c2ad7aff752e7a (Tuan, 2026-05-27). 7–14d learning phase from that date."
-            if config.META_CUSTOM_CONVERSION_ID
-            else "- Custom Conversion: NOT configured (META_CUSTOM_CONVERSION_ID empty in Doppler) — value-based bidding falls back to default optimization until set."
+            f"- Conversion optimization: pixel {config.META_PIXEL_ID} event "
+            f"'{config.META_CUSTOM_EVENT_STR}' (custom_event_type=OTHER) — value-based, "
+            "T1=$50/T2=$75/T3=$100 injected upstream via ifnd_6a161027c1c2ad7aff752e7a "
+            "(Tuan). Optimizes the pixel event directly; the old custom conversion "
+            "986478843749388 was archived 2026-06-09 (tracked 0) and is no longer used."
+            if config.META_PIXEL_ID and config.META_CUSTOM_EVENT_STR
+            else "- Conversion optimization: NOT configured (META_PIXEL_ID/META_CUSTOM_EVENT_STR empty in Doppler) — ad sets fall back to LINK_CLICKS until set."
         )
         items = [
             f"- Ad Account: {acct}" if acct else "",

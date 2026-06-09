@@ -237,15 +237,13 @@ class MetaClient(AdPlatformClient):
         name = self._prefixed(name)
         budget = daily_budget_cents if daily_budget_cents is not None else self.PLACEHOLDER_DAILY_BUDGET_CENTS
 
-        # Optimization mode — when a custom conversion is wired up (Tuan's
-        # `worker_skill_all` event, ID 986478843749388 as of 2026-05-26), the
-        # ad set optimizes for OFFSITE_CONVERSIONS instead of LINK_CLICKS so
-        # delivery picks people likely to fire that pixel event, not just any
-        # click. promoted_object pins the conversion + pixel; attribution_spec
-        # restricts the window to 7-day click-through (per Tuan, no view-through).
-        # Empty pixel/conversion → fall back to LINK_CLICKS (back-compat).
+        # Optimization mode — optimize for OFFSITE_CONVERSIONS on Tuan's
+        # `worker_skill_all` pixel event so delivery picks people likely to fire
+        # it, not just any click. attribution_spec restricts the window to 7-day
+        # click-through (per Tuan, no view-through). Empty pixel/event → fall
+        # back to LINK_CLICKS (back-compat).
         optimize_for_conversions = bool(
-            config.META_CUSTOM_CONVERSION_ID and config.META_PIXEL_ID
+            config.META_PIXEL_ID and config.META_CUSTOM_EVENT_STR
         )
         if optimize_for_conversions:
             optimization_goal = AdSet.OptimizationGoal.offsite_conversions
@@ -264,21 +262,18 @@ class MetaClient(AdPlatformClient):
         }
 
         if optimize_for_conversions:
-            # For a CUSTOM conversion, the promoted_object must carry ONLY the
-            # custom_conversion_id — Meta resolves the parent pixel from it.
-            # Sending both pixel_id AND custom_conversion_id is an invalid
-            # combination (error_subcode 1885014 "Promoted Object Invalid",
-            # which failed every GMR-0023 ad set 2026-06-03). Fall back to
-            # {pixel_id + custom_event_type} only when no custom conversion is
-            # configured (standard-event optimization).
-            if config.META_CUSTOM_CONVERSION_ID:
-                params[AdSet.Field.promoted_object] = {
-                    "custom_conversion_id": config.META_CUSTOM_CONVERSION_ID,
-                }
-            else:
-                params[AdSet.Field.promoted_object] = {
-                    "pixel_id": config.META_PIXEL_ID,
-                }
+            # Optimize on the pixel event DIRECTLY. custom_event_type=OTHER +
+            # custom_event_str names the non-standard `worker_skill_all` event;
+            # Meta resolves it on the given pixel. 2026-06-09: this replaced
+            # promoted_object.custom_conversion_id — that custom conversion was
+            # archived in Meta and archived conversions track NOTHING, so all 14
+            # GMR-0023 language ad sets logged 0 conversions. The pixel-event
+            # form avoids the archived-conversion trap (Tuan).
+            params[AdSet.Field.promoted_object] = {
+                "pixel_id":          config.META_PIXEL_ID,
+                "custom_event_type": "OTHER",
+                "custom_event_str":  config.META_CUSTOM_EVENT_STR,
+            }
             params[AdSet.Field.attribution_spec] = [{
                 "event_type":  "CLICK_THROUGH",
                 "window_days": config.META_ATTRIBUTION_WINDOW_DAYS,
@@ -321,6 +316,77 @@ class MetaClient(AdPlatformClient):
                 if config.META_FREQUENCY_CAP_IMPRESSIONS > 0 else "off",
         )
         return ad_set_id
+
+    # ── Conversion-tracking inspection + repair (auditor) ────────────────────
+
+    def get_promoted_object(self, adset_id: str) -> dict:
+        """Read an ad set's live promoted_object (the conversion target). Empty
+        dict if unset/unreadable. Used by the per-ramp audit to verify the ad
+        set optimizes on the pixel event, not the archived custom conversion."""
+        self._ensure_init()
+        from facebook_business.adobjects.adset import AdSet
+        obj = AdSet(adset_id).api_get(fields=[AdSet.Field.promoted_object])
+        return dict(obj.get("promoted_object") or {})
+
+    def repair_promoted_object(self, adset_id: str) -> bool:
+        """Patch an ad set to the correct pixel-event promoted_object +
+        attribution window (the form `create_campaign` now writes).
+
+        IMPORTANT LIMIT (verified live 2026-06-09): Meta FORBIDS editing the
+        conversion/pixel on a **published** ad set — `api_update` returns
+        error_subcode 3260011 "Can't Make Edits to Published Ad Set" (even for a
+        promoted_object-only change). So this only succeeds on a never-published
+        draft ad set. For an already-published ad set the only fix is to
+        RECREATE it with correct tracking + pause the old one (what Tuan did).
+        Raises on rejection so `meta_tracking_audit` can flag it needs-rebuild."""
+        self._ensure_init()
+        from facebook_business.adobjects.adset import AdSet
+        # Set optimization_goal too — ad sets left on LINK_CLICKS (empty
+        # promoted_object) need the goal flipped to OFFSITE_CONVERSIONS for the
+        # pixel-event promoted_object to be valid; for ad sets already on
+        # conversions this is a no-op. Status is intentionally NOT touched — a
+        # repaired ad set stays in whatever state it was (we never un-pause).
+        AdSet(adset_id).api_update(params={
+            "optimization_goal": AdSet.OptimizationGoal.offsite_conversions,
+            "promoted_object": {
+                "pixel_id":          config.META_PIXEL_ID,
+                "custom_event_type": "OTHER",
+                "custom_event_str":  config.META_CUSTOM_EVENT_STR,
+            },
+            "attribution_spec": [{
+                "event_type":  "CLICK_THROUGH",
+                "window_days": config.META_ATTRIBUTION_WINDOW_DAYS,
+            }],
+        })
+        log.info("Meta repair_promoted_object: ad set %s → pixel-event tracking", adset_id)
+        return True
+
+    def rebuild_adset_with_correct_tracking(self, old_adset_id: str) -> str:
+        """Recreate a PUBLISHED ad set (which can't be edited — subcode 3260011)
+        with correct pixel-event tracking. Deep-copies the ad set + its ads into
+        a fresh PAUSED draft, then fixes the conversion target on the copy (which
+        IS editable, never having been published). Returns the new ad set id; the
+        caller pauses the old one. Raises on failure so the auditor falls back to
+        flag-needs-human.
+
+        NOTE: not yet live-verified — gated behind config.META_TRACKING_AUTO_REBUILD.
+        """
+        self._ensure_init()
+        from facebook_business.adobjects.adset import AdSet
+        resp = AdSet(old_adset_id).create_copy(params={
+            "deep_copy":     True,       # copy the ads/creatives too
+            "status_option": "PAUSED",   # new ad set stays a draft
+        })
+        data = dict(resp) if not isinstance(resp, dict) else resp
+        new_id = str(data.get("copied_adset_id") or data.get("id") or "")
+        if not new_id:
+            raise RuntimeError(f"ad set copy returned no id: {data}")
+        # The copy inherits the OLD (wrong) promoted_object — fix it on the copy
+        # (editable since it's never been published).
+        self.repair_promoted_object(new_id)
+        log.info("Meta rebuild: %s → new PAUSED ad set %s with pixel-event tracking",
+                 old_adset_id, new_id)
+        return new_id
 
     def update_campaign_budget(
         self,
@@ -438,6 +504,14 @@ class MetaClient(AdPlatformClient):
         from facebook_business.adobjects.adimage import AdImage
 
         image_path = str(Path(image_path))
+
+        # Guard against thumbnail-sized creatives reaching Meta (Tuan, GMR-0023
+        # 2026-06-09: native-language B/C variants uploaded at 64×64 and rendered
+        # pixelated). Raises below the floor → the arm's verify-and-heal surfaces
+        # the reason instead of shipping a pixelated ad.
+        from src.image_adapter import assert_min_dimensions
+        assert_min_dimensions(image_path, config.MIN_CREATIVE_DIMENSION, platform="meta")
+
         try:
             account = AdAccount(self._ad_account_id)
             image = AdImage(parent_id=self._ad_account_id)

@@ -83,6 +83,10 @@ class GoogleAdsClient(AdPlatformClient):
             raise ValueError(f"GoogleAdsClient channel must be 'display' or 'search', got {channel!r}")
         self._channel = ch
         self._client = None  # lazy
+        # Keywords _apply_keyword_criteria had to drop (policy/invalid) keyed by
+        # ad_group_resource — read by the launch arm to surface "campaign live
+        # but N keywords rejected" on the console + Slack.
+        self.dropped_keywords: dict[str, list[str]] = {}
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -341,6 +345,11 @@ class GoogleAdsClient(AdPlatformClient):
         # audience segments; Search uses keyword criteria.
         if self._channel == "search":
             self._apply_keyword_criteria(ad_group_resource, targeting)
+            # Negative keywords (BROAD-match exclusions): config defaults + any
+            # per-cohort extras passed in targeting["negative_keywords"].
+            negatives = list(config.GOOGLE_SEARCH_NEGATIVE_KEYWORDS or [])
+            negatives += [str(k).strip() for k in ((targeting or {}).get("negative_keywords") or []) if str(k).strip()]
+            self._apply_negative_keywords(ad_group_resource, negatives)
         else:
             self._apply_audience_criteria(ad_group_resource, targeting)
         return ad_group_resource
@@ -556,6 +565,8 @@ class GoogleAdsClient(AdPlatformClient):
                     "Attached %d keyword criteria to %s (dropped %d policy/invalid: %s)",
                     len(keywords), ad_group_resource, len(dropped), dropped or "none",
                 )
+                if dropped:
+                    self.dropped_keywords[ad_group_resource] = list(dropped)
                 return
             except GoogleAdsException as ex:
                 bad: set[int] = set()
@@ -583,6 +594,42 @@ class GoogleAdsClient(AdPlatformClient):
             "Google keyword attach: gave up for %s after dropping %s",
             ad_group_resource, dropped,
         )
+        if dropped:
+            self.dropped_keywords[ad_group_resource] = list(dropped)
+
+    def _apply_negative_keywords(self, ad_group_resource: str, negatives: list[str]) -> None:
+        """Attach BROAD-match negative keywords to a Search ad group so spend
+        isn't wasted on wrong-intent queries. Best-effort, deduped, capped at 50.
+        Negatives are exclusions (no policy review), so a single bad term is
+        unlikely to fail the batch — but we still swallow errors so a negative-
+        keyword hiccup never blocks ad-group creation."""
+        seen: set[str] = set()
+        terms = []
+        for kw in negatives or []:
+            t = str(kw).strip().lower()
+            if t and t not in seen:
+                seen.add(t)
+                terms.append(t)
+        terms = terms[:50]
+        if not terms:
+            return
+        try:
+            client = self._ensure_client()
+            svc = client.get_service("AdGroupCriterionService")
+            ops = []
+            for t in terms:
+                op = client.get_type("AdGroupCriterionOperation")
+                c = op.create
+                c.ad_group = ad_group_resource
+                c.negative = True
+                c.keyword.text = t
+                c.keyword.match_type = client.enums.KeywordMatchTypeEnum.BROAD
+                ops.append(op)
+            svc.mutate_ad_group_criteria(customer_id=self._customer_id_str, operations=ops)
+            log.info("Attached %d negative keyword(s) to %s", len(terms), ad_group_resource)
+        except Exception as exc:
+            log.warning("Google negative-keyword attach failed (non-fatal) for %s: %s",
+                        ad_group_resource, str(exc)[:200])
 
     # ── Reach estimation (pre-campaign audience check) ──────────────────────
 
@@ -777,6 +824,11 @@ class GoogleAdsClient(AdPlatformClient):
     def upload_image(self, image_path: str | Path) -> str:
         client = self._ensure_client()
         path = Path(image_path)
+        # Reject thumbnail-resolution creatives before upload (GMR-0023: 64×64
+        # variants rendered pixelated). Raises → extra-platform arm's
+        # verify-and-heal surfaces the reason instead of shipping a pixelated ad.
+        from src.image_adapter import assert_min_dimensions
+        assert_min_dimensions(path, config.MIN_CREATIVE_DIMENSION, platform="google")
         with open(path, "rb") as fh:
             image_bytes = fh.read()
         asset_service = client.get_service("AssetService")

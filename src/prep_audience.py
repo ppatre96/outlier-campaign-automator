@@ -95,6 +95,14 @@ def measure_audience_for_cohort(
         if _gen_locale:
             from src.locales import linkedin_skill_urn
             _skill_urn = linkedin_skill_urn(_gen_locale)
+        # Cold-start / ICP-fallback cohorts arrive here with no Stage C number.
+        # For a SPECIALIST cohort we must size on its OWN resolved facets (skills/
+        # titles), not geo alone — otherwise an unresolved facet set silently
+        # shows the whole country (GMR-0024's ~290M). resolve_cohort_rules uses
+        # the live typeahead fallback, so invented facets that map to no LinkedIn
+        # URN drop out, and `linkedin_targeting_collapsed` then flags the cohort
+        # for a human instead of reporting a misleading geo-only "measured" size.
+        _li_collapsed = False
         if li_audience_size is None and li_client is not None and urn_resolver is not None and est_geos:
             try:
                 geo_urns: list[str] = []
@@ -103,26 +111,47 @@ def measure_audience_for_cohort(
                     if _u:
                         geo_urns.append(_u)
                 if geo_urns:
-                    _facets = {"profileLocations": geo_urns}
-                    if _skill_urn:
-                        _facets["skills"] = [_skill_urn]
-                    live = li_client.get_audience_count(_facets)
-                    if live and live > 0:
-                        size = live
-                        log.info(
-                            "LinkedIn live audience: cohort=%s geos=%s skill=%s → %d",
-                            getattr(cohort, "name", "?"), est_geos, _skill_urn or "(geo-only)", live,
-                        )
+                    if _gen_locale:
+                        # Generalist locale → geo (+ language skill) by design.
+                        _facets = {"profileLocations": geo_urns}
+                        if _skill_urn:
+                            _facets["skills"] = [_skill_urn]
+                    else:
+                        # Specialist cold-start → size on the cohort's own facets.
+                        from src.linkedin_targeting_guard import linkedin_targeting_collapsed
+                        _facets = dict(urn_resolver.resolve_cohort_rules(getattr(cohort, "rules", None) or []))
+                        _li_collapsed = linkedin_targeting_collapsed(cohort, _facets)
+                        _facets["profileLocations"] = geo_urns
+                    if not _li_collapsed:
+                        live = li_client.get_audience_count(_facets)
+                        if live and live > 0:
+                            size = live
+                            log.info(
+                                "LinkedIn live audience: cohort=%s geos=%s facets=%s → %d",
+                                getattr(cohort, "name", "?"), est_geos,
+                                sorted(k for k in _facets if k != "profileLocations") or "(geo-only)", live,
+                            )
             except Exception as exc:
                 log.warning(
                     "LinkedIn live geo audience estimate failed for cohort=%s: %s",
                     getattr(cohort, "name", "?"), exc,
                 )
 
-        status = "measured" if size is not None else "skipped"
-        if size is not None and size < config.AUDIENCE_SIZE_MIN:
-            status = "below_floor"
-        if _gen_locale:
+        if _li_collapsed:
+            # Targeting evaporated — don't report a geo-only size as "measured".
+            status, size = "needs_human", None
+        else:
+            status = "measured" if size is not None else "skipped"
+            if size is not None and size < config.AUDIENCE_SIZE_MIN:
+                status = "below_floor"
+        if _li_collapsed:
+            li_facets = {
+                "collapsed": True,
+                "reason": "no LinkedIn skill/title facet resolved (cold-start targeting) — "
+                          "would target geo-only; needs human targeting",
+                "rules": [str(feat) for feat, _val in (getattr(cohort, "rules", None) or [])],
+            }
+        elif _gen_locale:
             # Generalist locale cohort → LinkedIn targets by geo only (v1).
             # Surface human-readable facets instead of the raw synthetic rule.
             from src.locales import get_locale

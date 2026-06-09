@@ -141,6 +141,65 @@ def heal_empty(
     return summary
 
 
+def record_keywords_dropped(
+    *,
+    ramp_id: str,
+    container_id: str,
+    campaign_name: str,
+    dropped: list[str],
+) -> Optional[dict]:
+    """Flag keywords Google rejected (policy/invalid) on an otherwise-healthy
+    Search campaign. The ad-group still went live with the surviving keywords —
+    this is a "needs review", not a heal. Writes a `launch_keywords_dropped`
+    audit row (the console reads it) and returns a summary for the Slack ping.
+    Best-effort — never raises."""
+    if not dropped:
+        return None
+    summary = {
+        "platform": "google_search",
+        "container_id": str(container_id),
+        "campaign_name": campaign_name,
+        "dropped": list(dropped),
+        "reason": (
+            f"{len(dropped)} keyword(s) rejected by Google (policy/invalid), "
+            f"campaign live with the rest: {', '.join(dropped)}"
+        )[:400],
+    }
+    log.warning(
+        "launch_verify: %d keyword(s) dropped on %s (%s): %s",
+        len(dropped), container_id, campaign_name, dropped,
+    )
+    try:
+        from src.ui_decisions import log_event
+        log_event(ramp_id or "", "launch_keywords_dropped", summary)
+    except Exception as exc:
+        log.debug("launch_verify: keywords-dropped log_event skipped: %s", exc)
+    return summary
+
+
+def notify_keywords_dropped(ramp_id: str, dropped_notes: list[dict]) -> None:
+    """One threaded Slack ping summarising keywords dropped this arm.
+    Best-effort — Slack outage never blocks the launch."""
+    if not dropped_notes:
+        return
+    lines = [
+        f"⚠️ Verify: {len(dropped_notes)} Search campaign(s) for {ramp_id} went live "
+        f"with some keywords dropped (Google policy/invalid):",
+    ]
+    for n in dropped_notes:
+        _kw = n.get("dropped") or []
+        lines.append(
+            f"  • {n.get('campaign_name') or n.get('container_id')} — "
+            f"{len(_kw)} dropped: {', '.join(_kw)}"
+        )
+    text = "\n".join(lines)
+    try:
+        from src.smart_ramp_notifier import _send_to_all_targets, _lookup_thread_ts
+        _send_to_all_targets(text, ramp_id=ramp_id, thread_ts=_lookup_thread_ts(ramp_id))
+    except Exception as exc:
+        log.warning("launch_verify: notify_keywords_dropped Slack ping failed (non-fatal): %s", exc)
+
+
 def notify_healed(ramp_id: str, healed: list[dict]) -> None:
     """Fire ONE Slack ping summarising the empties healed in this arm, threaded
     under the ramp. Best-effort — Slack outage never blocks the launch."""
@@ -153,7 +212,8 @@ def notify_healed(ramp_id: str, healed: list[dict]) -> None:
     for h in healed:
         lines.append(
             f"  • {h.get('platform')} — {h.get('campaign_name') or h.get('container_id')} "
-            f"({'archived' if h.get('archived') else 'archive failed'})"
+            f"({'archived' if h.get('archived') else 'archive failed'}) — "
+            f"{h.get('reason') or 'no ads/creatives attached after retry'}"
         )
     text = "\n".join(lines)
     try:

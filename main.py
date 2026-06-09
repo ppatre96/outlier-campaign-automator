@@ -39,6 +39,7 @@ from src.analysis import stage_a, stage_b   # stage_a is now a dispatcher (suppo
 from src.linkedin_urn import UrnResolver
 from src.linkedin_api import LinkedInClient, ImageAdResult
 from src.stage_c import stage_c
+from src.linkedin_targeting_guard import linkedin_targeting_collapsed
 from src.figma_creative import (
     FigmaCreativeClient,
     build_copy_variants,
@@ -737,6 +738,20 @@ def _process_row(
         if included_geos:
             facet_urns = _apply_geo_overrides(facet_urns, included_geos, urn_res)
 
+        # Cold-start cohorts bypass Stage C's no_urns_resolved reject. If this
+        # cohort meant to facet-target but nothing resolved, _apply_geo_overrides
+        # above left us with geo-only targeting — shipping now would buy the
+        # whole country (the GMR-0024 ~290M class). Skip + flag for a human.
+        if linkedin_targeting_collapsed(cohort, facet_urns):
+            msg = (
+                f"LinkedIn cohort '{cohort.name}' targeting collapsed to geo-only "
+                f"(no skill/title facet resolved) — skipped to avoid a country-wide "
+                f"spend. Needs human targeting."
+            )
+            log.warning(msg)
+            run_blockers.add(msg)
+            continue
+
         # Layer per-cohort overrides on top of the shared set.
         cohort_add_urns    = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_add", []) or [])
         cohort_remove_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_remove", []) or [])
@@ -1382,6 +1397,18 @@ def _process_inmail_campaigns(
                     facet_urns = _apply_geo_overrides(facet_urns, group_geos, urn_res)
                 facet_urns = _apply_generalist_language_skill(facet_urns, cohort)
 
+                # Cold-start cohorts bypass Stage C — guard against shipping a
+                # geo-only (country-wide) InMail campaign when no skill/title
+                # facet resolved. See _process_static_campaigns for the rationale.
+                if linkedin_targeting_collapsed(cohort, facet_urns):
+                    log.warning(
+                        "InMail cohort '%s' geo=%s targeting collapsed to geo-only "
+                        "(no skill/title facet resolved) — skipped to avoid a "
+                        "country-wide spend. Needs human targeting.",
+                        cohort.name, geo_group.cluster_label,
+                    )
+                    continue
+
                 # Per-geo audience recheck (2026-05-20). See matching block in
                 # _process_static_campaigns. InMail audience reach is gated by
                 # the same audienceCounts API; recording per (cohort × geo)
@@ -1495,8 +1522,10 @@ def _process_inmail_campaigns(
                         "_process_inmail_campaigns: create_inmail_ad raised cohort=%s angle=%s: %s",
                         cohort.name, angle_label, _exc,
                     )
+                    _im_errors.append(f"{type(_exc).__name__}: {str(_exc)[:200]}")
                     return False
                 if not creative_urn:
+                    _im_errors.append("create_inmail_ad returned no creative URN")
                     return False
                 sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
 
@@ -1529,6 +1558,7 @@ def _process_inmail_campaigns(
 
             _im_ok = 0
             _im_failed: list[tuple] = []
+            _im_errors: list[str] = []  # failure reasons for verify-and-heal surfacing
             for angle_label, variant in valid_pairs:
                 if _attach_inmail(angle_label, variant):
                     _im_ok += 1
@@ -1548,12 +1578,16 @@ def _process_inmail_campaigns(
                     if _attach_inmail(angle_label, variant):
                         _im_ok += 1
                 if _im_ok == 0:
+                    _reason = (
+                        "; ".join(dict.fromkeys(_im_errors))[:400] if _im_errors
+                        else "no InMail content attached after retry"
+                    )
                     _summ = launch_verify.heal_empty(
                         platform="linkedin",
                         container_id=campaign_urn,
                         ramp_id=ramp_id or "",
                         campaign_name=campaign_name,
-                        reason="no InMail content attached after retry",
+                        reason=_reason,
                         li_client=li_client,
                     )
                     if _summ:
@@ -2247,7 +2281,16 @@ def _resolve_cold_start_cohort(
     # degrees, geos}.
     fallback_geo = ""
     specs: list[dict] = []
-    if config.COLD_START_MULTI_COHORT and description:
+    # Manual per-ramp override wins over LLM derivation (e.g. GMR-0024 BLV →
+    # accessibility-professional skill facets; see config.COHORT_SPEC_OVERRIDES).
+    _override_specs = config.COHORT_SPEC_OVERRIDES.get((row or {}).get("ramp_id") or "")
+    if _override_specs:
+        specs = [dict(s) for s in _override_specs]
+        log.warning(
+            "cold_start: ramp=%s using COHORT_SPEC_OVERRIDES (%d spec(s)) — bypassing LLM derivation",
+            (row or {}).get("ramp_id"), len(specs),
+        )
+    if not specs and config.COLD_START_MULTI_COHORT and description:
         specs = derive_cohorts_from_job_post(description, max_cohorts=config.MAX_COHORTS_PER_GEO_CLUSTER)
     if not specs:
         icp = derive_icp_from_job_post(description) if description else {}
@@ -2295,8 +2338,12 @@ def _resolve_cold_start_cohort(
         for s in spec.get("required_skills", [])[:5]:
             _add("skills", s)
         # Titles: explicit spec titles + base-role family matched off the label.
+        # `skills_only` specs (manual overrides) skip the base-role fold so the
+        # cohort stays single-facet — titles AND skills would AND down to a tiny
+        # intersection (e.g. GMR-0024: 4.1M skills-only vs 5.4k titles∩skills).
         titles = list(spec.get("job_titles", []))
-        titles += extract_base_role_candidates(derived_tg_label=label)
+        if not spec.get("skills_only"):
+            titles += extract_base_role_candidates(derived_tg_label=label)
         for t in titles:
             _add("job_titles_norm", t)
         for f in spec.get("fields_of_study", [])[:3]:
@@ -3769,6 +3816,7 @@ def _process_static_campaigns(
         # didn't (captured once per spec just before the attach attempt).
         _li_attached: set[str] = set()
         _li_payloads: dict[str, dict] = {}
+        _li_errors: list[str] = []  # failure reasons for verify-and-heal surfacing
 
         # ── Attach one creative per angle to the just-created campaign. ─────
         for spec in specs:
@@ -3873,6 +3921,7 @@ def _process_static_campaigns(
             except Exception as exc:
                 log.warning("_process_static_campaigns: upload/attach raised for angle %s: %s", angle_label, exc)
                 creative_paths[row_id] = ""
+                _li_errors.append(f"{type(exc).__name__}: {str(exc)[:200]}")
                 continue
 
             if ad_result.status == "ok":
@@ -3931,12 +3980,18 @@ def _process_static_campaigns(
                     angle_label, ad_result.error_class, ad_result.error_message,
                     drive_url or "(upload failed)",
                 )
+                _li_errors.append(
+                    f"{ad_result.error_class or 'blocked'}: {ad_result.error_message or 'creative attach blocked'}"[:200]
+                )
             else:  # status == "error"
                 log.error(
                     "_process_static_campaigns: create_image_ad hard error angle=%s: %s — %s",
                     angle_label, ad_result.error_class, ad_result.error_message,
                 )
                 creative_paths[row_id] = ""
+                _li_errors.append(
+                    f"{ad_result.error_class or 'error'}: {ad_result.error_message or 'unknown'}"[:200]
+                )
 
         # ── Verify-and-heal (piece C). If no creative attached to this
         # campaign, retry each captured spec once; if still none, archive the
@@ -3959,15 +4014,24 @@ def _process_static_campaigns(
                     if _rr.status == "ok":
                         _li_attached.add(_rid)
                         creative_paths[_rid] = _rr.creative_urn
+                    else:
+                        _li_errors.append(
+                            f"{_rr.error_class or 'error'}: {_rr.error_message or 'unknown'}"[:200]
+                        )
                 except Exception as _exc:
                     log.warning("_process_static_campaigns: heal retry raised for %s: %s", _rid, _exc)
+                    _li_errors.append(f"{type(_exc).__name__}: {str(_exc)[:200]}")
             if not _li_attached:
+                _reason = (
+                    "; ".join(dict.fromkeys(_li_errors))[:400] if _li_errors
+                    else "no creative attached after retry"
+                )
                 _summ = launch_verify.heal_empty(
                     platform="linkedin",
                     container_id=campaign_urn,
                     ramp_id=ramp_id or "",
                     campaign_name=campaign_name,
-                    reason="no creative attached after retry",
+                    reason=_reason,
                     li_client=li_client,
                 )
                 if _summ:
@@ -4401,6 +4465,7 @@ def _process_extra_platform_arm(
     )
 
     healed_empties: list[dict] = []
+    keyword_drops: list[dict] = []  # Search keywords Google rejected (needs review)
     for (stg_id, cluster), specs in grouped.items():
         meta = g_meta[(stg_id, cluster)]
         cohort     = meta["cohort"]
@@ -4562,6 +4627,20 @@ def _process_extra_platform_arm(
                 {"daily_budget_cents": daily_budget_cents}
                 if daily_budget_cents is not None else {}
             )
+            # Google Search: fold in the negative keywords Bryan approved on the
+            # console for this ramp (on top of the confident config defaults that
+            # _apply_negative_keywords always adds).
+            if platform == "google_search" and ramp_id:
+                try:
+                    from src.console_db import list_approved_negative_keywords
+                    _approved_neg = list_approved_negative_keywords(ramp_id)
+                    if _approved_neg:
+                        targeting = dict(targeting or {})
+                        targeting["negative_keywords"] = (
+                            list((targeting or {}).get("negative_keywords") or []) + _approved_neg
+                        )
+                except Exception as _exc:
+                    log.warning("extra-arm: approved-negative-keyword merge failed (non-fatal): %s", _exc)
             sub_id = client.create_campaign(
                 name=campaign_name,
                 campaign_group_id=group_id,
@@ -4792,6 +4871,13 @@ def _process_extra_platform_arm(
                 ad_result.creative_id if ad_result.status == "ok"
                 else (str(png_path) if png_path else "")
             )
+            if ad_result.status != "ok":
+                # Stash the real failure so verify-and-heal can surface WHY this
+                # ad couldn't be created (console + Slack), not just "0 ads".
+                spec["_last_error"] = (
+                    f"{ad_result.error_class or 'error'}: "
+                    f"{ad_result.error_message or 'unknown'}"
+                )[:300]
             return ad_result.status == "ok"
 
         # First pass: one ad per angle.
@@ -4816,18 +4902,41 @@ def _process_extra_platform_arm(
                 if _attempt_and_record(spec):
                     ads_ok += 1
             if ads_ok == 0:
+                _errs = list(dict.fromkeys(
+                    s["_last_error"] for s in specs if s.get("_last_error")
+                ))
+                _reason = (
+                    "; ".join(_errs)[:400] if _errs
+                    else f"0/{len(specs)} ads attached after retry"
+                )
                 _summ = launch_verify.heal_empty(
                     platform=platform,
                     container_id=sub_id,
                     ramp_id=ramp_id or "",
                     campaign_name=campaign_name,
-                    reason=f"0/{len(specs)} ads attached after retry",
+                    reason=_reason,
                 )
                 if _summ:
                     healed_empties.append(_summ)
 
+        # Surface keywords Google rejected on an otherwise-healthy Search
+        # campaign (live with the survivors — not an empty heal, a "needs
+        # review"). dropped_keywords is keyed by ad_group_resource (= sub_id).
+        if config.LAUNCH_VERIFY_ENABLED and platform == "google_search" and ads_ok > 0:
+            _dropped_kw = (getattr(client, "dropped_keywords", {}) or {}).get(sub_id) or []
+            if _dropped_kw:
+                _note = launch_verify.record_keywords_dropped(
+                    ramp_id=ramp_id or "",
+                    container_id=sub_id,
+                    campaign_name=campaign_name,
+                    dropped=_dropped_kw,
+                )
+                if _note:
+                    keyword_drops.append(_note)
+
     if config.LAUNCH_VERIFY_ENABLED:
         launch_verify.notify_healed(ramp_id or "", healed_empties)
+        launch_verify.notify_keywords_dropped(ramp_id or "", keyword_drops)
 
     return out
 
@@ -5732,6 +5841,17 @@ def run_launch_for_ramp(
                 ramp_id, row.get("cohort_id"),
             )
             continue
+
+    # Last step of every LAUNCH: consolidated per-ramp audit — recursively
+    # check + auto-fix the campaigns just created for this ramp (creative
+    # resolution today; extensible) before the run summary goes back to the
+    # poller. Skipped for prep_only / dry_run. Best-effort, never aborts.
+    if not prep_only and not dry_run:
+        try:
+            from src.ramp_audit import audit_ramp
+            aggregated["audit"] = audit_ramp(ramp_id)
+        except Exception as exc:
+            log.warning("run_launch_for_ramp: per-ramp audit failed (non-fatal): %s", exc)
 
     return aggregated
 

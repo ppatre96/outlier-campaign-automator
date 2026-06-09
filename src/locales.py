@@ -89,6 +89,16 @@ LOCALES: dict[str, LocaleTargeting] = {
         "ar-eg", "Egyptian Arabic", 28, 1019, "ar_AE",
         ["العمل من المنزل", "وظائف اون لاين", "الربح من الانترنت", "عمل عن بعد"],
     ),
+    # es-mx was the ONE GMR-0023 locale missing here — without it
+    # is_generalist_cohort() failed (b) "known locale", so the es-MX cohort fell
+    # through to Stage-A beam and mined noise cohorts (english_certificate_b2,
+    # phd_student, …) instead of targeting Mexican-Spanish generalists. Added
+    # 2026-06-09. Meta adlocale 23 = "Spanish" (Latin-American; 7 is Spain);
+    # Google 1003 = Spanish. Geo MX scopes it to Mexico.
+    "es-mx": LocaleTargeting(
+        "es-mx", "Mexican Spanish", 23, 1003, "es_MX",
+        ["trabajo desde casa", "trabajo en línea", "ganar dinero en línea", "trabajo remoto", "ingreso extra en línea"],
+    ),
 }
 
 

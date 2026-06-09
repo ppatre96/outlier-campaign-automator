@@ -101,3 +101,47 @@ def test_base_role_titles_folded_in(monkeypatch):
     rules = {r[0] for r in res.selected[0].rules}
     assert "skills__pytorch" in rules
     assert "job_titles_norm__ml_engineer" in rules
+
+
+def test_cohort_spec_override_wins_and_is_skills_only(monkeypatch):
+    """A per-ramp COHORT_SPEC_OVERRIDES entry bypasses LLM derivation, and a
+    skills_only spec suppresses the base-role title fold (so the cohort stays a
+    single-facet skills audience — the GMR-0024 fix)."""
+    from unittest.mock import MagicMock as _MM
+    _patch(monkeypatch, cohorts=[], base_roles=["Accessibility Specialist"])
+    derive = _MM(return_value=[{"label": "LLM", "required_skills": ["x"]}])
+    monkeypatch.setattr(jp, "derive_cohorts_from_job_post", derive)
+    monkeypatch.setattr(config, "COHORT_SPEC_OVERRIDES", {
+        "TEST-RAMP": [{
+            "label": "Accessibility pros",
+            "required_skills": ["Assistive Technology", "Accessibility"],
+            "job_titles": [], "fields_of_study": [], "degrees": [],
+            "geos": ["US"], "skills_only": True,
+        }],
+    })
+    # Neutralize the ramp_id persistence block (DB + ICP enrich) — not under test.
+    import src.icp_enrichment as ie
+    import src.ui_decisions as ui
+    import src.prep_audience as pa
+    monkeypatch.setattr(ie, "enrich", lambda *a, **k: _MM(to_dict=lambda: {}))
+    monkeypatch.setattr(pa, "measure_audience_for_cohort", lambda *a, **k: [])
+    monkeypatch.setattr(ui, "upsert_cohort_icp", lambda *a, **k: None)
+    monkeypatch.setattr(ui, "upsert_cohort_audience", lambda *a, **k: None)
+    monkeypatch.setattr(ui, "upsert_cohort_targeting", lambda *a, **k: None)
+    monkeypatch.setattr(ui, "_connect", lambda *a, **k: (_ for _ in ()).throw(Exception("no db")))
+
+    res = _run(row={"ramp_id": "TEST-RAMP", "ramp_summary": "blind users"})
+    assert derive.call_count == 0  # LLM derivation bypassed by the override
+    assert len(res.selected) == 1
+    rules = {r[0] for r in res.selected[0].rules}
+    assert "skills__assistive_technology" in rules and "skills__accessibility" in rules
+    # skills_only → NO title rules even though base_roles was non-empty
+    assert not any(r.startswith("job_titles_norm__") for r in rules)
+
+
+def test_gmr0024_override_registered():
+    """The live GMR-0024 override is a skills-only, US, no-titles accessibility cohort."""
+    specs = config.COHORT_SPEC_OVERRIDES.get("GMR-0024")
+    assert specs and specs[0].get("skills_only") is True
+    assert specs[0]["required_skills"] and not specs[0]["job_titles"]
+    assert specs[0]["geos"] == ["US"]
