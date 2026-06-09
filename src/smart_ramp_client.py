@@ -64,7 +64,9 @@ class SmartRampClient:
             bypass_secret: Vercel Protection Bypass for Automation secret.
                           If not provided, reads from VERCEL_AUTOMATION_BYPASS_SECRET env var.
             api_token: Bearer token for Smart Ramp API (required since 2026-05-27 auth rotation).
-                       If not provided, reads from TARGETS_API_TOKEN env var.
+                       If not provided, reads SMART_RAMP_API_TOKEN, then the legacy
+                       TARGETS_API_TOKEN (renamed 2026-06-09; both work during the
+                       transition, new name wins).
         """
         self.bypass_secret = bypass_secret or os.getenv(
             "VERCEL_AUTOMATION_BYPASS_SECRET"
@@ -74,12 +76,18 @@ class SmartRampClient:
                 "VERCEL_AUTOMATION_BYPASS_SECRET not set. "
                 "Get it from Smart Ramp project → Settings → Deployment Protection → Vercel Authentication."
             )
-        self.api_token = api_token or os.getenv("TARGETS_API_TOKEN")
+        # 2026-06-09: token renamed TARGETS_API_TOKEN → SMART_RAMP_API_TOKEN.
+        # Prefer the new name; fall back to the legacy name during the transition.
+        self.api_token = (
+            api_token
+            or os.getenv("SMART_RAMP_API_TOKEN")
+            or os.getenv("TARGETS_API_TOKEN")
+        )
         if not self.api_token:
             raise ValueError(
-                "TARGETS_API_TOKEN not set. "
-                "Smart Ramp now requires a Bearer token in addition to the Vercel bypass secret. "
-                "Get it from Quintin (1Password share) and set in Doppler outlier-campaign-agent/{dev,prd}."
+                "SMART_RAMP_API_TOKEN not set. "
+                "Smart Ramp requires a Bearer token in addition to the Vercel bypass secret. "
+                "Get it from Quintin and set in Doppler outlier-campaign-agent/{dev,prd}."
             )
 
     def _headers(self) -> dict:
