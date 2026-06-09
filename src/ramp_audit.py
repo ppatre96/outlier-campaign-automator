@@ -35,20 +35,34 @@ def _registry_rows_for_ramp(ramp_id: str) -> list[dict]:
 
 
 def _check_creative_resolution(rows, *, autofix, handled) -> dict:
-    """Run the creative-resolution check, skipping containers already handled.
-    Returns {violations, paused (container ids handled this pass)}."""
+    """Pause sub-minimum (pixelated) creatives. Returns {name, violations,
+    handled (container ids fixed this pass), detail}."""
     from src.creative_resolution_audit import audit_creative_resolution
     cr = audit_creative_resolution(rows, autofix=autofix, exclude_containers=handled)
     return {
         "name": "creative_resolution",
         "violations": cr["violations"],
-        "paused": [p["container_id"] for p in cr["paused"] if p.get("container_id")],
+        "handled": [p["container_id"] for p in cr["paused"] if p.get("container_id")],
         "detail": cr["paused"],
     }
 
 
-# Registered deterministic checks. Each: (rows, *, autofix, handled) -> dict.
-_CHECKS = [_check_creative_resolution]
+def _check_meta_tracking(rows, *, autofix, handled) -> dict:
+    """Repair Meta ad sets not optimizing on the pixel event (the archived-
+    custom-conversion trap that zeroed GMR-0023 conversions)."""
+    from src.meta_tracking_audit import audit_meta_tracking
+    mt = audit_meta_tracking(rows, autofix=autofix, exclude_containers=handled)
+    return {
+        "name": "meta_tracking",
+        "violations": mt["violations"],
+        "handled": mt["handled"],
+        "detail": mt["detail"],
+    }
+
+
+# Registered deterministic checks. Each: (rows, *, autofix, handled) -> dict
+# returning {name, violations[], handled[container ids fixed], detail[]}.
+_CHECKS = [_check_creative_resolution, _check_meta_tracking]
 
 
 def audit_ramp(
@@ -65,7 +79,7 @@ def audit_ramp(
     """
     if not config.RAMP_AUDIT_ENABLED:
         return {"ramp_id": ramp_id, "skipped": "RAMP_AUDIT_ENABLED=false"}
-    autofix = config.AUDIT_AUTOFIX_LOWRES if autofix is None else autofix
+    autofix = config.RAMP_AUDIT_AUTOFIX if autofix is None else autofix
 
     handled: set[str] = set()
     fixes: list[dict] = []
@@ -79,9 +93,9 @@ def audit_ramp(
             residual = []
             for check in _CHECKS:
                 res = check(rows, autofix=autofix, handled=handled)
-                for cid in res["paused"]:
+                for cid in res["handled"]:
                     handled.add(cid)
-                applied_this_pass += len(res["paused"])
+                applied_this_pass += len(res["handled"])
                 fixes.extend(res.get("detail", []))
                 # Anything still flagged whose container wasn't (or couldn't be) fixed.
                 residual.extend([
@@ -111,22 +125,28 @@ def audit_ramp(
     return summary
 
 
+def _describe(item: dict) -> str:
+    """One-line, check-agnostic description of an audit issue/fix."""
+    plat = item.get("platform", "?")
+    cid = item.get("container_id", "?")
+    if item.get("width") is not None and item.get("height") is not None:
+        return f"{plat} {cid} — creative {item['width']}x{item['height']}px (below minimum)"
+    if "promoted_object" in item or item.get("expected"):
+        return f"{plat} {cid} — wrong conversion tracking (not optimizing on the pixel event)"
+    return f"{plat} {cid}"
+
+
 def _notify(ramp_id: str, fixes: list[dict], residual: list[dict]) -> None:
     lines = [f"🔎 Ramp audit for {ramp_id}:"]
     if fixes:
         lines.append(f"  • auto-fixed {len(fixes)} issue(s):")
         for f in fixes[:20]:
-            lines.append(
-                f"    – paused {f.get('platform')} {f.get('container_id')} "
-                f"({f.get('width')}x{f.get('height')}px creative, below minimum)"
-            )
+            verb = "repaired tracking on" if f.get("repaired") is not None else "paused"
+            lines.append(f"    – {verb} {_describe(f)}")
     if residual:
         lines.append(f"  • ⚠️ {len(residual)} issue(s) NEED REVIEW (not auto-fixed):")
         for r in residual[:20]:
-            lines.append(
-                f"    – {r.get('platform')} {r.get('container_id')} "
-                f"{r.get('width')}x{r.get('height')}px"
-            )
+            lines.append(f"    – {_describe(r)}")
     try:
         from src.smart_ramp_notifier import _send_to_all_targets, _lookup_thread_ts
         _send_to_all_targets("\n".join(lines), ramp_id=ramp_id, thread_ts=_lookup_thread_ts(ramp_id))

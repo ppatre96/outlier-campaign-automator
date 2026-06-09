@@ -274,6 +274,10 @@ AUDIT_AUTOFIX_LOWRES         = os.getenv("AUDIT_AUTOFIX_LOWRES", "true").lower()
 # step of every ramp LAUNCH — check→fix→re-check the just-created campaigns to a
 # fixpoint. Set false to disable the per-ramp pass (the weekly auditor still runs).
 RAMP_AUDIT_ENABLED           = os.getenv("RAMP_AUDIT_ENABLED", "true").lower() in ("1", "true", "yes")
+# Master autofix gate for the per-ramp audit (src/ramp_audit). When false the
+# per-ramp pass DETECTS + reports but applies no fixes (pause/repair). Set false
+# for a detect-only trial before trusting auto-fix on every launch.
+RAMP_AUDIT_AUTOFIX           = os.getenv("RAMP_AUDIT_AUTOFIX", "true").lower() in ("1", "true", "yes")
 
 # Custom audiences to exclude on every prospecting ad set (provided 2026-05-26
 # by Tuan — the four active-contributor audiences from Outlier's Meta account).
@@ -387,6 +391,24 @@ GOOGLE_CONVERSION_ACTION_ID  = os.getenv("GOOGLE_CONVERSION_ACTION_ID", "7625599
 # do NOT auto-migrate when the default changes — they retain their original
 # strategy until edited via the Ads UI.
 GOOGLE_BID_STRATEGY          = os.getenv("GOOGLE_BID_STRATEGY", "MAXIMIZE_CONVERSION_VALUE")
+
+# Negative keywords attached to every Google Search ad group (BROAD-match
+# exclusions) so spend isn't wasted on wrong-intent queries. Conservative
+# default — research/brand-defensive/existing-user terms that rarely convert for
+# a contributor-acquisition Search ad. CURATE per campaign as Diego/Bryan learn
+# the search-term report; override the whole list via the JSON env. Per-cohort
+# extras can also be passed in targeting["negative_keywords"].
+DEFAULT_GOOGLE_SEARCH_NEGATIVE_KEYWORDS: list[str] = [
+    "scam", "legit", "reviews", "complaints", "free", "salary",
+    "login", "sign in", "remove account", "delete account",
+]
+try:
+    _gneg_env = os.getenv("GOOGLE_SEARCH_NEGATIVE_KEYWORDS_JSON", "")
+    GOOGLE_SEARCH_NEGATIVE_KEYWORDS = (
+        _json.loads(_gneg_env) if _gneg_env else DEFAULT_GOOGLE_SEARCH_NEGATIVE_KEYWORDS
+    )
+except Exception:
+    GOOGLE_SEARCH_NEGATIVE_KEYWORDS = DEFAULT_GOOGLE_SEARCH_NEGATIVE_KEYWORDS
 
 # ── LiteLLM proxy (kept for image-gen fallback via /images/generations) ───────
 # Public endpoint (no VPN required). Internal: litellm-proxy.ml-serving-internal.scale.com/v1

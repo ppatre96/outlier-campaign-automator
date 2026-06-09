@@ -317,6 +317,39 @@ class MetaClient(AdPlatformClient):
         )
         return ad_set_id
 
+    # ── Conversion-tracking inspection + repair (auditor) ────────────────────
+
+    def get_promoted_object(self, adset_id: str) -> dict:
+        """Read an ad set's live promoted_object (the conversion target). Empty
+        dict if unset/unreadable. Used by the per-ramp audit to verify the ad
+        set optimizes on the pixel event, not the archived custom conversion."""
+        self._ensure_init()
+        from facebook_business.adobjects.adset import AdSet
+        obj = AdSet(adset_id).api_get(fields=[AdSet.Field.promoted_object])
+        return dict(obj.get("promoted_object") or {})
+
+    def repair_promoted_object(self, adset_id: str) -> bool:
+        """Patch an ad set to the correct pixel-event promoted_object +
+        attribution window (the form `create_campaign` now writes). Used by the
+        auditor to fix ad sets still pointing at the archived custom conversion
+        BEFORE a human un-pauses them. Best-effort — raises on API rejection so
+        the caller can fall back to pause+flag."""
+        self._ensure_init()
+        from facebook_business.adobjects.adset import AdSet
+        AdSet(adset_id).api_update(params={
+            "promoted_object": {
+                "pixel_id":          config.META_PIXEL_ID,
+                "custom_event_type": "OTHER",
+                "custom_event_str":  config.META_CUSTOM_EVENT_STR,
+            },
+            "attribution_spec": [{
+                "event_type":  "CLICK_THROUGH",
+                "window_days": config.META_ATTRIBUTION_WINDOW_DAYS,
+            }],
+        })
+        log.info("Meta repair_promoted_object: ad set %s → pixel-event tracking", adset_id)
+        return True
+
     def update_campaign_budget(
         self,
         campaign_id: str,
