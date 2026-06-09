@@ -398,9 +398,15 @@ GOOGLE_BID_STRATEGY          = os.getenv("GOOGLE_BID_STRATEGY", "MAXIMIZE_CONVER
 # a contributor-acquisition Search ad. CURATE per campaign as Diego/Bryan learn
 # the search-term report; override the whole list via the JSON env. Per-cohort
 # extras can also be passed in targeting["negative_keywords"].
+# CONFIDENT auto-add set only — unambiguous non-prospect intent: brand-trust
+# research (scam/legit/reviews/complaints), existing users (login/sign in), and
+# account-offboarding. Debatable terms (free, salary, jobs, course, training,
+# work from home, …) are NOT auto-added — they go to Bryan for approval first,
+# since they can suppress real prospects. Override the whole list via the JSON env.
 DEFAULT_GOOGLE_SEARCH_NEGATIVE_KEYWORDS: list[str] = [
-    "scam", "legit", "reviews", "complaints", "free", "salary",
-    "login", "sign in", "remove account", "delete account",
+    "scam", "legit", "reviews", "complaints",
+    "login", "sign in", "log in",
+    "remove account", "delete account", "cancel account",
 ]
 try:
     _gneg_env = os.getenv("GOOGLE_SEARCH_NEGATIVE_KEYWORDS_JSON", "")

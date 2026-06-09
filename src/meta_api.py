@@ -330,13 +330,24 @@ class MetaClient(AdPlatformClient):
 
     def repair_promoted_object(self, adset_id: str) -> bool:
         """Patch an ad set to the correct pixel-event promoted_object +
-        attribution window (the form `create_campaign` now writes). Used by the
-        auditor to fix ad sets still pointing at the archived custom conversion
-        BEFORE a human un-pauses them. Best-effort — raises on API rejection so
-        the caller can fall back to pause+flag."""
+        attribution window (the form `create_campaign` now writes).
+
+        IMPORTANT LIMIT (verified live 2026-06-09): Meta FORBIDS editing the
+        conversion/pixel on a **published** ad set — `api_update` returns
+        error_subcode 3260011 "Can't Make Edits to Published Ad Set" (even for a
+        promoted_object-only change). So this only succeeds on a never-published
+        draft ad set. For an already-published ad set the only fix is to
+        RECREATE it with correct tracking + pause the old one (what Tuan did).
+        Raises on rejection so `meta_tracking_audit` can flag it needs-rebuild."""
         self._ensure_init()
         from facebook_business.adobjects.adset import AdSet
+        # Set optimization_goal too — ad sets left on LINK_CLICKS (empty
+        # promoted_object) need the goal flipped to OFFSITE_CONVERSIONS for the
+        # pixel-event promoted_object to be valid; for ad sets already on
+        # conversions this is a no-op. Status is intentionally NOT touched — a
+        # repaired ad set stays in whatever state it was (we never un-pause).
         AdSet(adset_id).api_update(params={
+            "optimization_goal": AdSet.OptimizationGoal.offsite_conversions,
             "promoted_object": {
                 "pixel_id":          config.META_PIXEL_ID,
                 "custom_event_type": "OTHER",
