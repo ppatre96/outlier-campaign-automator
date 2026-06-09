@@ -236,16 +236,24 @@ META_API_VERSION     = os.getenv("META_API_VERSION", "v21.0")
 # "local_fallback" and the PNG is saved locally for manual upload.
 META_PAGE_ID         = os.getenv("META_PAGE_ID", "260786120451494")
 
-# Meta Pixel + Custom Conversion (provided 2026-05-26 by Tuan):
-#   Pixel ID:             637714478283926
-#   Custom Conversion ID: 986478843749388  (event: worker_skill_all)
-#   Conversion window:    7-day click only
-# When META_CUSTOM_CONVERSION_ID is set, the Meta arm switches the ad set
-# optimization_goal from LINK_CLICKS → OFFSITE_CONVERSIONS, attaches
-# promoted_object.custom_conversion_id, and sets attribution_spec to N-day
-# click-through. Leave empty to fall back to LINK_CLICKS (back-compat).
+# Meta Pixel + conversion optimization (Tuan).
+#   Pixel ID:          637714478283926  (worker_skill_all — Active, CAPI ~15.6K events/day)
+#   Optimize on event: worker_skill_all  (custom_event_type=OTHER + custom_event_str)
+#   Conversion window: 7-day click only
+# 2026-06-09 — STOPPED using a custom_conversion_id. The custom conversion
+# (986478843749388) was ARCHIVED in Meta, and archived custom conversions track
+# NOTHING — so all 14 GMR-0023 language ad sets recorded 0 conversions despite
+# real traffic (the pixel event itself was healthy). Tuan's fix: optimize
+# directly on the pixel event via promoted_object {pixel_id, custom_event_type:
+# OTHER, custom_event_str}, which sidesteps the archived-conversion trap.
+# When META_PIXEL_ID + META_CUSTOM_EVENT_STR are set, the Meta arm switches the
+# ad set optimization_goal LINK_CLICKS → OFFSITE_CONVERSIONS + sets the
+# attribution window. Empty META_CUSTOM_EVENT_STR → fall back to LINK_CLICKS.
 META_PIXEL_ID                = os.getenv("META_PIXEL_ID", "637714478283926")
-META_CUSTOM_CONVERSION_ID    = os.getenv("META_CUSTOM_CONVERSION_ID", "986478843749388")
+META_CUSTOM_EVENT_STR        = os.getenv("META_CUSTOM_EVENT_STR", "worker_skill_all")
+# Retired 2026-06-09 (archived in Meta); kept only for audit display, NOT used
+# for ad-set promoted_object anymore.
+META_CUSTOM_CONVERSION_ID    = os.getenv("META_CUSTOM_CONVERSION_ID", "")
 META_ATTRIBUTION_WINDOW_DAYS = int(os.getenv("META_ATTRIBUTION_WINDOW_DAYS", "7"))
 
 # Custom audiences to exclude on every prospecting ad set (provided 2026-05-26

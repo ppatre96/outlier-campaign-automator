@@ -237,15 +237,13 @@ class MetaClient(AdPlatformClient):
         name = self._prefixed(name)
         budget = daily_budget_cents if daily_budget_cents is not None else self.PLACEHOLDER_DAILY_BUDGET_CENTS
 
-        # Optimization mode — when a custom conversion is wired up (Tuan's
-        # `worker_skill_all` event, ID 986478843749388 as of 2026-05-26), the
-        # ad set optimizes for OFFSITE_CONVERSIONS instead of LINK_CLICKS so
-        # delivery picks people likely to fire that pixel event, not just any
-        # click. promoted_object pins the conversion + pixel; attribution_spec
-        # restricts the window to 7-day click-through (per Tuan, no view-through).
-        # Empty pixel/conversion → fall back to LINK_CLICKS (back-compat).
+        # Optimization mode — optimize for OFFSITE_CONVERSIONS on Tuan's
+        # `worker_skill_all` pixel event so delivery picks people likely to fire
+        # it, not just any click. attribution_spec restricts the window to 7-day
+        # click-through (per Tuan, no view-through). Empty pixel/event → fall
+        # back to LINK_CLICKS (back-compat).
         optimize_for_conversions = bool(
-            config.META_CUSTOM_CONVERSION_ID and config.META_PIXEL_ID
+            config.META_PIXEL_ID and config.META_CUSTOM_EVENT_STR
         )
         if optimize_for_conversions:
             optimization_goal = AdSet.OptimizationGoal.offsite_conversions
@@ -264,21 +262,18 @@ class MetaClient(AdPlatformClient):
         }
 
         if optimize_for_conversions:
-            # For a CUSTOM conversion, the promoted_object must carry ONLY the
-            # custom_conversion_id — Meta resolves the parent pixel from it.
-            # Sending both pixel_id AND custom_conversion_id is an invalid
-            # combination (error_subcode 1885014 "Promoted Object Invalid",
-            # which failed every GMR-0023 ad set 2026-06-03). Fall back to
-            # {pixel_id + custom_event_type} only when no custom conversion is
-            # configured (standard-event optimization).
-            if config.META_CUSTOM_CONVERSION_ID:
-                params[AdSet.Field.promoted_object] = {
-                    "custom_conversion_id": config.META_CUSTOM_CONVERSION_ID,
-                }
-            else:
-                params[AdSet.Field.promoted_object] = {
-                    "pixel_id": config.META_PIXEL_ID,
-                }
+            # Optimize on the pixel event DIRECTLY. custom_event_type=OTHER +
+            # custom_event_str names the non-standard `worker_skill_all` event;
+            # Meta resolves it on the given pixel. 2026-06-09: this replaced
+            # promoted_object.custom_conversion_id — that custom conversion was
+            # archived in Meta and archived conversions track NOTHING, so all 14
+            # GMR-0023 language ad sets logged 0 conversions. The pixel-event
+            # form avoids the archived-conversion trap (Tuan).
+            params[AdSet.Field.promoted_object] = {
+                "pixel_id":          config.META_PIXEL_ID,
+                "custom_event_type": "OTHER",
+                "custom_event_str":  config.META_CUSTOM_EVENT_STR,
+            }
             params[AdSet.Field.attribution_spec] = [{
                 "event_type":  "CLICK_THROUGH",
                 "window_days": config.META_ATTRIBUTION_WINDOW_DAYS,
