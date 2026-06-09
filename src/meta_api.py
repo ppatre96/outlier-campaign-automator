@@ -361,6 +361,33 @@ class MetaClient(AdPlatformClient):
         log.info("Meta repair_promoted_object: ad set %s → pixel-event tracking", adset_id)
         return True
 
+    def rebuild_adset_with_correct_tracking(self, old_adset_id: str) -> str:
+        """Recreate a PUBLISHED ad set (which can't be edited — subcode 3260011)
+        with correct pixel-event tracking. Deep-copies the ad set + its ads into
+        a fresh PAUSED draft, then fixes the conversion target on the copy (which
+        IS editable, never having been published). Returns the new ad set id; the
+        caller pauses the old one. Raises on failure so the auditor falls back to
+        flag-needs-human.
+
+        NOTE: not yet live-verified — gated behind config.META_TRACKING_AUTO_REBUILD.
+        """
+        self._ensure_init()
+        from facebook_business.adobjects.adset import AdSet
+        resp = AdSet(old_adset_id).create_copy(params={
+            "deep_copy":     True,       # copy the ads/creatives too
+            "status_option": "PAUSED",   # new ad set stays a draft
+        })
+        data = dict(resp) if not isinstance(resp, dict) else resp
+        new_id = str(data.get("copied_adset_id") or data.get("id") or "")
+        if not new_id:
+            raise RuntimeError(f"ad set copy returned no id: {data}")
+        # The copy inherits the OLD (wrong) promoted_object — fix it on the copy
+        # (editable since it's never been published).
+        self.repair_promoted_object(new_id)
+        log.info("Meta rebuild: %s → new PAUSED ad set %s with pixel-event tracking",
+                 old_adset_id, new_id)
+        return new_id
+
     def update_campaign_budget(
         self,
         campaign_id: str,

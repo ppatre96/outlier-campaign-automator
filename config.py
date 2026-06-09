@@ -278,6 +278,13 @@ RAMP_AUDIT_ENABLED           = os.getenv("RAMP_AUDIT_ENABLED", "true").lower() i
 # per-ramp pass DETECTS + reports but applies no fixes (pause/repair). Set false
 # for a detect-only trial before trusting auto-fix on every launch.
 RAMP_AUDIT_AUTOFIX           = os.getenv("RAMP_AUDIT_AUTOFIX", "true").lower() in ("1", "true", "yes")
+# When the meta_tracking check finds a PUBLISHED ad set with wrong tracking
+# (can't be patched in place — Meta subcode 3260011), auto-REBUILD it: deep-copy
+# the ad set (incl. ads) into a fresh PAUSED draft, fix the tracking on the copy
+# (editable since unpublished), and pause the old one. DEFAULT OFF — it creates
+# live ad sets and the Meta copy path isn't yet live-verified; validate on one
+# ad set, then flip on. When off, such ad sets are flagged needs_rebuild only.
+META_TRACKING_AUTO_REBUILD   = os.getenv("META_TRACKING_AUTO_REBUILD", "false").lower() in ("1", "true", "yes")
 
 # Custom audiences to exclude on every prospecting ad set (provided 2026-05-26
 # by Tuan — the four active-contributor audiences from Outlier's Meta account).

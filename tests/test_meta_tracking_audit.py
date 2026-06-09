@@ -60,6 +60,49 @@ def test_detect_only_no_repair(monkeypatch):
     assert out["handled"] == []
 
 
+def test_auto_rebuild_on_published_adset(monkeypatch):
+    import src.ui_decisions as ui
+    events = []
+    monkeypatch.setattr(ui, "log_event", lambda r, e, p, **k: events.append((e, p)))
+
+    def _published_fixer(aid):
+        raise RuntimeError('(#100) error_subcode 3260011 "Can\'t Make Edits to Published Ad Set"')
+
+    paused_old = []
+    out = mta.audit_meta_tracking(
+        _rows(), autofix=True, auto_rebuild=True, reader=_reader,
+        fixer=_published_fixer,
+        rebuilder=lambda aid: f"new_{aid}",
+        old_pauser=lambda aid: (paused_old.append(aid) or True),
+    )
+
+    v = out["detail"][0]
+    assert v["rebuilt_to"] == "new_adset_BAD"      # copy created
+    assert paused_old == ["adset_BAD"]             # old one paused
+    assert v["needs_rebuild"] is False             # resolved via rebuild
+    assert out["handled"] == ["adset_BAD"]         # won't re-process
+    assert events[0][0] == "meta_tracking_rebuilt"
+
+
+def test_published_flags_needs_rebuild_when_autorebuild_off(monkeypatch):
+    import src.ui_decisions as ui
+    events = []
+    monkeypatch.setattr(ui, "log_event", lambda r, e, p, **k: events.append((e, p)))
+
+    def _published_fixer(aid):
+        raise RuntimeError("3260011 published")
+
+    out = mta.audit_meta_tracking(
+        _rows(), autofix=True, auto_rebuild=False, reader=_reader,
+        fixer=_published_fixer,
+        rebuilder=lambda aid: (_ for _ in ()).throw(AssertionError("rebuild disabled")),
+        old_pauser=lambda aid: (_ for _ in ()).throw(AssertionError("should not pause")),
+    )
+    assert out["detail"][0]["needs_rebuild"] is True
+    assert out["handled"] == []
+    assert events[0][0] == "meta_tracking_needs_rebuild"
+
+
 def test_exclude_skips_repair():
     out = mta.audit_meta_tracking(
         _rows(), autofix=True, reader=_reader,

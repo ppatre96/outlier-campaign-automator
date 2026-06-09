@@ -35,11 +35,15 @@ def audit_meta_tracking(
     rows: list[dict],
     *,
     autofix: Optional[bool] = None,
+    auto_rebuild: Optional[bool] = None,
     exclude_containers: Optional[set] = None,
     reader: Optional[Callable[[str], dict]] = None,
     fixer: Optional[Callable[[str], bool]] = None,
+    rebuilder: Optional[Callable[[str], str]] = None,
+    old_pauser: Optional[Callable[[str], bool]] = None,
 ) -> dict:
     autofix = config.RAMP_AUDIT_AUTOFIX if autofix is None else autofix
+    auto_rebuild = config.META_TRACKING_AUTO_REBUILD if auto_rebuild is None else auto_rebuild
     exclude_containers = exclude_containers or set()
 
     _client = {"c": None}
@@ -52,6 +56,10 @@ def audit_meta_tracking(
 
     reader = reader or (lambda aid: _get_client().get_promoted_object(aid))
     fixer = fixer or (lambda aid: _get_client().repair_promoted_object(aid))
+    rebuilder = rebuilder or (lambda aid: _get_client().rebuild_adset_with_correct_tracking(aid))
+    if old_pauser is None:
+        from src.launch_verify import _archive_meta_adset
+        old_pauser = _archive_meta_adset
 
     seen: set[str] = set()
     checked = 0
@@ -95,31 +103,49 @@ def audit_meta_tracking(
             ok = False
             err = ""
             needs_rebuild = False
+            rebuilt_to = ""
             try:
                 ok = fixer(v["container_id"])
             except Exception as exc:
                 err = str(exc)
                 # Meta forbids editing the conversion/pixel on a PUBLISHED ad set
                 # (error_subcode 3260011 "Can't Make Edits to Published Ad Set").
-                # An in-place patch is impossible — the only fix is to recreate
-                # the ad set with correct tracking + pause the old one (what Tuan
-                # did manually). Flag it as needs-human rebuild, don't keep
-                # retrying a patch that can never succeed.
+                # An in-place patch is impossible — recreate the ad set with
+                # correct tracking + pause the old one (what Tuan did manually).
                 if "3260011" in err or "published" in err.lower() or "can't edit" in err.lower():
                     needs_rebuild = True
-                    log.warning("meta_tracking_audit: %s is PUBLISHED — can't patch; flagging for rebuild",
-                                v["container_id"])
+                    log.warning("meta_tracking_audit: %s is PUBLISHED — can't patch", v["container_id"])
                 else:
                     log.error("meta_tracking_audit: repair failed for %s: %s", v["container_id"], err[:200])
+
+            # Auto-rebuild path: recreate the published ad set with correct
+            # tracking (copy → fix copy → pause old). Gated; failure → needs-human.
+            if needs_rebuild and auto_rebuild:
+                try:
+                    rebuilt_to = rebuilder(v["container_id"])
+                    old_pauser(v["container_id"])
+                    ok = True
+                    needs_rebuild = False
+                    log.warning("meta_tracking_audit: rebuilt %s → %s (old paused)",
+                                v["container_id"], rebuilt_to)
+                except Exception as exc2:
+                    err = (err + " | rebuild: " + str(exc2))[:300]
+                    log.error("meta_tracking_audit: rebuild failed for %s: %s",
+                              v["container_id"], str(exc2)[:200])
+
             v["repaired"] = ok
             v["needs_rebuild"] = needs_rebuild
-            v["fix_error"] = err[:200]
+            v["rebuilt_to"] = rebuilt_to
+            v["fix_error"] = err[:300]
             try:
                 from src.ui_decisions import log_event
-                event = "meta_tracking_repaired" if ok else "meta_tracking_needs_rebuild"
+                event = ("meta_tracking_rebuilt" if rebuilt_to
+                         else "meta_tracking_repaired" if ok
+                         else "meta_tracking_needs_rebuild")
                 log_event(v["ramp_id"] or "", event,
                           {k: v[k] for k in ("platform", "container_id", "campaign_name", "cohort_geo")}
-                          | {"was": v["promoted_object"], "repaired": ok, "needs_rebuild": needs_rebuild})
+                          | {"was": v["promoted_object"], "repaired": ok,
+                             "needs_rebuild": needs_rebuild, "rebuilt_to": rebuilt_to})
             except Exception as exc:
                 log.debug("meta_tracking_audit: log_event skipped: %s", exc)
             detail.append(v)
