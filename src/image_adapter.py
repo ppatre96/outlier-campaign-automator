@@ -91,6 +91,33 @@ def pixel_dims_for_aspect(aspect: tuple[int, int]) -> tuple[int, int]:
     return _PIXEL_DIMS.get(aspect, (1200, 1200))
 
 
+def assert_min_dimensions(image_path, min_px: int, *, platform: str = "") -> None:
+    """Raise ValueError if the image's short side is below ``min_px``.
+
+    Guards every platform's ``upload_image`` against shipping a thumbnail-
+    resolution creative (GMR-0023 2026-06-09: native-language B/C variants
+    uploaded at 64×64 and rendered pixelated). Real pipeline creatives are
+    ≥1080 on every side, so a sub-``min_px`` image is a thumbnail. The raise is
+    caught by the launch arm's verify-and-heal so the reason surfaces on the
+    console + Slack instead of a pixelated ad going live.
+
+    Best-effort dimension read: if PIL can't open the file we return quietly and
+    let the platform API surface the real error (don't block on a read quirk).
+    """
+    try:
+        with Image.open(image_path) as im:
+            w, h = im.size
+    except Exception as exc:
+        log.warning("assert_min_dimensions: could not read %s (%s) — skipping check", image_path, exc)
+        return
+    if min(w, h) < min_px:
+        raise ValueError(
+            f"Creative {Path(str(image_path)).name} is {w}x{h}px — below the {min_px}px "
+            f"minimum{f' for {platform}' if platform else ''}; refusing to upload a "
+            f"thumbnail-resolution image (would render pixelated)."
+        )
+
+
 def compose_ad_for_platform(
     bg_image: Image.Image,
     copy_variant: dict,

@@ -256,14 +256,20 @@ META_CUSTOM_EVENT_STR        = os.getenv("META_CUSTOM_EVENT_STR", "worker_skill_
 META_CUSTOM_CONVERSION_ID    = os.getenv("META_CUSTOM_CONVERSION_ID", "")
 META_ATTRIBUTION_WINDOW_DAYS = int(os.getenv("META_ATTRIBUTION_WINDOW_DAYS", "7"))
 
-# Minimum short-side px a creative must have before upload_image will send it to
-# Meta. Real pipeline creatives are ≥1080 on every side (4:5=1080×1350,
-# 1:1=1080, 9:16=1080×1920); a floor of 600 cleanly rejects thumbnail-sized
-# images (e.g. the 64×64 native-language B/C variants Tuan flagged on GMR-0023
-# 2026-06-09) without ever false-rejecting a valid creative. A rejected upload
-# raises → the arm's verify-and-heal surfaces the reason on console + Slack
-# instead of shipping a pixelated ad. Meta's own Feed minimum is ~600px.
-META_MIN_IMAGE_DIMENSION     = int(os.getenv("META_MIN_IMAGE_DIMENSION", "600"))
+# Minimum short-side px a creative must have before ANY platform's upload_image
+# will send it (Meta, LinkedIn, Google). Real pipeline creatives are ≥1080 on
+# every side (4:5=1080×1350, 1:1=1080, 9:16=1080×1920); a floor of 600 cleanly
+# rejects thumbnail-sized images (e.g. the 64×64 native-language B/C variants
+# Tuan flagged on GMR-0023 2026-06-09) without ever false-rejecting a valid
+# creative. A rejected upload raises → the arm's verify-and-heal surfaces the
+# reason on console + Slack instead of shipping a pixelated ad. Enforced via
+# src/image_adapter.assert_min_dimensions; also checked by the weekly auditor.
+MIN_CREATIVE_DIMENSION       = int(os.getenv("MIN_CREATIVE_DIMENSION", "600"))
+# When true, the weekly auditor doesn't just FLAG sub-minimum (pixelated)
+# creatives it finds live — it PAUSES the offending container (Meta ad set /
+# Google ad group / LinkedIn campaign) via the proven launch_verify archivers
+# and writes a creative_lowres_paused audit row. Set false to detect+report only.
+AUDIT_AUTOFIX_LOWRES         = os.getenv("AUDIT_AUTOFIX_LOWRES", "true").lower() in ("1", "true", "yes")
 
 # Custom audiences to exclude on every prospecting ad set (provided 2026-05-26
 # by Tuan — the four active-contributor audiences from Outlier's Meta account).

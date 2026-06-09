@@ -611,6 +611,12 @@ class LinkedInClient(AdPlatformClient):
         """
         image_path = Path(image_path)
 
+        # Reject thumbnail-resolution creatives before upload (GMR-0023: 64×64
+        # variants rendered pixelated). Raises → static arm's verify-and-heal
+        # surfaces the reason instead of shipping a pixelated ad.
+        from src.image_adapter import assert_min_dimensions
+        assert_min_dimensions(image_path, config.MIN_CREATIVE_DIMENSION, platform="linkedin")
+
         # Step 1: initialize upload.
         # The image owner MUST match the DSC post author (set in _create_image_ad_inner).
         # 2026-06-03: DSC posts require an ORGANIZATION URN as author (confirmed by

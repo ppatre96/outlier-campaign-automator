@@ -436,23 +436,10 @@ class MetaClient(AdPlatformClient):
 
         # Guard against thumbnail-sized creatives reaching Meta (Tuan, GMR-0023
         # 2026-06-09: native-language B/C variants uploaded at 64×64 and rendered
-        # pixelated). Real pipeline creatives are ≥1080 on every side; reject
-        # anything below META_MIN_IMAGE_DIMENSION so the arm's verify-and-heal
-        # surfaces WHY instead of shipping a pixelated ad. Best-effort dimension
-        # read — if PIL can't open it, let remote_create surface the real error.
-        try:
-            from PIL import Image as _PILImage
-            with _PILImage.open(image_path) as _im:
-                _w, _h = _im.size
-        except Exception as _exc:
-            log.warning("Meta upload_image: could not read dimensions of %s (%s) — proceeding", image_path, _exc)
-            _w = _h = None
-        if _w is not None and min(_w, _h) < config.META_MIN_IMAGE_DIMENSION:
-            raise ValueError(
-                f"Creative {Path(image_path).name} is {_w}x{_h}px — below the "
-                f"{config.META_MIN_IMAGE_DIMENSION}px minimum; refusing to upload a "
-                f"thumbnail-resolution image (would render pixelated)."
-            )
+        # pixelated). Raises below the floor → the arm's verify-and-heal surfaces
+        # the reason instead of shipping a pixelated ad.
+        from src.image_adapter import assert_min_dimensions
+        assert_min_dimensions(image_path, config.MIN_CREATIVE_DIMENSION, platform="meta")
 
         try:
             account = AdAccount(self._ad_account_id)

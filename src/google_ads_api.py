@@ -785,6 +785,11 @@ class GoogleAdsClient(AdPlatformClient):
     def upload_image(self, image_path: str | Path) -> str:
         client = self._ensure_client()
         path = Path(image_path)
+        # Reject thumbnail-resolution creatives before upload (GMR-0023: 64×64
+        # variants rendered pixelated). Raises → extra-platform arm's
+        # verify-and-heal surfaces the reason instead of shipping a pixelated ad.
+        from src.image_adapter import assert_min_dimensions
+        assert_min_dimensions(path, config.MIN_CREATIVE_DIMENSION, platform="google")
         with open(path, "rb") as fh:
             image_bytes = fh.read()
         asset_service = client.get_service("AssetService")
