@@ -256,6 +256,15 @@ META_CUSTOM_EVENT_STR        = os.getenv("META_CUSTOM_EVENT_STR", "worker_skill_
 META_CUSTOM_CONVERSION_ID    = os.getenv("META_CUSTOM_CONVERSION_ID", "")
 META_ATTRIBUTION_WINDOW_DAYS = int(os.getenv("META_ATTRIBUTION_WINDOW_DAYS", "7"))
 
+# Minimum short-side px a creative must have before upload_image will send it to
+# Meta. Real pipeline creatives are ≥1080 on every side (4:5=1080×1350,
+# 1:1=1080, 9:16=1080×1920); a floor of 600 cleanly rejects thumbnail-sized
+# images (e.g. the 64×64 native-language B/C variants Tuan flagged on GMR-0023
+# 2026-06-09) without ever false-rejecting a valid creative. A rejected upload
+# raises → the arm's verify-and-heal surfaces the reason on console + Slack
+# instead of shipping a pixelated ad. Meta's own Feed minimum is ~600px.
+META_MIN_IMAGE_DIMENSION     = int(os.getenv("META_MIN_IMAGE_DIMENSION", "600"))
+
 # Custom audiences to exclude on every prospecting ad set (provided 2026-05-26
 # by Tuan — the four active-contributor audiences from Outlier's Meta account).
 # Override via META_EXCLUDE_AUDIENCE_IDS_JSON to replace the list.
