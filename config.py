@@ -270,6 +270,12 @@ MIN_CREATIVE_DIMENSION       = int(os.getenv("MIN_CREATIVE_DIMENSION", "600"))
 # Google ad group / LinkedIn campaign) via the proven launch_verify archivers
 # and writes a creative_lowres_paused audit row. Set false to detect+report only.
 AUDIT_AUTOFIX_LOWRES         = os.getenv("AUDIT_AUTOFIX_LOWRES", "true").lower() in ("1", "true", "yes")
+# When true, the per-ramp/weekly audit PAUSES any LinkedIn campaign it finds
+# targeting geo-only (no narrowing skill/title facet — the GMR-0024 ~290M
+# country-wide class that a cold-start facet collapse can ship). Set false to
+# detect+report only. linkedin_targeting_guard prevents these at create time;
+# this is the post-hoc net.
+AUDIT_AUTOFIX_GEO_ONLY       = os.getenv("AUDIT_AUTOFIX_GEO_ONLY", "true").lower() in ("1", "true", "yes")
 # Run the consolidated per-ramp audit (src/ramp_audit.audit_ramp) as the last
 # step of every ramp LAUNCH — check→fix→re-check the just-created campaigns to a
 # fixpoint. Set false to disable the per-ramp pass (the weekly auditor still runs).
@@ -360,6 +366,32 @@ GENERALIST_LOCALE_TARGETING  = os.getenv("GENERALIST_LOCALE_TARGETING", "true").
 # channel) instead of one broad skills-only cohort. Set False to fall back to
 # the legacy single skills-only cohort (exact prior behavior; rollback).
 COLD_START_MULTI_COHORT      = os.getenv("COLD_START_MULTI_COHORT", "true").lower() in ("1", "true", "yes")
+
+# Per-ramp cohort targeting overrides (manual). When a ramp's auto-derived
+# cold-start targeting is wrong for a channel — e.g. GMR-0024's BLV ramp, where
+# "legally blind contributor" is a personal attribute LinkedIn can't target —
+# pin the cohort spec(s) here, keyed by ramp_id. Each spec uses the same shape
+# `derive_cohorts_from_job_post()` returns. `skills_only: True` suppresses the
+# base-role title fold so the cohort stays a single-facet (skills-only) audience
+# instead of ANDing titles + skills down to a tiny intersection.
+#
+# GMR-0024 → target accessibility / assistive-technology PROFESSIONALS (who reach
+# blind contributors and are often blind/low-vision themselves) via LinkedIn
+# skill facets. All facets validated live against typeahead (≈4.1M US). Geo is
+# sourced from Smart Ramp (US-only) at launch, not here.
+COHORT_SPEC_OVERRIDES: dict[str, list[dict]] = {
+    "GMR-0024": [
+        {
+            "label": "Accessibility & assistive-technology professionals",
+            "required_skills": ["Assistive Technology", "Accessibility", "JAWS", "WCAG", "Section 508"],
+            "job_titles": [],
+            "fields_of_study": [],
+            "degrees": [],
+            "geos": ["US"],
+            "skills_only": True,
+        },
+    ],
+}
 
 # Per-channel launch model (feature #3, 2026-06-04). When False (default),
 # approving a ramp in the console is the GATE only — the scheduled poller does

@@ -96,3 +96,49 @@ def test_stage_c_number_wins_over_live_call():
     r = _li(rows)
     assert r.audience_size == 120_000
     assert li.calls == []  # live call skipped — Stage C number used
+
+
+# ── Cold-start (no Stage C number) sizes on the cohort's OWN facets ───────────
+
+class _FakeUrnResolving(_FakeUrn):
+    """Cold-start cohort whose facets DO resolve to a real LinkedIn URN."""
+    def resolve_cohort_rules(self, rules):
+        return {"titles": ["urn:li:title:31415"]}
+
+
+class _FakeUrnCollapsing(_FakeUrn):
+    """Cold-start cohort whose LLM-coined facets resolve to nothing."""
+    def resolve_cohort_rules(self, rules):
+        return {}
+
+
+def test_cold_start_collapsed_targeting_flags_needs_human():
+    """A specialist cold-start cohort whose facets evaporate must NOT report a
+    geo-only size as 'measured' — it's flagged needs_human and never queried."""
+    c = _Cohort("BLV accessibility contributors",
+                [("skills__talkback_screen_reader", "talkback screen reader")])
+    li = _FakeLI(290_000_000)
+    rows = measure_audience_for_cohort(
+        c, included_geos=["US"], enabled_platforms=["linkedin"],
+        li_client=li, urn_resolver=_FakeUrnCollapsing(),
+    )
+    r = _li(rows)
+    assert r.status == "needs_human"
+    assert r.audience_size is None
+    assert li.calls == []                      # geo-only count never fired
+    assert r.facets.get("collapsed") is True
+
+
+def test_cold_start_resolved_targeting_sizes_on_facets():
+    """When the cohort's facets resolve, size on facets + geo (not geo-only)."""
+    c = _Cohort("accessibility specialists",
+                [("job_titles_norm__accessibility_specialist", "accessibility specialist")])
+    li = _FakeLI(17_000)
+    rows = measure_audience_for_cohort(
+        c, included_geos=["US"], enabled_platforms=["linkedin"],
+        li_client=li, urn_resolver=_FakeUrnResolving(),
+    )
+    r = _li(rows)
+    assert r.audience_size == 17_000
+    assert r.status == "below_floor"           # 17k < AUDIENCE_SIZE_MIN (50k)
+    assert "titles" in li.calls[0] and "profileLocations" in li.calls[0]

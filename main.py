@@ -39,6 +39,7 @@ from src.analysis import stage_a, stage_b   # stage_a is now a dispatcher (suppo
 from src.linkedin_urn import UrnResolver
 from src.linkedin_api import LinkedInClient, ImageAdResult
 from src.stage_c import stage_c
+from src.linkedin_targeting_guard import linkedin_targeting_collapsed
 from src.figma_creative import (
     FigmaCreativeClient,
     build_copy_variants,
@@ -737,6 +738,20 @@ def _process_row(
         if included_geos:
             facet_urns = _apply_geo_overrides(facet_urns, included_geos, urn_res)
 
+        # Cold-start cohorts bypass Stage C's no_urns_resolved reject. If this
+        # cohort meant to facet-target but nothing resolved, _apply_geo_overrides
+        # above left us with geo-only targeting — shipping now would buy the
+        # whole country (the GMR-0024 ~290M class). Skip + flag for a human.
+        if linkedin_targeting_collapsed(cohort, facet_urns):
+            msg = (
+                f"LinkedIn cohort '{cohort.name}' targeting collapsed to geo-only "
+                f"(no skill/title facet resolved) — skipped to avoid a country-wide "
+                f"spend. Needs human targeting."
+            )
+            log.warning(msg)
+            run_blockers.add(msg)
+            continue
+
         # Layer per-cohort overrides on top of the shared set.
         cohort_add_urns    = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_add", []) or [])
         cohort_remove_urns = urn_res.resolve_facet_pairs(getattr(cohort, "exclude_remove", []) or [])
@@ -1381,6 +1396,18 @@ def _process_inmail_campaigns(
                 if group_geos:
                     facet_urns = _apply_geo_overrides(facet_urns, group_geos, urn_res)
                 facet_urns = _apply_generalist_language_skill(facet_urns, cohort)
+
+                # Cold-start cohorts bypass Stage C — guard against shipping a
+                # geo-only (country-wide) InMail campaign when no skill/title
+                # facet resolved. See _process_static_campaigns for the rationale.
+                if linkedin_targeting_collapsed(cohort, facet_urns):
+                    log.warning(
+                        "InMail cohort '%s' geo=%s targeting collapsed to geo-only "
+                        "(no skill/title facet resolved) — skipped to avoid a "
+                        "country-wide spend. Needs human targeting.",
+                        cohort.name, geo_group.cluster_label,
+                    )
+                    continue
 
                 # Per-geo audience recheck (2026-05-20). See matching block in
                 # _process_static_campaigns. InMail audience reach is gated by
@@ -2254,7 +2281,16 @@ def _resolve_cold_start_cohort(
     # degrees, geos}.
     fallback_geo = ""
     specs: list[dict] = []
-    if config.COLD_START_MULTI_COHORT and description:
+    # Manual per-ramp override wins over LLM derivation (e.g. GMR-0024 BLV →
+    # accessibility-professional skill facets; see config.COHORT_SPEC_OVERRIDES).
+    _override_specs = config.COHORT_SPEC_OVERRIDES.get((row or {}).get("ramp_id") or "")
+    if _override_specs:
+        specs = [dict(s) for s in _override_specs]
+        log.warning(
+            "cold_start: ramp=%s using COHORT_SPEC_OVERRIDES (%d spec(s)) — bypassing LLM derivation",
+            (row or {}).get("ramp_id"), len(specs),
+        )
+    if not specs and config.COLD_START_MULTI_COHORT and description:
         specs = derive_cohorts_from_job_post(description, max_cohorts=config.MAX_COHORTS_PER_GEO_CLUSTER)
     if not specs:
         icp = derive_icp_from_job_post(description) if description else {}
@@ -2302,8 +2338,12 @@ def _resolve_cold_start_cohort(
         for s in spec.get("required_skills", [])[:5]:
             _add("skills", s)
         # Titles: explicit spec titles + base-role family matched off the label.
+        # `skills_only` specs (manual overrides) skip the base-role fold so the
+        # cohort stays single-facet — titles AND skills would AND down to a tiny
+        # intersection (e.g. GMR-0024: 4.1M skills-only vs 5.4k titles∩skills).
         titles = list(spec.get("job_titles", []))
-        titles += extract_base_role_candidates(derived_tg_label=label)
+        if not spec.get("skills_only"):
+            titles += extract_base_role_candidates(derived_tg_label=label)
         for t in titles:
             _add("job_titles_norm", t)
         for f in spec.get("fields_of_study", [])[:3]:

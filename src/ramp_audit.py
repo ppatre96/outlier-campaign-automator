@@ -60,9 +60,22 @@ def _check_meta_tracking(rows, *, autofix, handled) -> dict:
     }
 
 
+def _check_linkedin_geo_only(rows, *, autofix, handled) -> dict:
+    """Pause LinkedIn campaigns targeting geo-only (no narrowing facet) — the
+    GMR-0024 ~290M country-wide class a cold-start facet collapse can ship."""
+    from src.linkedin_geo_only_audit import audit_linkedin_geo_only
+    go = audit_linkedin_geo_only(rows, autofix=autofix, exclude_containers=handled)
+    return {
+        "name": "linkedin_geo_only",
+        "violations": go["violations"],
+        "handled": go["handled"],
+        "detail": go["detail"],
+    }
+
+
 # Registered deterministic checks. Each: (rows, *, autofix, handled) -> dict
 # returning {name, violations[], handled[container ids fixed], detail[]}.
-_CHECKS = [_check_creative_resolution, _check_meta_tracking]
+_CHECKS = [_check_creative_resolution, _check_meta_tracking, _check_linkedin_geo_only]
 
 
 def audit_ramp(
@@ -133,6 +146,10 @@ def _describe(item: dict) -> str:
         return f"{plat} {cid} — creative {item['width']}x{item['height']}px (below minimum)"
     if "promoted_object" in item or item.get("expected"):
         return f"{plat} {cid} — wrong conversion tracking (not optimizing on the pixel event)"
+    if item.get("geo_only"):
+        aud = item.get("audience_size")
+        aud_str = f", ~{aud} audience" if aud else ""
+        return f"{plat} {cid} — geo-only targeting (no skill/title facet{aud_str})"
     return f"{plat} {cid}"
 
 
