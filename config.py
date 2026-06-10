@@ -393,6 +393,15 @@ COHORT_SPEC_OVERRIDES: dict[str, list[dict]] = {
     ],
 }
 
+# Per-cohort launch idempotency (2026-06-11). When True (default), a launch
+# skips any (cohort × geo × channel) that already has a live campaign recorded
+# in the Postgres campaigns table — so a forced re-launch creates campaigns ONLY
+# for cohorts that don't have them yet (surgically adds a newly-added cohort
+# instead of duplicating the rest). Bypassed when REPLACE_EXISTING is set (the
+# replace path archives + recreates on purpose). Set False to restore the old
+# always-create behavior.
+SKIP_EXISTING_COHORT_CAMPAIGNS = os.getenv("SKIP_EXISTING_COHORT_CAMPAIGNS", "true").lower() in ("1", "true", "yes")
+
 # Per-channel launch model (feature #3, 2026-06-04). When False (default),
 # approving a ramp in the console is the GATE only — the scheduled poller does
 # NOT auto-launch approved ramps. Launching is explicit + per-channel (Diego →

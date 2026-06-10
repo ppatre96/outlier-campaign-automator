@@ -483,6 +483,35 @@ def list_campaign_platform_ids(ramp_id: str, platform: str) -> list[str]:
         return []
 
 
+def campaign_exists_for_cohort_channel(
+    ramp_id: str, platform: str, campaign_type: str, cohort_signature: str, geo_cluster: str,
+) -> bool:
+    """True if (ramp × platform × campaign_type × cohort × geo) already has a
+    LIVE campaign on any angle (a row with a non-empty platform_campaign_id).
+
+    Per-cohort launch idempotency: lets a re-run create campaigns only for
+    cohorts that don't already have them (so a forced re-launch surgically adds
+    a newly-added cohort instead of duplicating the existing ones). Keys on
+    `cohort_signature` (= cohort.name, stable across runs — `_stg_id` is
+    regenerated per run) AND `campaign_type` (LinkedIn static vs inmail are
+    separate campaigns under the same platform). On any error returns False
+    (conservative: allow creation rather than silently skip)."""
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM campaigns "
+                "WHERE ramp_id = %s AND platform = %s AND campaign_type = %s "
+                "AND cohort_signature = %s AND geo_cluster = %s "
+                "AND coalesce(platform_campaign_id, '') <> '' LIMIT 1",
+                (ramp_id, platform, campaign_type, cohort_signature, geo_cluster),
+            )
+            return cur.fetchone() is not None
+    except Exception as exc:
+        log.debug("campaign_exists_for_cohort_channel unavailable (%s/%s/%s/%s/%s): %s",
+                  ramp_id, platform, campaign_type, cohort_signature, geo_cluster, exc)
+        return False
+
+
 def delete_campaign_rows(ramp_id: str, platform: str, platform_campaign_ids: list[str]) -> int:
     """Drop campaigns-table rows for the given (ramp × platform × ids) after they
     were archived on-platform, so the console's per-channel "created" count
