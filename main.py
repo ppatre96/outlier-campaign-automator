@@ -152,6 +152,7 @@ def run_launch(dry_run: bool = False, flow_id: str | None = None, project_id: st
                     "included_geos": cohort.included_geos,
                     "matched_locales": cohort.matched_locales,
                     "target_activations": cohort.target_activations,
+                    "job_post_pay_rates": getattr(cohort, "job_post_pay_rates", None),
                     "linear_issue_id": ramp.linear_issue_id,
                 })
             retry = []
@@ -5120,11 +5121,11 @@ def _process_row_both_modes(
     included_geos = row.get("included_geos", []) or []
     unique_id = row.get("unique_id", f"ROW_{row.get('sheet_row', 'UNKNOWN')}")
 
-    # 2026-05-20: Pay-rate resolution. Priority chain per user direction:
+    # Pay-rate resolution. Priority chain (per Pranav 2026-06-09: pull from
+    # Smart Ramp first, never guess — see feedback_smart_ramp_authoritative_data):
     #   1. OUTLIER_BASE_RATE_USD env var (manual override for one-off runs)
-    #   2. Smart Ramp cohort form field — NOT YET PRESENT in CohortSpec schema
-    #   3. Snowflake VIEW.QUALIFICATION_PAY_RATES via SIGNUP_FLOW_ID — TODO
-    #   4. Pay-rates Google Sheet (cross-verify only, NOT a source of truth)
+    #   2. Smart Ramp `job_post_pay_rates` (e.g. "up to $35 /hr") on the row
+    #   3. (manual/agent step) canonical pay-rate file — not runtime-readable
     # When nothing resolves: base_rate_usd stays None and downstream callers
     # (group_geos_for_campaigns, copy gen) ship rate-free copy. NEVER hardcode
     # a $50 default — wrong rate in ads is a critical risk.
@@ -5146,10 +5147,23 @@ def _process_row_both_modes(
                 _env_rate,
             )
     if base_rate_usd is None:
+        # Smart Ramp job-post rate (authoritative). Carried on the row from
+        # CohortSpec.job_post_pay_rates. parse_job_post_pay_rate takes the
+        # headline (max) figure from "up to $X /hr" / "$X-$Y" / "$X/hr".
+        from src.attribution_resolver import parse_job_post_pay_rate
+        _sr_rate = parse_job_post_pay_rate(row.get("job_post_pay_rates"))
+        if _sr_rate is not None:
+            base_rate_usd = _sr_rate
+            log.info(
+                "_process_row_both_modes: pay rate from Smart Ramp job_post_pay_rates "
+                "%r → base_rate_usd=$%.2f/hr",
+                row.get("job_post_pay_rates"), base_rate_usd,
+            )
+    if base_rate_usd is None:
         log.warning(
-            "_process_row_both_modes: base_rate_usd unresolved (OUTLIER_BASE_RATE_USD "
-            "unset, Smart Ramp has no rate field, Snowflake resolver not yet wired). "
-            "Copy gen will skip $/hr mentions."
+            "_process_row_both_modes: base_rate_usd unresolved (no OUTLIER_BASE_RATE_USD, "
+            "no Smart Ramp job_post_pay_rates). Copy gen will skip $/hr mentions — "
+            "supply the rate from the canonical pay-rate file if needed."
         )
 
     resolved = _resolve_cohorts(
@@ -5578,6 +5592,7 @@ def _ramp_to_rows(ramp) -> list[dict]:
             "job_post_domain": getattr(cohort, "job_post_domain", None),
             "job_post_language_code": getattr(cohort, "job_post_language_code", None),
             "campaign_state": getattr(cohort, "campaign_state", None),
+            "job_post_pay_rates": getattr(cohort, "job_post_pay_rates", None),
         })
     # ONLY_LOCALES env filter (manual one-off reruns): comma-separated BCP-47
     # locales (e.g. "th-th,ko-kr,vi-vn"). When set, restrict to cohorts whose

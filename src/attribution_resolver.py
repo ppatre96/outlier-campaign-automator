@@ -37,11 +37,31 @@ ramps (rate cards can change; per-ramp scope only).
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 log = logging.getLogger(__name__)
+
+
+def parse_job_post_pay_rate(pay_rates: Optional[list[str]]) -> Optional[float]:
+    """Extract a numeric USD/hr rate from Smart Ramp's `job_post_pay_rates`
+    (e.g. ["up to $35 /hr"], ["$25/hr"], ["$15-$25/hr"], ["$7.50/hr"]).
+
+    Returns the headline rate — the MAX dollar figure found (the ceiling of an
+    "up to $X" or "$X-$Y" range, or the single value). None when no figure
+    parses. Authoritative fallback when the Snowflake/guardrail rate is absent;
+    see [[feedback_smart_ramp_authoritative_data]]. Never invents a default.
+    """
+    amounts: list[float] = []
+    for s in pay_rates or []:
+        for m in re.findall(r"\$\s?(\d+(?:\.\d+)?)", str(s)):
+            try:
+                amounts.append(float(m))
+            except ValueError:
+                continue
+    return max(amounts) if amounts else None
 
 _QUERY_DIR = Path(__file__).parent.parent / "queries"
 _PAY_RATE_SQL_PATH    = _QUERY_DIR / "snowflake_pay_rate_resolver.sql"
