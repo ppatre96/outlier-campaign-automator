@@ -51,6 +51,16 @@ def _archive_meta(ids: list[str]) -> list[str]:
 
 
 def _archive_linkedin(ids: list[str]) -> list[str]:
+    """Archive a ramp's LinkedIn campaigns.
+
+    A bare `$set status=ARCHIVED` PATCH fails on DRAFT campaigns (which is the
+    common relaunch case) with 400 MULTIPLE_VALIDATIONS_FAILED. Per the rules
+    surfaced 2026-05-13 (see feedback_linkedin_archive_rules), a DRAFT→ARCHIVED
+    transition needs TWO things in the same call/sequence:
+      1. `runSchedule.start` bumped to the future (DATE_TOO_EARLY validator), and
+      2. the parent campaign GROUP already non-DRAFT — so archive groups FIRST,
+         then the child campaigns.
+    """
     import os
     from src.linkedin_api import LinkedInClient
 
@@ -60,23 +70,53 @@ def _archive_linkedin(ids: list[str]) -> list[str]:
         log.warning("relaunch: no LinkedIn token — skipping LinkedIn archive")
         return []
     li = LinkedInClient(token)
-    done: list[str] = []
-    for urn in ids:
-        cid = str(urn).rsplit(":", 1)[-1]
+
+    def _future_start_ms() -> int:
+        return int(time.time() * 1000) + 60 * 60 * 1000  # now + 1h, ms
+
+    def _patch_archive(path: str, entity_id: str) -> bool:
         try:
             resp = li._req(
                 "POST",
-                li._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/adCampaigns/{cid}"),
-                json={"patch": {"$set": {"status": "ARCHIVED"}}},
+                li._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/{path}/{entity_id}"),
+                json={"patch": {"$set": {
+                    "status": "ARCHIVED",
+                    "runSchedule": {"start": _future_start_ms()},
+                }}},
                 headers={"X-RestLi-Method": "PARTIAL_UPDATE", "Content-Type": "application/json"},
             )
-            if resp.status_code < 300:
-                done.append(urn)
-            else:
-                log.warning("relaunch: LinkedIn archive %s → HTTP %s %s",
-                            cid, resp.status_code, resp.text[:200])
+            if resp.status_code in (200, 204):
+                return True
+            log.warning("relaunch: LinkedIn archive %s %s → HTTP %s %s",
+                        path, entity_id, resp.status_code, resp.text[:200])
+            return False
         except Exception as exc:
-            log.warning("relaunch: LinkedIn archive failed for %s: %s", cid, str(exc)[:200])
+            log.warning("relaunch: LinkedIn archive %s %s failed: %s",
+                        path, entity_id, str(exc)[:200])
+            return False
+
+    # Resolve each campaign's parent group so we can archive groups first.
+    cid_to_urn = {str(u).rsplit(":", 1)[-1]: u for u in ids}
+    group_ids: set[str] = set()
+    for cid in cid_to_urn:
+        try:
+            grp = (li.get_campaign(cid) or {}).get("campaignGroup") or ""
+            gid = str(grp).rsplit(":", 1)[-1]
+            if gid:
+                group_ids.add(gid)
+        except Exception as exc:
+            log.warning("relaunch: couldn't resolve parent group for campaign %s: %s",
+                        cid, str(exc)[:150])
+
+    # Step 1 — archive parent groups (best-effort; makes DRAFT children archivable).
+    for gid in group_ids:
+        _patch_archive("adCampaignGroups", gid)
+
+    # Step 2 — archive the campaigns.
+    done: list[str] = []
+    for cid, urn in cid_to_urn.items():
+        if _patch_archive("adCampaigns", cid):
+            done.append(urn)
     return done
 
 
