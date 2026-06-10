@@ -194,8 +194,9 @@ def notify_keywords_dropped(ramp_id: str, dropped_notes: list[dict]) -> None:
         )
     text = "\n".join(lines)
     try:
-        from src.smart_ramp_notifier import _send_to_all_targets, _lookup_thread_ts
-        _send_to_all_targets(text, ramp_id=ramp_id, thread_ts=_lookup_thread_ts(ramp_id))
+        from src.smart_ramp_notifier import _send_to_all_targets
+        # Observability-only — Pranav DM, not Diego/channel (noise reduction).
+        _send_to_all_targets(text, ramp_id=ramp_id, targets=config.SLACK_VERBOSE_TARGETS)
     except Exception as exc:
         log.warning("launch_verify: notify_keywords_dropped Slack ping failed (non-fatal): %s", exc)
 
@@ -217,7 +218,8 @@ def notify_healed(ramp_id: str, healed: list[dict]) -> None:
         )
     text = "\n".join(lines)
     try:
-        from src.smart_ramp_notifier import _send_to_all_targets, _lookup_thread_ts
-        _send_to_all_targets(text, ramp_id=ramp_id, thread_ts=_lookup_thread_ts(ramp_id))
+        from src.smart_ramp_notifier import _send_to_all_targets
+        # Observability-only — Pranav DM, not Diego/channel (noise reduction).
+        _send_to_all_targets(text, ramp_id=ramp_id, targets=config.SLACK_VERBOSE_TARGETS)
     except Exception as exc:
         log.warning("launch_verify: notify_healed Slack ping failed (non-fatal): %s", exc)

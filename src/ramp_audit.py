@@ -165,7 +165,8 @@ def _notify(ramp_id: str, fixes: list[dict], residual: list[dict]) -> None:
         for r in residual[:20]:
             lines.append(f"    – {_describe(r)}")
     try:
-        from src.smart_ramp_notifier import _send_to_all_targets, _lookup_thread_ts
-        _send_to_all_targets("\n".join(lines), ramp_id=ramp_id, thread_ts=_lookup_thread_ts(ramp_id))
+        from src.smart_ramp_notifier import _send_to_all_targets
+        # Observability-only — Pranav DM, not Diego/channel (noise reduction).
+        _send_to_all_targets("\n".join(lines), ramp_id=ramp_id, targets=config.SLACK_VERBOSE_TARGETS)
     except Exception as exc:
         log.warning("ramp_audit: Slack notify failed (non-fatal): %s", exc)

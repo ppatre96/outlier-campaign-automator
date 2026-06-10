@@ -807,9 +807,9 @@ def auto_confirm_stale_brief_reviews(
 
 def get_slack_thread_ts(ramp_id: str) -> Optional[str]:
     """Return the channel-post ts for this ramp's Slack thread, or None.
-    First-time callers see None → notify_new_ramp posts top-level, captures
-    ts, persists via set_slack_thread_ts. Subsequent callers (briefs_ready,
-    launched) get the ts and reply-in-thread."""
+    notify_briefs_ready (prep done) is the thread parent — it posts top-level,
+    captures the channel ts, and persists it via set_slack_thread_ts.
+    notify_success (campaigns ready) then reads the ts and replies in-thread."""
     try:
         with _connect() as conn, conn.cursor() as cur:
             cur.execute(
@@ -823,9 +823,9 @@ def get_slack_thread_ts(ramp_id: str) -> Optional[str]:
 
 
 def set_slack_thread_ts(ramp_id: str, ts: str) -> None:
-    """Persist the channel-post ts so later lifecycle pings can thread under
-    it. Idempotent — re-running notify_new_ramp for the same ramp overwrites
-    the ts (rare but possible if the first thread was deleted on Slack)."""
+    """Persist the channel-post ts so notify_success can thread under it.
+    Idempotent — re-running prep (notify_briefs_ready) for the same ramp
+    overwrites the ts (rare but possible if the first thread was deleted)."""
     if not ts:
         return
     try:

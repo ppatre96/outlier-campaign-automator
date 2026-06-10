@@ -99,7 +99,7 @@ def test_dm_to_pranav_diego_and_channel(monkeypatch, fake_ramp):
     monkeypatch.setattr(N, "WebClient", lambda token=None: fake_client)
     monkeypatch.setattr(config, "SLACK_BOT_TOKEN", "xoxb-fake")
     # Stub the Drive queue write so the test doesn't touch real Drive auth.
-    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="", thread_ts=None: True)
+    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="", thread_ts=None, targets=None: True)
 
     outcomes = N.notify_success(fake_ramp, _fake_result(n_cohorts=2), version=1)
 
@@ -137,7 +137,7 @@ def test_two_step_conversations_open_for_dms(monkeypatch, fake_ramp):
 
     fake_client, calls = _make_fake_webclient()
     monkeypatch.setattr(N, "WebClient", lambda token=None: fake_client)
-    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="", thread_ts=None: True)
+    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="", thread_ts=None, targets=None: True)
     monkeypatch.setattr(config, "SLACK_BOT_TOKEN", "xoxb-fake")
 
     N.notify_success(fake_ramp, _fake_result(), version=1)
@@ -229,7 +229,7 @@ def test_one_target_failure_does_not_block_others(monkeypatch, fake_ramp):
     fake_client, calls = _make_fake_webclient(open_fail_for_uid="U08AW9FCP27")
     monkeypatch.setattr(N, "WebClient", lambda token=None: fake_client)
     monkeypatch.setattr(config, "SLACK_BOT_TOKEN", "xoxb-fake")
-    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="", thread_ts=None: True)
+    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="", thread_ts=None, targets=None: True)
 
     outcomes = N.notify_success(fake_ramp, _fake_result(), version=1)
 
@@ -258,7 +258,7 @@ def test_webhook_fallback_when_all_targets_fail(monkeypatch, fake_ramp):
     from slack_sdk.errors import SlackApiError
 
     # Drive queue also fails
-    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="", thread_ts=None: False)
+    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="", thread_ts=None, targets=None: False)
 
     # Make every bot-token call fail with token_expired
     instance = MagicMock()
@@ -310,7 +310,7 @@ def test_webhook_fallback_skipped_when_any_target_succeeds(monkeypatch, fake_ram
     monkeypatch.setattr(N, "WebClient", lambda token=None: fake_client)
     monkeypatch.setattr(config, "SLACK_BOT_TOKEN", "xoxb-fake")
     monkeypatch.setattr(config, "SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/T/B/X")
-    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="", thread_ts=None: True)
+    monkeypatch.setattr(N, "_enqueue_via_drive", lambda text, ramp_id="", thread_ts=None, targets=None: True)
 
     webhook_calls = []
     monkeypatch.setattr(N.requests, "post",
@@ -407,19 +407,25 @@ def test_success_message_carries_console_link(fake_ramp):
 
 def test_notify_new_ramp_calls_send_to_all_targets(monkeypatch, fake_ramp):
     """notify_new_ramp routes through _send_to_all_targets (Drive queue +
-    bot/webhook fallbacks). Mock everything so the test never touches
-    Drive or Slack."""
+    bot/webhook fallbacks) and targets Pranav's DM ONLY (verbose/observability
+    path) so Diego + the channel are not pinged on every detection. Mock
+    everything so the test never touches Drive or Slack."""
+    import config
     from src import smart_ramp_notifier as N
     captured = {}
-    def fake_send(text, ramp_id="", thread_ts=None):
+    def fake_send(text, ramp_id="", thread_ts=None, targets=None):
         captured["text"] = text
         captured["ramp_id"] = ramp_id
+        captured["targets"] = targets
         return {"drive_queue": True}
     monkeypatch.setattr(N, "_send_to_all_targets", fake_send)
     out = N.notify_new_ramp(fake_ramp)
     assert out == {"drive_queue": True}
     assert captured["ramp_id"] == fake_ramp.id
     assert "New Smart Ramp detected" in captured["text"]
+    # Verbose-only: Pranav DM, not Diego/channel.
+    assert captured["targets"] == config.SLACK_VERBOSE_TARGETS
+    assert captured["targets"] == [("user", config.SLACK_REPORT_USER)]
 
 
 def test_notify_briefs_ready_passes_counts(monkeypatch, fake_ramp):
@@ -434,3 +440,23 @@ def test_notify_briefs_ready_passes_counts(monkeypatch, fake_ramp):
     )
     assert "9" in captured["text"]
     assert "Cohorts mined: 1" in captured["text"]
+
+
+def test_notify_briefs_ready_persists_thread_parent(monkeypatch, fake_ramp):
+    """Prep-done is now the parent of the per-ramp team thread: it must capture
+    the channel post ts and persist it so notify_success replies in-thread.
+    This is what keeps Diego + the channel at exactly two messages (prep-done
+    parent + campaigns-ready reply)."""
+    from src import smart_ramp_notifier as N
+    monkeypatch.setattr(
+        N, "_send_to_all_targets",
+        lambda text, ramp_id="", thread_ts=None, targets=None: {"channel_ts": "1700.0001"},
+    )
+    persisted = {}
+    import src.ui_decisions as UD
+    monkeypatch.setattr(UD, "set_slack_thread_ts", lambda rid, ts: persisted.update(rid=rid, ts=ts))
+
+    N.notify_briefs_ready(
+        fake_ramp, briefs_generated=3, cohorts_count=1, fell_back_to_legacy=False,
+    )
+    assert persisted == {"rid": fake_ramp.id, "ts": "1700.0001"}

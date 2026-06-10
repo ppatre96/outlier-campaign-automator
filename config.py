@@ -584,6 +584,16 @@ SLACK_RAMP_NOTIFY_TARGETS   = [
     ("channel", SLACK_RAMP_NOTIFY_CHANNEL),
 ]
 
+# Verbose / observability-only targets. The granular lifecycle pings (ramp
+# detected, verify-and-heal, keywords dropped, post-launch audit) would flood
+# Diego's DM and the #outlier-campaign-automation-bot channel and get ignored,
+# so they go to Pranav's DM ONLY. Diego + the channel see exactly two messages
+# per ramp: prep-done (notify_briefs_ready) and campaigns-ready
+# (notify_success, threaded reply). Escalation (5 consecutive failures) stays
+# on SLACK_RAMP_NOTIFY_TARGETS as an explicit exception so hard failures still
+# surface to the team. (Pranav 2026-06-10.)
+SLACK_VERBOSE_TARGETS = [("user", SLACK_REPORT_USER)]
+
 # Channel-post mentions: Diego (Meta), Bryan (Google), Tuan (oversight).
 # Empty string entries are skipped so a missing Bryan ID doesn't render a
 # literal "<@>" placeholder in the message.
