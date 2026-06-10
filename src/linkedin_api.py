@@ -429,7 +429,9 @@ class LinkedInClient(AdPlatformClient):
         self._raise_for_status(resp, "getCampaign")
         return resp.json()
 
-    def attach_conversion_to_campaign(self, campaign_urn: str, conversion_id: int | None = None) -> bool:
+    def attach_conversion_to_campaign(
+        self, campaign_urn: str, conversion_id: int | None = None, *, max_attempts: int = 3,
+    ) -> bool:
         """Associate a LinkedIn conversion with a sponsored campaign.
 
         WEBSITE_CONVERSION campaigns require at least one conversion attached
@@ -438,20 +440,51 @@ class LinkedInClient(AdPlatformClient):
         `/conversions/{id}` (Rest.li PARTIAL_UPDATE). Idempotent — skips if
         the campaign is already linked.
 
-        Returns True on success, False on failure (logged, non-fatal).
+        Robustness (2026-06-09): the shared conversion's `campaigns` array has
+        grown large (600+), and `$set`-ing the whole array makes LinkedIn return
+        an intermittent 500 — but the write usually STILL lands. A bare 500 was
+        a false-negative (logged "failed" while the campaign was actually
+        linked), so a real miss looked identical to a transient one. We now:
+          1. retry the PATCH on 5xx / network error (bounded, with backoff),
+          2. after any PATCH error, re-GET and VERIFY whether the campaign is
+             linked anyway (catches the landed-despite-500 case),
+          3. give up immediately on 4xx (won't fix itself),
+          4. do a final verify so the return value reflects ground truth.
+
+        Returns True iff the campaign is confirmed linked. Non-fatal (logged).
         Set LINKEDIN_CONVERSION_ID=0 to disable auto-attach globally.
         """
         cid = conversion_id if conversion_id is not None else config.LINKEDIN_CONVERSION_ID
         if not cid:
             log.debug("attach_conversion_to_campaign: LINKEDIN_CONVERSION_ID=0 — skipping")
             return False
-        try:
+        url = f"{config.LINKEDIN_API_BASE}/conversions/{cid}"
+
+        def _is_linked() -> bool | None:
+            """True/False if the campaigns list is readable; None on read failure."""
+            try:
+                r = self._req("GET", url)
+                if not r.ok:
+                    return None
+                return campaign_urn in (r.json().get("campaigns", []) or [])
+            except Exception:
+                return None
+
+        for attempt in range(1, max(1, max_attempts) + 1):
             # Fetch current campaigns list. Required because PATCH $set replaces
             # the whole array — must include existing entries to preserve them.
-            url = f"{config.LINKEDIN_API_BASE}/conversions/{cid}"
-            resp = self._req("GET", url)
-            self._raise_for_status(resp, "getConversion")
-            current = resp.json().get("campaigns", []) or []
+            try:
+                resp = self._req("GET", url)
+                self._raise_for_status(resp, "getConversion")
+                current = resp.json().get("campaigns", []) or []
+            except Exception as exc:
+                log.warning("attach_conversion: getConversion failed (attempt %d/%d): %s",
+                            attempt, max_attempts, exc)
+                if attempt < max_attempts:
+                    time.sleep(min(2 ** (attempt - 1), 5))
+                    continue
+                return False
+
             if campaign_urn in current:
                 log.info("conversion %d already linked to %s — skipping", cid, campaign_urn)
                 return True
@@ -459,15 +492,41 @@ class LinkedInClient(AdPlatformClient):
             patch_headers = self._default_headers()
             patch_headers["X-RestLi-Method"] = "PARTIAL_UPDATE"
             payload = {"patch": {"$set": {"campaigns": current + [campaign_urn]}}}
-            resp = self._req("POST", url, json=payload, headers=patch_headers)
-            self._raise_for_status(resp, "attachConversion")
-            log.info("attached conversion %d to %s (now %d campaigns linked)",
-                     cid, campaign_urn, len(current) + 1)
+            try:
+                resp = self._req("POST", url, json=payload, headers=patch_headers)
+            except Exception as exc:
+                resp = None
+                log.warning("attach_conversion: PATCH raised (attempt %d/%d): %s",
+                            attempt, max_attempts, exc)
+
+            if resp is not None and resp.ok:
+                log.info("attached conversion %d to %s (now %d campaigns linked)",
+                         cid, campaign_urn, len(current) + 1)
+                return True
+
+            # PATCH failed/raised. The write often lands despite a 500 on the
+            # large-array $set — verify before deciding it failed.
+            if _is_linked() is True:
+                log.info("attach_conversion: %s linked to %d despite PATCH %s — verified",
+                         campaign_urn, cid, (resp.status_code if resp is not None else "exception"))
+                return True
+
+            status = resp.status_code if resp is not None else None
+            if status is not None and 400 <= status < 500:
+                log.warning("attach_conversion: PATCH %s (4xx, not retrying): %s",
+                            status, (resp.text[:200] if resp is not None else ""))
+                return False
+            log.warning("attach_conversion: attempt %d/%d failed (status=%s) — retrying",
+                        attempt, max_attempts, status)
+            if attempt < max_attempts:
+                time.sleep(min(2 ** (attempt - 1), 5))
+
+        # Retries exhausted — final ground-truth check.
+        if _is_linked() is True:
             return True
-        except Exception as exc:
-            log.warning("attach_conversion_to_campaign(%s, %s) failed: %s",
-                        campaign_urn, cid, exc)
-            return False
+        log.error("attach_conversion_to_campaign(%s, %s): FAILED after %d attempts — NOT linked",
+                  campaign_urn, cid, max_attempts)
+        return False
 
     def get_account_reference_urn(self) -> str:
         """Return the ad account's `reference` field — the URN of the LinkedIn
