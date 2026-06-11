@@ -67,6 +67,21 @@ LINKEDIN_CLIENT_SECRET = os.getenv("LINKEDIN_CLIENT_SECRET", "")
 # Set to "0" to disable auto-attach.
 LINKEDIN_CONVERSION_ID = int(os.getenv("LINKEDIN_CONVERSION_ID", "19801700"))
 
+# Per-pod LinkedIn "WS Grant" conversion rules (worker_skill_grant, 2026-06-11).
+# Attached as the SOLE optimization conversion on each LinkedIn campaign (keyed
+# on the cohort's Smart Ramp `job_post_pod`), REPLACING the default
+# LINKEDIN_CONVERSION_ID — so LinkedIn optimizes on worker_skill_grant only
+# (Tuan/Pranav decision 2026-06-11; LinkedIn optimizes toward the attached
+# conversion set, so attaching only WS Grant = optimize WS Grant only). Unknown
+# pod → falls back to LINKEDIN_CONVERSION_ID. Verified live by name 2026-06-11.
+# See reference_outlier_value_based_conversions.
+LINKEDIN_POD_CONVERSION_IDS = {
+    "coders":     26557044,   # WS Grant - Coders
+    "specialist": 26557052,   # WS Grant - Specialist
+    "languages":  26557060,   # WS Grant - Languages
+    "generalist": 26557068,   # WS Grant - Generalist
+}
+
 # Landing-page URL per Smart Ramp `matched_domain`. The marketing team
 # maintains custom LPs under outlier.ai/experts/<slug>; this map matches the
 # cohort's domain to its LP so the destination URL on every ad lands on the

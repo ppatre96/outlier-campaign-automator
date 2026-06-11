@@ -1470,11 +1470,17 @@ def _process_inmail_campaigns(
                     {"daily_budget_cents": daily_budget_cents}
                     if daily_budget_cents is not None else {}
                 )
+                # Optimize on the per-pod WS Grant conversion (pod from Smart
+                # Ramp). When the pod is known this REPLACES the default OCP
+                # conversion so LinkedIn optimizes on worker_skill_grant only;
+                # unknown pod → None → falls back to LINKEDIN_CONVERSION_ID.
+                _pod_conv = _linkedin_pod_conversion_id(naming_meta.get("pod") if naming_meta else None)
                 campaign_urn = li_client.create_inmail_campaign(
                     name=campaign_name,
                     campaign_group_urn=group_urn,
                     facet_urns=facet_urns,
                     exclude_facet_urns=cohort_exclude_urns,
+                    conversion_id=_pod_conv,
                     **_li_inmail_budget_kwargs,
                 )
                 campaign_id = campaign_urn.rsplit(":", 1)[-1]
@@ -2055,6 +2061,16 @@ def _cohort_channel_already_live(ramp_id, platform: str, campaign_type: str, coh
         ramp_id, platform, campaign_type,
         getattr(cohort, "name", ""), getattr(geo_group, "cluster", ""),
     )
+
+
+def _linkedin_pod_conversion_id(pod) -> int | None:
+    """Map a Smart Ramp pod (job_post_pod) → its per-pod LinkedIn WS Grant
+    conversion rule id. Passed as create_campaign(conversion_id=...) so it
+    REPLACES the default LINKEDIN_CONVERSION_ID and LinkedIn optimizes on
+    worker_skill_grant only. Returns None when the pod is missing/unrecognized
+    (campaign falls back to LINKEDIN_CONVERSION_ID). See
+    config.LINKEDIN_POD_CONVERSION_IDS."""
+    return config.LINKEDIN_POD_CONVERSION_IDS.get((pod or "").strip().lower())
 
 
 # ── Phase 2.6: Smart Ramp dual-arm pipeline ──────────────────────────────────
@@ -3836,12 +3852,17 @@ def _process_static_campaigns(
                 {"daily_budget_cents": daily_budget_cents}
                 if daily_budget_cents is not None else {}
             )
+            # Optimize on the per-pod WS Grant conversion (pod from Smart Ramp).
+            # Known pod REPLACES the default OCP conversion so LinkedIn optimizes
+            # on worker_skill_grant only; unknown pod → None → LINKEDIN_CONVERSION_ID.
+            _pod_conv = _linkedin_pod_conversion_id(naming_meta.get("pod") if naming_meta else None)
             campaign_urn = li_client.create_campaign(
                 name=campaign_name,
                 campaign_group_urn=group_urn,
                 facet_urns=facet_urns,
                 exclude_facet_urns=cohort_exclude_urns,
                 campaign_state=getattr(cohort, "campaign_state", None),
+                conversion_id=_pod_conv,
                 **_li_static_budget_kwargs,
             )
             campaign_id = campaign_urn.rsplit(":", 1)[-1]
