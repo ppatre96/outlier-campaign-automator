@@ -846,6 +846,7 @@ class LinkedInClient(AdPlatformClient):
         body: str,
         cta_label: str,
         destination_url: str | None = None,
+        ad_name: str | None = None,
     ) -> str:
         """
         Create a LinkedIn Message Ad creative and attach it to a campaign.
@@ -858,6 +859,12 @@ class LinkedInClient(AdPlatformClient):
                     person URN or empty string is passed, this method
                     auto-derives the org URN from the ad account's `reference`
                     field via `get_account_reference_urn()`.
+        ad_name:    human-readable name for the inMailContents object (what
+                    shows as the ad name in Campaign Manager). Callers pass the
+                    pipe-delimited campaign-spec name + angle so it's legible to
+                    a person/LLM (e.g. "Scale-GMR-0023 | LinkedIn | language |
+                    kn-IN | … | Message ads | 06/11/2026 | Angle A"). Falls back
+                    to a timestamp token only when not supplied.
         Returns the sponsoredCreative URN.
         """
         dest = destination_url or config.LINKEDIN_DESTINATION
@@ -875,7 +882,11 @@ class LinkedInClient(AdPlatformClient):
         # Step 1 — create the InMail content object via REST API (no MDP required)
         content_payload = {
             "account": f"urn:li:sponsoredAccount:{config.LINKEDIN_AD_ACCOUNT_ID}",
-            "name": f"inmail_{int(__import__('time').time())}",
+            # Human-readable name (caller passes the campaign-spec name + angle).
+            # Fall back to a timestamp token only when no name is supplied so the
+            # object still gets a unique label. LinkedIn caps the field, so trim.
+            "name": (ad_name.strip()[:255] if ad_name and ad_name.strip()
+                     else f"inmail_{int(__import__('time').time())}"),
             "sender": sender_urn,
             "htmlBody": _inmail_html_body(body),
             "subject": subject[:60],
