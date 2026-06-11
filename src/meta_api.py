@@ -172,6 +172,12 @@ class MetaClient(AdPlatformClient):
             Campaign.Field.status:                  Campaign.Status.paused,
             Campaign.Field.special_ad_categories:   special,
             Campaign.Field.buying_type:             "AUCTION",
+            # Meta API (v21, error_subcode 4834011) now REQUIRES this explicitly
+            # whenever the campaign carries no campaign-level budget — which is
+            # our case: we budget at the ad-set level (no CBO). False = each ad
+            # set keeps its own budget (no 20% cross-ad-set sharing). SDK may not
+            # expose the Field constant on all versions, so use the raw key.
+            "is_adset_budget_sharing_enabled":      False,
         }
         if special and sac_countries:
             # facebook-business SDK exposes this field as
