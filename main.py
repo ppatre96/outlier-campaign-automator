@@ -1284,7 +1284,10 @@ def _process_inmail_campaigns(
                     log.info(f"InMail angle {angle_label} passes brand voice check (confidence: {report.confidence_score:.0%})")
         return
 
-    group_urn = li_client.create_campaign_group(group_name)
+    # Reviewer feedback (GMR-0024, 2026-06-11): land every agent-built campaign
+    # as a DRAFT inside ONE shared "agent" staging group rather than a fresh
+    # group per ramp. `group_name` is retained for registry/logging only.
+    group_urn = li_client.get_or_create_staging_group()
 
     # Same 4-source composition as the Sponsored Content path.
     default_exclude_urns = urn_res.resolve_default_excludes()
@@ -3733,7 +3736,9 @@ def _process_static_campaigns(
         )
     else:
         group_name = f"Outlier {flow_id} {location} Static".strip()
-    group_urn = li_client.create_campaign_group(group_name)
+    # Shared "agent" staging group (see _process_inmail_campaigns / GMR-0024
+    # reviewer feedback). `group_name` retained for registry/logging only.
+    group_urn = li_client.get_or_create_staging_group()
     out_groups = [group_urn]
     log.debug("_process_static_campaigns: group=%s", group_urn)
 

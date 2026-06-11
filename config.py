@@ -46,6 +46,12 @@ LINKEDIN_ORG_ID           = os.getenv("LINKEDIN_ORG_ID", "")
 # in the map.
 LINKEDIN_DESTINATION      = os.getenv("LINKEDIN_DESTINATION_URL", "https://outlier.ai/")
 LINKEDIN_INMAIL_SENDER_URN = os.getenv("LINKEDIN_INMAIL_SENDER_URN", "")
+# Custom footer / Terms & Conditions appended to every Message Ad (reviewer
+# feedback GMR-0024, 2026-06-11). Sent as the inMailContents `customFooter`
+# field only when non-empty. Set the canonical text in Doppler
+# (LINKEDIN_INMAIL_FOOTER); kept empty here until the marketing/legal copy is
+# confirmed so we never ship placeholder legal text.
+LINKEDIN_INMAIL_FOOTER     = os.getenv("LINKEDIN_INMAIL_FOOTER", "")
 # Public profile URN of the LinkedIn member who authorized the OAuth token.
 # Required to create image ad creatives (DSC posts via w_member_social scope).
 # Find at: linkedin.com/in/<id> → the <id> portion, e.g. urn:li:person:AbCdEfGhIj
