@@ -1479,6 +1479,12 @@ def _process_inmail_campaigns(
                 )
                 campaign_id = campaign_urn.rsplit(":", 1)[-1]
                 sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
+                # Attach the per-pod WS Grant conversion in addition to the
+                # default (create_inmail_campaign already attached
+                # LINKEDIN_CONVERSION_ID). Pod sourced from Smart Ramp.
+                _pod_conv = _linkedin_pod_conversion_id(naming_meta.get("pod") if naming_meta else None)
+                if _pod_conv:
+                    li_client.attach_conversion_to_campaign(campaign_urn, _pod_conv)
                 log.info(
                     "Created InMail campaign %s cohort=%s geo=%s rate=%s (%d angles to attach)",
                     campaign_urn, cohort.name, geo_group.cluster_label, geo_group.advertised_rate, len(valid_pairs),
@@ -2055,6 +2061,14 @@ def _cohort_channel_already_live(ramp_id, platform: str, campaign_type: str, coh
         ramp_id, platform, campaign_type,
         getattr(cohort, "name", ""), getattr(geo_group, "cluster", ""),
     )
+
+
+def _linkedin_pod_conversion_id(pod) -> int | None:
+    """Map a Smart Ramp pod (job_post_pod) → its per-pod LinkedIn WS Grant
+    conversion rule id, attached IN ADDITION to LINKEDIN_CONVERSION_ID. Returns
+    None when the pod is missing/unrecognized (campaign keeps just the default).
+    See config.LINKEDIN_POD_CONVERSION_IDS."""
+    return config.LINKEDIN_POD_CONVERSION_IDS.get((pod or "").strip().lower())
 
 
 # ── Phase 2.6: Smart Ramp dual-arm pipeline ──────────────────────────────────
@@ -3846,6 +3860,12 @@ def _process_static_campaigns(
             )
             campaign_id = campaign_urn.rsplit(":", 1)[-1]
             sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
+            # Attach the per-pod WS Grant conversion in addition to the default
+            # (create_campaign already attached LINKEDIN_CONVERSION_ID). Pod
+            # sourced from Smart Ramp.
+            _pod_conv = _linkedin_pod_conversion_id(naming_meta.get("pod") if naming_meta else None)
+            if _pod_conv:
+                li_client.attach_conversion_to_campaign(campaign_urn, _pod_conv)
             out_campaigns.append(campaign_urn)
             base_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
             by_cohort_key = f"{base_id}_{geo_group.campaign_suffix}"
