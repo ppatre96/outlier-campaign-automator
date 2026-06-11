@@ -608,10 +608,16 @@ class LinkedInClient(AdPlatformClient):
         daily_budget_cents: int = 10000,
         exclude_facet_urns: dict[str, list[str]] | None = None,
         campaign_state: dict | None = None,
+        conversion_id: int | None = None,
     ) -> str:
         """
         Create a Sponsored Content campaign with the given targeting.
         Returns the campaign URN. Name auto-prefixed with "agent_".
+
+        `conversion_id` overrides the conversion attached for optimization. When
+        None, the configured default (`LINKEDIN_CONVERSION_ID`) is attached.
+        Callers pass the per-pod WS Grant rule so the campaign optimizes on
+        worker_skill_grant (see config.LINKEDIN_POD_CONVERSION_IDS).
 
         `exclude_facet_urns` is an optional `{facet: [urns]}` map of negation
         targeting (recruiters/sales/etc.) — emitted as the `exclude` block of
@@ -655,10 +661,12 @@ class LinkedInClient(AdPlatformClient):
         campaign_id = resp.headers.get("x-linkedin-id") or _id_from_location(resp)
         urn = f"urn:li:sponsoredCampaign:{campaign_id}"
         log.info("Created campaign %s '%s'", urn, name)
-        # Auto-attach the configured conversion when objective is WEBSITE_CONVERSION.
+        # Auto-attach the conversion when objective is WEBSITE_CONVERSION.
         # Required for LinkedIn to optimize + report on conversion events.
+        # `conversion_id` (per-pod WS Grant) overrides the default; None →
+        # LINKEDIN_CONVERSION_ID.
         if payload.get("objectiveType") == "WEBSITE_CONVERSION":
-            self.attach_conversion_to_campaign(urn)
+            self.attach_conversion_to_campaign(urn, conversion_id)
         return urn
 
     # ── Image upload ───────────────────────────────────────────────────────────
@@ -750,12 +758,17 @@ class LinkedInClient(AdPlatformClient):
         facet_urns: dict[str, list[str]],
         daily_budget_cents: int = 10000,
         exclude_facet_urns: dict[str, list[str]] | None = None,
+        conversion_id: int | None = None,
     ) -> str:
         """
         Create a Sponsored InMail (Message Ad) campaign.
         facet_urns keys must be full facet URNs (urn:li:adTargetingFacet:titles, etc.)
         Returns the campaign URN. `exclude_facet_urns` is the negation analog —
         see `create_campaign` and `config.DEFAULT_EXCLUDE_FACETS`.
+
+        `conversion_id` overrides the conversion attached for optimization (None →
+        LINKEDIN_CONVERSION_ID). Callers pass the per-pod WS Grant rule so the
+        campaign optimizes on worker_skill_grant.
         """
         name = self._prefixed(name)
         targeting = _build_targeting_criteria(facet_urns, exclude_facet_urns)
@@ -787,10 +800,10 @@ class LinkedInClient(AdPlatformClient):
         urn = f"urn:li:sponsoredCampaign:{campaign_id}"
         log.info("Created InMail campaign %s '%s'", urn, name)
         # WEBSITE_CONVERSION campaigns require a conversion attached for LinkedIn
-        # to optimize / report. Attach the default conversion (id 19801700 by
-        # default — Outlier "OCP Complete" signup pixel).
+        # to optimize / report. `conversion_id` (per-pod WS Grant) overrides the
+        # default; None → LINKEDIN_CONVERSION_ID ("OCP Complete").
         if payload.get("objectiveType") == "WEBSITE_CONVERSION":
-            self.attach_conversion_to_campaign(urn)
+            self.attach_conversion_to_campaign(urn, conversion_id)
         return urn
 
     # ── InMail Creative ────────────────────────────────────────────────────────

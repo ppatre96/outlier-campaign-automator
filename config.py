@@ -68,8 +68,12 @@ LINKEDIN_CLIENT_SECRET = os.getenv("LINKEDIN_CLIENT_SECRET", "")
 LINKEDIN_CONVERSION_ID = int(os.getenv("LINKEDIN_CONVERSION_ID", "19801700"))
 
 # Per-pod LinkedIn "WS Grant" conversion rules (worker_skill_grant, 2026-06-11).
-# Attached IN ADDITION to LINKEDIN_CONVERSION_ID on each LinkedIn campaign, keyed
-# on the cohort's Smart Ramp `job_post_pod`. Verified live by name 2026-06-11.
+# Attached as the SOLE optimization conversion on each LinkedIn campaign (keyed
+# on the cohort's Smart Ramp `job_post_pod`), REPLACING the default
+# LINKEDIN_CONVERSION_ID — so LinkedIn optimizes on worker_skill_grant only
+# (Tuan/Pranav decision 2026-06-11; LinkedIn optimizes toward the attached
+# conversion set, so attaching only WS Grant = optimize WS Grant only). Unknown
+# pod → falls back to LINKEDIN_CONVERSION_ID. Verified live by name 2026-06-11.
 # See reference_outlier_value_based_conversions.
 LINKEDIN_POD_CONVERSION_IDS = {
     "coders":     26557044,   # WS Grant - Coders

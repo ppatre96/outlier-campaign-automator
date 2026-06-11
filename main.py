@@ -1470,21 +1470,21 @@ def _process_inmail_campaigns(
                     {"daily_budget_cents": daily_budget_cents}
                     if daily_budget_cents is not None else {}
                 )
+                # Optimize on the per-pod WS Grant conversion (pod from Smart
+                # Ramp). When the pod is known this REPLACES the default OCP
+                # conversion so LinkedIn optimizes on worker_skill_grant only;
+                # unknown pod → None → falls back to LINKEDIN_CONVERSION_ID.
+                _pod_conv = _linkedin_pod_conversion_id(naming_meta.get("pod") if naming_meta else None)
                 campaign_urn = li_client.create_inmail_campaign(
                     name=campaign_name,
                     campaign_group_urn=group_urn,
                     facet_urns=facet_urns,
                     exclude_facet_urns=cohort_exclude_urns,
+                    conversion_id=_pod_conv,
                     **_li_inmail_budget_kwargs,
                 )
                 campaign_id = campaign_urn.rsplit(":", 1)[-1]
                 sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
-                # Attach the per-pod WS Grant conversion in addition to the
-                # default (create_inmail_campaign already attached
-                # LINKEDIN_CONVERSION_ID). Pod sourced from Smart Ramp.
-                _pod_conv = _linkedin_pod_conversion_id(naming_meta.get("pod") if naming_meta else None)
-                if _pod_conv:
-                    li_client.attach_conversion_to_campaign(campaign_urn, _pod_conv)
                 log.info(
                     "Created InMail campaign %s cohort=%s geo=%s rate=%s (%d angles to attach)",
                     campaign_urn, cohort.name, geo_group.cluster_label, geo_group.advertised_rate, len(valid_pairs),
@@ -2065,9 +2065,11 @@ def _cohort_channel_already_live(ramp_id, platform: str, campaign_type: str, coh
 
 def _linkedin_pod_conversion_id(pod) -> int | None:
     """Map a Smart Ramp pod (job_post_pod) → its per-pod LinkedIn WS Grant
-    conversion rule id, attached IN ADDITION to LINKEDIN_CONVERSION_ID. Returns
-    None when the pod is missing/unrecognized (campaign keeps just the default).
-    See config.LINKEDIN_POD_CONVERSION_IDS."""
+    conversion rule id. Passed as create_campaign(conversion_id=...) so it
+    REPLACES the default LINKEDIN_CONVERSION_ID and LinkedIn optimizes on
+    worker_skill_grant only. Returns None when the pod is missing/unrecognized
+    (campaign falls back to LINKEDIN_CONVERSION_ID). See
+    config.LINKEDIN_POD_CONVERSION_IDS."""
     return config.LINKEDIN_POD_CONVERSION_IDS.get((pod or "").strip().lower())
 
 
@@ -3850,22 +3852,21 @@ def _process_static_campaigns(
                 {"daily_budget_cents": daily_budget_cents}
                 if daily_budget_cents is not None else {}
             )
+            # Optimize on the per-pod WS Grant conversion (pod from Smart Ramp).
+            # Known pod REPLACES the default OCP conversion so LinkedIn optimizes
+            # on worker_skill_grant only; unknown pod → None → LINKEDIN_CONVERSION_ID.
+            _pod_conv = _linkedin_pod_conversion_id(naming_meta.get("pod") if naming_meta else None)
             campaign_urn = li_client.create_campaign(
                 name=campaign_name,
                 campaign_group_urn=group_urn,
                 facet_urns=facet_urns,
                 exclude_facet_urns=cohort_exclude_urns,
                 campaign_state=getattr(cohort, "campaign_state", None),
+                conversion_id=_pod_conv,
                 **_li_static_budget_kwargs,
             )
             campaign_id = campaign_urn.rsplit(":", 1)[-1]
             sheets.update_li_campaign_id(cohort._stg_id, campaign_id)
-            # Attach the per-pod WS Grant conversion in addition to the default
-            # (create_campaign already attached LINKEDIN_CONVERSION_ID). Pod
-            # sourced from Smart Ramp.
-            _pod_conv = _linkedin_pod_conversion_id(naming_meta.get("pod") if naming_meta else None)
-            if _pod_conv:
-                li_client.attach_conversion_to_campaign(campaign_urn, _pod_conv)
             out_campaigns.append(campaign_urn)
             base_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
             by_cohort_key = f"{base_id}_{geo_group.campaign_suffix}"
