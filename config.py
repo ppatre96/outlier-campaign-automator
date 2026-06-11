@@ -46,6 +46,12 @@ LINKEDIN_ORG_ID           = os.getenv("LINKEDIN_ORG_ID", "")
 # in the map.
 LINKEDIN_DESTINATION      = os.getenv("LINKEDIN_DESTINATION_URL", "https://outlier.ai/")
 LINKEDIN_INMAIL_SENDER_URN = os.getenv("LINKEDIN_INMAIL_SENDER_URN", "")
+# Custom footer / Terms & Conditions appended to every Message Ad (reviewer
+# feedback GMR-0024, 2026-06-11). Sent as the inMailContents `customFooter`
+# field only when non-empty. Set the canonical text in Doppler
+# (LINKEDIN_INMAIL_FOOTER); kept empty here until the marketing/legal copy is
+# confirmed so we never ship placeholder legal text.
+LINKEDIN_INMAIL_FOOTER     = os.getenv("LINKEDIN_INMAIL_FOOTER", "")
 # Public profile URN of the LinkedIn member who authorized the OAuth token.
 # Required to create image ad creatives (DSC posts via w_member_social scope).
 # Find at: linkedin.com/in/<id> → the <id> portion, e.g. urn:li:person:AbCdEfGhIj
@@ -197,6 +203,12 @@ ENABLED_PLATFORMS    = os.getenv("ENABLED_PLATFORMS", "linkedin,meta,google,goog
 # is guarded by the console's `channel_locks` table (per ramp × channel), and
 # the ramp is NOT flipped to completed so other channels can still launch.
 ONLY_CHANNEL         = os.getenv("ONLY_CHANNEL", "").strip().lower()
+# New-cohort feature (010): scope a run to a single Smart Ramp cohort id.
+# When set, `_ramp_to_rows` keeps only that cohort's row → prep + every launch
+# arm process ONLY that cohort, and the ramp-wide cohort-row DELETEs are
+# skipped (existing cohorts' ICP/audience/targeting/rationale + campaigns are
+# left untouched). Set per-run by the console's new-cohort prep/launch routes.
+ONLY_COHORT          = os.getenv("ONLY_COHORT", "").strip()
 # Relaunch (replace): archive ONLY_CHANNEL's existing campaigns for the ramp
 # before creating fresh ones (console "Relaunch (replace)" → poller `replace`).
 REPLACE_EXISTING     = os.getenv("REPLACE_EXISTING", "").strip().lower() in ("1", "true", "yes")

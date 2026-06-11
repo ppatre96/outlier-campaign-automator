@@ -52,6 +52,41 @@ class Decision:
     requester_name: Optional[str] = None
     summary:        Optional[str] = None
     submitted_at:   Optional[str] = None
+    # New-cohort feature (010): cohorts added to the Smart Ramp after first
+    # prep, awaiting user-driven review+launch. Each entry:
+    # {cohort_id, label, detected_at, status}. Orthogonal to `status`.
+    pending_cohorts: list[dict] = field(default_factory=list)
+
+
+_SCHEMA_READY = False
+
+
+def _ensure_pending_cols() -> None:
+    """Self-heal the feature-010 columns (prepped_cohort_ids, pending_cohorts)
+    on ramp_decisions once per process, mirroring upsert_campaign's
+    CREATE-TABLE-IF-NOT-EXISTS resilience. ADD COLUMN IF NOT EXISTS is a no-op
+    once applied. Best-effort: any failure leaves the flag unset so a later
+    call retries; callers that read the columns coalesce so a missing column
+    only matters until the first successful ensure."""
+    global _SCHEMA_READY
+    if _SCHEMA_READY or psycopg is None:
+        return
+    url = os.environ.get("DATABASE_URL", "").strip()
+    if not url:
+        return
+    try:
+        with psycopg.connect(url, autocommit=True, connect_timeout=10) as c, c.cursor() as cur:
+            cur.execute(
+                "ALTER TABLE ramp_decisions "
+                "ADD COLUMN IF NOT EXISTS prepped_cohort_ids TEXT[] NOT NULL DEFAULT '{}'"
+            )
+            cur.execute(
+                "ALTER TABLE ramp_decisions "
+                "ADD COLUMN IF NOT EXISTS pending_cohorts JSONB NOT NULL DEFAULT '[]'::jsonb"
+            )
+        _SCHEMA_READY = True
+    except Exception as exc:                                   # pragma: no cover
+        log.debug("pending-cohort column ensure skipped (non-fatal): %s", exc)
 
 
 def _connect():
@@ -60,6 +95,7 @@ def _connect():
     url = os.environ.get("DATABASE_URL", "").strip()
     if not url:
         raise UIDecisionsUnavailable("DATABASE_URL is not set")
+    _ensure_pending_cols()
     try:
         return psycopg.connect(url, autocommit=False, connect_timeout=10)
     except psycopg.OperationalError as exc:                    # pragma: no cover
@@ -68,7 +104,8 @@ def _connect():
 
 _DECISION_COLS = (
     "ramp_id, status::text, channels, budgets, decided_by, decided_at, "
-    "version, matched_domain, requester_name, summary, submitted_at"
+    "version, matched_domain, requester_name, summary, submitted_at, "
+    "coalesce(pending_cohorts, '[]'::jsonb)"
 )
 
 
@@ -85,6 +122,7 @@ def _row_to_decision(row) -> Decision:
         requester_name=row[8],
         summary=row[9],
         submitted_at=row[10].isoformat() if row[10] else None,
+        pending_cohorts=list(row[11] or []) if len(row) > 11 else [],
     )
 
 
@@ -510,6 +548,125 @@ def campaign_exists_for_cohort_channel(
         log.debug("campaign_exists_for_cohort_channel unavailable (%s/%s/%s/%s/%s): %s",
                   ramp_id, platform, campaign_type, cohort_signature, geo_cluster, exc)
         return False
+
+
+# ── New-cohort detection + review/launch state (feature 010) ──────────────────
+#
+# Two orthogonal signals on ramp_decisions (never touch `status`):
+#   prepped_cohort_ids — Smart Ramp CohortSpec.id values already prepped.
+#   pending_cohorts    — newly-detected cohorts awaiting user-driven review +
+#                        launch. Entry: {cohort_id, label, detected_at, status}.
+
+def get_prepped_cohort_ids(ramp_id: str) -> list[str]:
+    """Smart Ramp cohort ids already prepped for this ramp. [] if the ramp has
+    no decision row yet, or on any read error."""
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT coalesce(prepped_cohort_ids, '{}') "
+                "FROM ramp_decisions WHERE ramp_id = %s",
+                (ramp_id,),
+            )
+            row = cur.fetchone()
+            return list(row[0] or []) if row else []
+    except Exception as exc:
+        log.debug("get_prepped_cohort_ids unavailable (%s): %s", ramp_id, exc)
+        return []
+
+
+def set_prepped_cohort_ids(ramp_id: str, ids: list[str]) -> None:
+    """Overwrite the prepped-cohort snapshot. Used at first prep (all
+    then-existing cohorts) and the post-deploy bootstrap (baseline = current)."""
+    deduped = list(dict.fromkeys(i for i in ids if i))
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE ramp_decisions SET prepped_cohort_ids = %s WHERE ramp_id = %s",
+            (deduped, ramp_id),
+        )
+        conn.commit()
+
+
+def add_prepped_cohort_ids(ramp_id: str, ids: list[str]) -> None:
+    """Union new ids into the prepped snapshot (scoped per-cohort prep), so the
+    cohort stops being flagged "new" once its scoped prep completes."""
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT coalesce(prepped_cohort_ids, '{}') "
+            "FROM ramp_decisions WHERE ramp_id = %s",
+            (ramp_id,),
+        )
+        row = cur.fetchone()
+        cur_ids = list(row[0] or []) if row else []
+        merged = list(dict.fromkeys([*cur_ids, *(i for i in ids if i)]))
+        cur.execute(
+            "UPDATE ramp_decisions SET prepped_cohort_ids = %s WHERE ramp_id = %s",
+            (merged, ramp_id),
+        )
+        conn.commit()
+
+
+def get_pending_cohorts(ramp_id: str) -> list[dict]:
+    """Newly-detected cohorts awaiting review+launch. [] on any read error."""
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT coalesce(pending_cohorts, '[]'::jsonb) "
+                "FROM ramp_decisions WHERE ramp_id = %s",
+                (ramp_id,),
+            )
+            row = cur.fetchone()
+            return list(row[0] or []) if row else []
+    except Exception as exc:
+        log.debug("get_pending_cohorts unavailable (%s): %s", ramp_id, exc)
+        return []
+
+
+def add_pending_cohorts(ramp_id: str, entries: list[dict]) -> list[dict]:
+    """Append pending-cohort entries whose cohort_id isn't already present
+    (idempotent — re-detecting the same cohort is a no-op). Returns the merged
+    list."""
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT coalesce(pending_cohorts, '[]'::jsonb) "
+            "FROM ramp_decisions WHERE ramp_id = %s",
+            (ramp_id,),
+        )
+        row = cur.fetchone()
+        existing = list((row[0] if row else []) or [])
+        have = {e.get("cohort_id") for e in existing}
+        merged = existing + [e for e in entries if e.get("cohort_id") not in have]
+        if len(merged) != len(existing):
+            cur.execute(
+                "UPDATE ramp_decisions SET pending_cohorts = %s::jsonb WHERE ramp_id = %s",
+                (json.dumps(merged), ramp_id),
+            )
+            conn.commit()
+        return merged
+
+
+def set_pending_cohort_status(ramp_id: str, cohort_id: str, status: str) -> None:
+    """Advance a single pending cohort's status
+    (detected → prepping → awaiting_review → awaiting_launch → launched).
+    No-op if the cohort isn't a pending entry."""
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT coalesce(pending_cohorts, '[]'::jsonb) "
+            "FROM ramp_decisions WHERE ramp_id = %s",
+            (ramp_id,),
+        )
+        row = cur.fetchone()
+        entries = list((row[0] if row else []) or [])
+        changed = False
+        for e in entries:
+            if e.get("cohort_id") == cohort_id:
+                e["status"] = status
+                changed = True
+        if changed:
+            cur.execute(
+                "UPDATE ramp_decisions SET pending_cohorts = %s::jsonb WHERE ramp_id = %s",
+                (json.dumps(entries), ramp_id),
+            )
+            conn.commit()
 
 
 def delete_campaign_rows(ramp_id: str, platform: str, platform_campaign_ids: list[str]) -> int:

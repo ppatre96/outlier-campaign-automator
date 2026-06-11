@@ -171,21 +171,55 @@ def build_campaign_name(
         country = (geos[0].upper() if geos else "")
     seg_country = _safe(country, "US")
 
-    # Segment 7 — run date (MM/DD/YYYY), i.e. today (when the campaign is built).
+    # Run date (MM/DD/YYYY), i.e. today (when the campaign is built).
     seg_date = datetime.now().strftime("%m/%d/%Y")
 
-    # Segment 8 — geo-tier label (ALL when no grouping override).
+    # Geo-tier label (ALL when no grouping override).
     seg_geo_tier = _grouping_label(li_state.get("groupingType"))
 
+    # LinkedIn — full Smart Ramp v2 order, with the channel-manager fields
+    # (liTargetingFacet / liAdLanguage / liAdFormat) the Smart Ramp tool puts in
+    # the name and the run date LAST. All sourced from campaign_state.linkedin —
+    # authoritative, never invented (reviewer feedback GMR-0024, 2026-06-11):
+    #   Scale-<ramp> | LinkedIn | <pod> | <domain> | <locale> | <country>
+    #   | <geo-tier> | <facet> | <lang> | <format> | <date>
+    # e.g. Scale-GMR-0024 | LinkedIn | specialist | Media & Communications
+    #      | en-US | US | ALL | BLV | EN | Message ads | 06/11/2026
+    if platform.lower() == "linkedin":
+        # Language: liAdLanguage (uppercase, e.g. "EN"); fall back to the
+        # locale's language subtag (en-US → EN) when the channel manager left
+        # it blank.
+        ad_lang = (li_state.get("liAdLanguage") or "").strip().upper()
+        if not ad_lang and locale and "-" in str(locale):
+            ad_lang = str(locale).split("-")[0].strip().upper()
+        seg_lang = _safe(ad_lang, "EN")
+
+        # Format: groups carry the override marker; leaf InMail prefers
+        # liAdFormat ("Message ads"); leaf static stays "Single Image".
+        if format_override:
+            seg_format = format_override
+        elif campaign_type.lower() == "inmail":
+            seg_format = (li_state.get("liAdFormat") or "").strip() or "Message ads"
+        else:
+            seg_format = "Single Image"
+
+        parts = [
+            seg_ramp, seg_channel, seg_pod, seg_domain, seg_locale,
+            seg_country, seg_geo_tier,
+        ]
+        facet = (li_state.get("liTargetingFacet") or "").strip()
+        if facet:
+            parts.append(_safe(facet))
+        parts += [seg_lang, seg_format, seg_date]
+        return " | ".join(parts)
+
+    # Meta / Google — unchanged legacy 8-segment order (date before geo-tier);
+    # these channels don't carry the LinkedIn channel-manager facet/lang fields.
     parts = [
         seg_ramp, seg_channel, seg_pod, seg_domain, seg_locale,
         seg_country, seg_date, seg_geo_tier,
     ]
     name = " | ".join(parts)
-
-    # LinkedIn runs two arms with otherwise-identical names; mark InMail so the
-    # static + InMail campaigns stay distinguishable. Static matches the Smart
-    # Ramp tool's 8-segment format exactly.
     fmt = (format_override or _FORMAT_LABEL_FROM_CAMPAIGN_TYPE.get(campaign_type.lower(), "")).strip()
     if campaign_type.lower() == "inmail" or fmt.lower() == "inmail":
         name = f"{name} | Inmail"

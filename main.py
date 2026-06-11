@@ -1284,7 +1284,10 @@ def _process_inmail_campaigns(
                     log.info(f"InMail angle {angle_label} passes brand voice check (confidence: {report.confidence_score:.0%})")
         return
 
-    group_urn = li_client.create_campaign_group(group_name)
+    # Reviewer feedback (GMR-0024, 2026-06-11): land every agent-built campaign
+    # as a DRAFT inside ONE shared "agent" staging group rather than a fresh
+    # group per ramp. `group_name` is retained for registry/logging only.
+    group_urn = li_client.get_or_create_staging_group()
 
     # Same 4-source composition as the Sponsored Content path.
     default_exclude_urns = urn_res.resolve_default_excludes()
@@ -2435,23 +2438,30 @@ def _resolve_cold_start_cohort(
         # (before that block), so without this a re-run whose labels shifted
         # left orphan cohorts in the console. Mirror that cleanup (+ targeting).
         current_sigs = sorted({c.name for c in cohorts if getattr(c, "name", None)})
-        try:
-            from src.ui_decisions import _connect
-            with _connect() as conn, conn.cursor() as cur:
-                cur.execute("DELETE FROM cohort_icp WHERE ramp_id = %s", (ramp_id,))
-                cur.execute("DELETE FROM cohort_audience WHERE ramp_id = %s", (ramp_id,))
-                cur.execute("DELETE FROM cohort_targeting WHERE ramp_id = %s", (ramp_id,))
-                if current_sigs:
-                    cur.execute(
-                        "DELETE FROM cohort_brief_rationale WHERE ramp_id = %s AND cohort_signature NOT IN %s",
-                        (ramp_id, tuple(current_sigs)),
-                    )
-                else:
-                    cur.execute("DELETE FROM cohort_brief_rationale WHERE ramp_id = %s", (ramp_id,))
-                conn.commit()
-            log.info("cold_start: cleared prior cohort rows for ramp=%s (keeping %s)", ramp_id, current_sigs)
-        except Exception as exc:
-            log.warning("cold_start: prior-row cleanup skipped (non-fatal): %s", exc)
+        # ONLY_COHORT (feature 010): a scoped per-cohort run must be purely
+        # ADDITIVE — skip the ramp-wide wipe entirely so existing cohorts' rows
+        # survive. The upserts below are ON-CONFLICT keyed, so only the target
+        # cohort's rows are added/updated.
+        if config.ONLY_COHORT:
+            log.info("cold_start: ONLY_COHORT=%s — skipping ramp-wide cohort-row wipe (additive)", config.ONLY_COHORT)
+        else:
+            try:
+                from src.ui_decisions import _connect
+                with _connect() as conn, conn.cursor() as cur:
+                    cur.execute("DELETE FROM cohort_icp WHERE ramp_id = %s", (ramp_id,))
+                    cur.execute("DELETE FROM cohort_audience WHERE ramp_id = %s", (ramp_id,))
+                    cur.execute("DELETE FROM cohort_targeting WHERE ramp_id = %s", (ramp_id,))
+                    if current_sigs:
+                        cur.execute(
+                            "DELETE FROM cohort_brief_rationale WHERE ramp_id = %s AND cohort_signature NOT IN %s",
+                            (ramp_id, tuple(current_sigs)),
+                        )
+                    else:
+                        cur.execute("DELETE FROM cohort_brief_rationale WHERE ramp_id = %s", (ramp_id,))
+                    conn.commit()
+                log.info("cold_start: cleared prior cohort rows for ramp=%s (keeping %s)", ramp_id, current_sigs)
+            except Exception as exc:
+                log.warning("cold_start: prior-row cleanup skipped (non-fatal): %s", exc)
         enabled = [p.strip().lower() for p in (config.ENABLED_PLATFORMS or "").split(",") if p.strip()] \
             or ["linkedin", "meta", "google"]
         row_geos = list((row or {}).get("included_geos") or [])
@@ -3016,7 +3026,12 @@ def _resolve_cohorts(
     #     signatures (those NOT in the current selection) — same-cohort
     #     rationale survives across prep runs.
     current_sigs = sorted({getattr(c, "name", "") for c in selected if getattr(c, "name", None)})
-    if ramp_id_for_icp:
+    # ONLY_COHORT (feature 010): scoped per-cohort run is purely ADDITIVE — never
+    # wipe the ramp's other cohorts' icp/audience/rationale. The upserts below
+    # are ON-CONFLICT keyed, so only the target cohort's rows are touched.
+    if ramp_id_for_icp and config.ONLY_COHORT:
+        log.info("_resolve_cohorts: ONLY_COHORT=%s — skipping ramp-wide cohort-row wipe (additive)", config.ONLY_COHORT)
+    elif ramp_id_for_icp:
         try:
             from src.ui_decisions import _connect, UIDecisionsUnavailable
             with _connect() as conn, conn.cursor() as cur:
@@ -3733,7 +3748,9 @@ def _process_static_campaigns(
         )
     else:
         group_name = f"Outlier {flow_id} {location} Static".strip()
-    group_urn = li_client.create_campaign_group(group_name)
+    # Shared "agent" staging group (see _process_inmail_campaigns / GMR-0024
+    # reviewer feedback). `group_name` retained for registry/logging only.
+    group_urn = li_client.get_or_create_staging_group()
     out_groups = [group_urn]
     log.debug("_process_static_campaigns: group=%s", group_urn)
 
@@ -5673,6 +5690,17 @@ def _ramp_to_rows(ramp) -> list[dict]:
             "campaign_state": getattr(cohort, "campaign_state", None),
             "job_post_pay_rates": getattr(cohort, "job_post_pay_rates", None),
         })
+    # ONLY_COHORT scope (new-cohort feature 010): restrict the run to a single
+    # Smart Ramp cohort id. This is the isolation core — prep + every launch arm
+    # only ever see this one cohort's row, so existing cohorts' campaigns are
+    # never iterated, let alone touched (the ramp-wide DELETEs are also guarded
+    # by config.ONLY_COHORT in _resolve_cohorts / cold start).
+    _only_cohort = (getattr(config, "ONLY_COHORT", "") or "").strip()
+    if _only_cohort:
+        _before = len(rows)
+        rows = [r for r in rows if str(r.get("cohort_id") or "") == _only_cohort]
+        log.info("ONLY_COHORT=%s → %d of %d cohort rows kept", _only_cohort, len(rows), _before)
+
     # ONLY_LOCALES env filter (manual one-off reruns): comma-separated BCP-47
     # locales (e.g. "th-th,ko-kr,vi-vn"). When set, restrict to cohorts whose
     # matched_locales intersect the list, so a targeted rerun materializes just

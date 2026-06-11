@@ -32,6 +32,11 @@ from src.claude_client import call_claude
 
 log = logging.getLogger(__name__)
 
+# Fixed CTA button label for every InMail ad. Reviewer feedback (GMR-0024,
+# 2026-06-11): the LLM-chosen CTA varied ("See Opportunities" etc.); Diego's
+# live Message Ads all use "Apply now", so we lock to it across every angle.
+INMAIL_CTA_TEXT = "Apply now"
+
 # ── Angle configs ──────────────────────────────────────────────────────────────
 # Data-validated ranking by CTR (12-month, 17.4M sends, 2026-05-04 analysis):
 #   C (Flexibility): 5.84% CTR — DATA WINNER
@@ -210,7 +215,7 @@ def build_inmail_variants(
             ).strip()
             parsed = _parse_response(raw)
             subject = parsed.get("subject", _fallback_subject(tg_category, angle_key))
-            cta_label = parsed.get("cta_label", "See Opportunities")
+            cta_label = INMAIL_CTA_TEXT  # fixed across angles (reviewer feedback)
             body = parsed.get("body", _fallback_body(tg_category, angle_key))
 
             # Auto-replace any banned-terminology hits per CLAUDE.md
@@ -274,7 +279,7 @@ def build_inmail_variants(
                 angle_label=angle_cfg["label"],
                 subject=_fallback_subject(tg_category, angle_key),
                 body=_fallback_body(tg_category, angle_key),
-                cta_label="See Opportunities",
+                cta_label=INMAIL_CTA_TEXT,
                 cta_url=destination_url,
             )
         variants.append(variant)
@@ -355,7 +360,7 @@ CRITICAL WRITING RULES (based on 12-month performance data — these directly af
 6. NO em dashes (—). Use a period or comma instead.
 7. No bullet points or headers — plain paragraphs only.
 8. Do NOT start with "Hi" or "Hello".
-9. CTA label: action verb, ≤20 characters. Examples: "See Open Tasks" (14), "View Opportunities" (18).
+9. CTA label: always output exactly "Apply now" — the button text is fixed and not chosen per angle.
 10. Subject line: ≤60 characters including spaces. Count carefully.
 
 Write your response EXACTLY in this format (no other text):

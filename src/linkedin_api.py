@@ -5,6 +5,7 @@ LinkedIn Marketing API client.
   Creative — Upload image + create adCreative + attach to campaign
   Auth     — Auto-refresh access token on 401 using refresh token
 """
+import html
 import logging
 import mimetypes
 import os
@@ -12,7 +13,7 @@ import re
 import time
 from pathlib import Path
 from typing import Any, Literal, Optional
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 import requests
 
@@ -341,6 +342,35 @@ class LinkedInClient(AdPlatformClient):
         urn = f"urn:li:sponsoredCampaignGroup:{group_id}"
         log.info("Created campaign group %s (name=%s)", urn, name)
         return urn
+
+    def get_or_create_staging_group(self, name: str = "agent") -> str:
+        """Return the URN of the single shared DRAFT staging campaign group
+        named `name` (default "agent"), creating it once if absent.
+
+        Reviewer feedback (GMR-0024, 2026-06-11): the pipeline used to spin up a
+        fresh campaign group per ramp/row, cluttering Campaign Manager. Instead,
+        every agent-built campaign lands as a DRAFT inside ONE general "agent"
+        group; a human then duplicates each into the correct active group. The
+        per-campaign Smart Ramp name keeps them identifiable inside the group.
+        Idempotent across runs — looks up the existing group by name first.
+        """
+        target = self._prefixed(name)
+        try:
+            url = self._url(
+                f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/adCampaignGroups"
+                f"?q=search&search=(name:(values:List({quote(target)})))&count=100"
+            )
+            resp = self._req("GET", url)
+            if resp.ok:
+                for el in resp.json().get("elements", []):
+                    if str(el.get("name", "")).strip() == target:
+                        gid = el.get("id")
+                        urn = f"urn:li:sponsoredCampaignGroup:{gid}"
+                        log.info("Reusing staging group %s (name=%s)", urn, target)
+                        return urn
+        except Exception as exc:
+            log.warning("staging-group lookup failed (%s) — creating a new one", exc)
+        return self.create_campaign_group(name)
 
     def rename_campaign_group(self, group_id_or_urn: str, new_name: str) -> None:
         """
@@ -847,7 +877,7 @@ class LinkedInClient(AdPlatformClient):
             "account": f"urn:li:sponsoredAccount:{config.LINKEDIN_AD_ACCOUNT_ID}",
             "name": f"inmail_{int(__import__('time').time())}",
             "sender": sender_urn,
-            "htmlBody": body[:1000],
+            "htmlBody": _inmail_html_body(body),
             "subject": subject[:60],
             "subContent": {
                 "regular": {
@@ -856,6 +886,12 @@ class LinkedInClient(AdPlatformClient):
                 }
             }
         }
+        # Custom footer / Terms & Conditions (reviewer feedback GMR-0024). Set
+        # only when configured so the field isn't sent empty. Text lives in
+        # config.LINKEDIN_INMAIL_FOOTER (Doppler-overridable).
+        footer = (getattr(config, "LINKEDIN_INMAIL_FOOTER", "") or "").strip()
+        if footer:
+            content_payload["customFooter"] = footer
         content_headers = self._default_headers()
         content_headers["LinkedIn-Version"] = "202506"
 
@@ -1117,6 +1153,35 @@ class LinkedInClient(AdPlatformClient):
         urn = raw if raw.startswith("urn:li:") else f"urn:li:sponsoredCreative:{raw}"
         log.info("Created adCreative %s", urn)
         return urn
+
+
+# ── InMail body formatting ──────────────────────────────────────────────────────
+
+def _inmail_html_body(text: str) -> str:
+    """Render plain-text InMail copy as LinkedIn-style <p> paragraphs.
+
+    LinkedIn's own Message Ad composer wraps each paragraph in <p>…</p>; raw
+    `<br><br>` separators render literally in some inboxes (reviewer feedback
+    GMR-0024, 2026-06-11). We strip any <br> the copy model emitted, split on
+    blank lines, collapse intra-paragraph newlines, and wrap each paragraph.
+    Caps total length at LinkedIn's ~1000-char htmlBody limit on a paragraph
+    boundary so a tag is never cut mid-render.
+    """
+    text = re.sub(r"<br\s*/?>", "\n", text or "", flags=re.IGNORECASE)
+    paras = [
+        re.sub(r"\s*\n\s*", " ", p).strip()
+        for p in re.split(r"\n\s*\n", text)
+        if p.strip()
+    ]
+    out: list[str] = []
+    total = 0
+    for p in paras:
+        seg = f"<p>{html.escape(p, quote=False)}</p>"
+        if total + len(seg) > 1000:
+            break
+        out.append(seg)
+        total += len(seg)
+    return "".join(out)
 
 
 # ── Targeting helpers ──────────────────────────────────────────────────────────
