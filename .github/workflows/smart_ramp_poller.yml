@@ -52,6 +52,10 @@ on:
           - "linkedin"
           - "meta"
           - "google"
+      only_cohort:
+        description: "New-cohort scope (feature 010): restrict this run to a single Smart Ramp cohort id. Blank + a channel = scoped LAUNCH of that cohort; set + no channel = scoped additive PREP of that cohort (no ramp-wide wipe, ramp status untouched). Requires ramp_id."
+        required: false
+        default: ""
       replace:
         description: "Relaunch (replace): archive only_channel's existing campaigns for this ramp BEFORE creating fresh ones (no duplicates). Requires only_channel + ramp_id."
         required: false
@@ -158,6 +162,10 @@ jobs:
           # restricts the run to one channel + triggers the channel_locks
           # release path. Blank for normal (all-channel) runs.
           ONLY_CHANNEL: ${{ github.event.inputs.only_channel }}
+          # New-cohort scope (feature 010). Read at config import time
+          # (config.ONLY_COHORT); restricts the run to one Smart Ramp cohort id
+          # (scoped additive prep when no channel, scoped launch with a channel).
+          ONLY_COHORT: ${{ github.event.inputs.only_cohort }}
           # Relaunch (replace): archive only_channel's existing campaigns before
           # creating fresh ones. Read at config import time (config.REPLACE_EXISTING).
           REPLACE_EXISTING: ${{ github.event.inputs.replace }}

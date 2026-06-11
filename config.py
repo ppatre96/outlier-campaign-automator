@@ -203,6 +203,12 @@ ENABLED_PLATFORMS    = os.getenv("ENABLED_PLATFORMS", "linkedin,meta,google,goog
 # is guarded by the console's `channel_locks` table (per ramp × channel), and
 # the ramp is NOT flipped to completed so other channels can still launch.
 ONLY_CHANNEL         = os.getenv("ONLY_CHANNEL", "").strip().lower()
+# New-cohort feature (010): scope a run to a single Smart Ramp cohort id.
+# When set, `_ramp_to_rows` keeps only that cohort's row → prep + every launch
+# arm process ONLY that cohort, and the ramp-wide cohort-row DELETEs are
+# skipped (existing cohorts' ICP/audience/targeting/rationale + campaigns are
+# left untouched). Set per-run by the console's new-cohort prep/launch routes.
+ONLY_COHORT          = os.getenv("ONLY_COHORT", "").strip()
 # Relaunch (replace): archive ONLY_CHANNEL's existing campaigns for the ramp
 # before creating fresh ones (console "Relaunch (replace)" → poller `replace`).
 REPLACE_EXISTING     = os.getenv("REPLACE_EXISTING", "").strip().lower() in ("1", "true", "yes")

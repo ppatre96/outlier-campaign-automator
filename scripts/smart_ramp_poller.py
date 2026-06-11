@@ -218,6 +218,77 @@ def _should_block_for_escalation(prior: Optional[dict]) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _cohort_label(cohort) -> str:
+    """Short human label for a Smart Ramp cohort (console new-cohort panel)."""
+    raw = (
+        getattr(cohort, "cohort_description", "")
+        or getattr(cohort, "matched_domain", "")
+        or getattr(cohort, "id", "")
+        or ""
+    ).strip()
+    return (raw[:79] + "…") if len(raw) > 80 else raw
+
+
+def _detect_new_cohorts(record: RampRecord, dry_run: bool = False) -> None:
+    """Feature 010: record Smart Ramp cohorts added AFTER first prep into the
+    orthogonal pending_cohorts column (status 'detected'), for user-driven
+    review+launch in the console. Pure read+write of pending_cohorts /
+    prepped_cohort_ids — NEVER preps, launches, or touches the ramp-level
+    status. Best-effort; any failure is swallowed (detection retries next tick).
+
+    Bootstrap: a ramp prepped before this feature shipped has an empty prepped
+    snapshot. On the first tick we baseline it to the CURRENT cohorts (treat all
+    as known) so a launched ramp's existing cohorts are never retro-flagged as
+    'new' — only cohorts added after this baseline are surfaced.
+    """
+    if dry_run:
+        return
+    try:
+        from src.ui_decisions import (
+            get_prepped_cohort_ids, set_prepped_cohort_ids,
+            get_pending_cohorts, add_pending_cohorts,
+        )
+    except Exception:                                          # pragma: no cover
+        return
+    current = [
+        (c.id, _cohort_label(c))
+        for c in (record.cohorts or [])
+        if getattr(c, "id", None)
+    ]
+    if not current:
+        return  # cohorts lack stable ids — don't guess (plan risk note)
+    try:
+        known = set(get_prepped_cohort_ids(record.id))
+    except Exception:                                          # pragma: no cover
+        return
+    if not known:
+        # Bootstrap: baseline = current cohorts. No detection this tick.
+        try:
+            set_prepped_cohort_ids(record.id, [cid for cid, _ in current])
+            log.info("new-cohort detection: bootstrapped prepped snapshot for "
+                     "ramp=%s (%d cohorts)", record.id, len(current))
+        except Exception as exc:
+            log.warning("new-cohort bootstrap failed (non-fatal): %s", exc)
+        return
+    try:
+        already = {e.get("cohort_id") for e in get_pending_cohorts(record.id)}
+    except Exception:                                          # pragma: no cover
+        already = set()
+    now = datetime.now(timezone.utc).isoformat()
+    new_entries = [
+        {"cohort_id": cid, "label": label, "detected_at": now, "status": "detected"}
+        for cid, label in current
+        if cid not in known and cid not in already
+    ]
+    if new_entries:
+        try:
+            add_pending_cohorts(record.id, new_entries)
+            log.info("new-cohort detection: ramp=%s recorded %d new cohort(s): %s",
+                     record.id, len(new_entries), [e["cohort_id"] for e in new_entries])
+        except Exception as exc:
+            log.warning("add_pending_cohorts failed (non-fatal): %s", exc)
+
+
 def run_ramp_pipeline(
     record: RampRecord,
     dry_run: bool = False,
@@ -294,6 +365,9 @@ def run_ramp_pipeline(
             upsert_awaiting_approval,
             upsert_awaiting_brief_review,
             update_status,
+            set_prepped_cohort_ids,
+            add_prepped_cohort_ids,
+            set_pending_cohort_status,
         )
     except ImportError as exc:
         log.error("UI gate ON but src.ui_decisions import failed: %s", exc)
@@ -317,6 +391,7 @@ def run_ramp_pipeline(
     # launching). Requires a prior approval. _launch_ramp restricts to the one
     # channel and releases the lock when done.
     only_channel = (getattr(config, "ONLY_CHANNEL", "") or "").strip().lower()
+    only_cohort = (getattr(config, "ONLY_COHORT", "") or "").strip()
     if only_channel:
         ok_states = {"approved", "yolo", "completed", "launching"}
         if not decision or decision.status not in ok_states:
@@ -328,10 +403,45 @@ def run_ramp_pipeline(
                     "campaign_groups": [], "inmail_campaigns": [],
                     "static_campaigns": [], "creative_paths": {}, "per_cohort": []}
         log.info(
-            "Per-channel launch ramp=%s channel=%s (channel_locks-guarded; ramp status %s unchanged)",
-            record.id, only_channel, decision.status,
+            "Per-channel launch ramp=%s channel=%s cohort=%s (channel_locks-guarded; ramp status %s unchanged)",
+            record.id, only_channel, only_cohort or "(all)", decision.status,
         )
-        return _launch_ramp(record.id, decision)
+        result = _launch_ramp(record.id, decision)
+        # Scoped per-cohort launch (feature 010): the run only touched ONLY_COHORT
+        # (rows filtered in _ramp_to_rows). On success, retire it from the
+        # new-cohort panel — it now renders normally in the cohort×channel table.
+        if only_cohort and result.get("ok"):
+            try:
+                set_pending_cohort_status(record.id, only_cohort, "launched")
+            except Exception as exc:
+                log.warning("set_pending_cohort_status(launched) failed (non-fatal): %s", exc)
+        return result
+
+    # Scoped per-cohort PREP (feature 010): ONLY_COHORT set, no channel. Re-prep
+    # JUST this one newly-added Smart Ramp cohort, ADDITIVELY (rows filtered in
+    # _ramp_to_rows; ramp-wide DELETEs guarded by config.ONLY_COHORT) and WITHOUT
+    # touching the ramp-level status (the existing approval gate is untouched —
+    # this drives the console's orthogonal new-cohort panel only).
+    if only_cohort:
+        if decision is None:
+            log.warning("Scoped prep ramp=%s cohort=%s but ramp has no decision row "
+                        "(not prepped yet) — skipping", record.id, only_cohort)
+            return {"ok": False, "error": "scoped_prep_requires_prior_prep",
+                    "campaign_groups": [], "inmail_campaigns": [],
+                    "static_campaigns": [], "creative_paths": {}, "per_cohort": []}
+        log.info("Scoped prep ramp=%s cohort=%s (additive; ramp status %s unchanged)",
+                 record.id, only_cohort, decision.status)
+        try:
+            set_pending_cohort_status(record.id, only_cohort, "prepping")
+        except Exception as exc:
+            log.warning("set_pending_cohort_status(prepping) failed (non-fatal): %s", exc)
+        prep_result = _prep_ramp(record.id)
+        try:
+            add_prepped_cohort_ids(record.id, [only_cohort])
+            set_pending_cohort_status(record.id, only_cohort, "awaiting_review")
+        except Exception as exc:
+            log.warning("scoped prep post-state update failed (non-fatal): %s", exc)
+        return prep_result
 
     # No prior decision → first time we've seen this ramp post-submission.
     # Run prep (cohort mining + Triggers Sheet rows + LinkedIn briefs).
@@ -396,6 +506,16 @@ def run_ramp_pipeline(
             log.warning("Prep finished for %s but upsert failed: %s — UI won't see it until next poll", record.id, exc)
             return prep_result
 
+        # New-cohort feature (010): snapshot the Smart Ramp cohort ids prepped
+        # in this FULL prep run as the "known" baseline. A cohort added to the
+        # ramp AFTER this point is detected as "new" on a later tick. (The
+        # scoped per-cohort branch above returns earlier, so this only runs on a
+        # full prep — first-ever or a force re-prep, which re-baselines.)
+        try:
+            set_prepped_cohort_ids(record.id, [c.id for c in record.cohorts if getattr(c, "id", None)])
+        except Exception as exc:
+            log.warning("set_prepped_cohort_ids failed (non-fatal): %s", exc)
+
         # Slack ping #2 — action-required: prep done, asks Diego/Bryan to
         # open the console, review briefs, then approve + launch. Sent
         # AFTER the decision row is written so the link in the message
@@ -412,6 +532,14 @@ def run_ramp_pipeline(
             log.warning("notify_briefs_ready failed (non-fatal): %s", exc)
 
         return prep_result
+
+    # New-cohort detection (feature 010). The ramp already has a decision row
+    # (it's been prepped), so any Smart Ramp cohort absent from the prepped
+    # snapshot was added after first prep → record it as a pending cohort for
+    # user-driven review+launch. This is a pure read+write of pending_cohorts:
+    # it NEVER preps, launches, or changes the ramp-level status. The cohort is
+    # surfaced in the console; the user drives the scoped prep/launch.
+    _detect_new_cohorts(record, dry_run)
 
     # Terminal / in-flight states — nothing to do this tick. awaiting_brief_review
     # is included so the poller doesn't repeatedly re-run prep on ramps still
