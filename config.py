@@ -393,6 +393,15 @@ COHORT_SPEC_OVERRIDES: dict[str, list[dict]] = {
     ],
 }
 
+# Per-cohort launch idempotency (2026-06-11). When True (default), a launch
+# skips any (cohort × geo × channel) that already has a live campaign recorded
+# in the Postgres campaigns table — so a forced re-launch creates campaigns ONLY
+# for cohorts that don't have them yet (surgically adds a newly-added cohort
+# instead of duplicating the rest). Bypassed when REPLACE_EXISTING is set (the
+# replace path archives + recreates on purpose). Set False to restore the old
+# always-create behavior.
+SKIP_EXISTING_COHORT_CAMPAIGNS = os.getenv("SKIP_EXISTING_COHORT_CAMPAIGNS", "true").lower() in ("1", "true", "yes")
+
 # Per-channel launch model (feature #3, 2026-06-04). When False (default),
 # approving a ramp in the console is the GATE only — the scheduled poller does
 # NOT auto-launch approved ramps. Launching is explicit + per-channel (Diego →
@@ -583,6 +592,16 @@ SLACK_RAMP_NOTIFY_TARGETS   = [
     ("user", SLACK_DIEGO_USER_ID),
     ("channel", SLACK_RAMP_NOTIFY_CHANNEL),
 ]
+
+# Verbose / observability-only targets. The granular lifecycle pings (ramp
+# detected, verify-and-heal, keywords dropped, post-launch audit) would flood
+# Diego's DM and the #outlier-campaign-automation-bot channel and get ignored,
+# so they go to Pranav's DM ONLY. Diego + the channel see exactly two messages
+# per ramp: prep-done (notify_briefs_ready) and campaigns-ready
+# (notify_success, threaded reply). Escalation (5 consecutive failures) stays
+# on SLACK_RAMP_NOTIFY_TARGETS as an explicit exception so hard failures still
+# surface to the team. (Pranav 2026-06-10.)
+SLACK_VERBOSE_TARGETS = [("user", SLACK_REPORT_USER)]
 
 # Channel-post mentions: Diego (Meta), Bryan (Google), Tuan (oversight).
 # Empty string entries are skipped so a missing Bryan ID doesn't render a

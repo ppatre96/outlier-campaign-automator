@@ -414,7 +414,8 @@ def _post_via_webhook(text: str) -> bool:
 
 
 def _enqueue_via_drive(
-    text: str, ramp_id: str = "", thread_ts: Optional[str] = None
+    text: str, ramp_id: str = "", thread_ts: Optional[str] = None,
+    targets: Optional[list] = None,
 ) -> bool:
     """Primary delivery path (2026-05-13+): drop the summary into a Drive
     queue folder. A companion RemoteTrigger cron polls the folder every 5
@@ -432,13 +433,15 @@ def _enqueue_via_drive(
     """
     try:
         from src.gdrive import enqueue_slack_summary
-        targets = [
-            {"kind": kind, "id": tid}
-            for kind, tid in (getattr(config, "SLACK_RAMP_NOTIFY_TARGETS", []) or [])
+        target_list = (
+            getattr(config, "SLACK_RAMP_NOTIFY_TARGETS", []) if targets is None else targets
+        )
+        targets_payload = [
+            {"kind": kind, "id": tid} for kind, tid in (target_list or [])
         ]
         # gdrive.enqueue_slack_summary takes **extra kwargs through to the JSON
         # payload; older trigger versions ignore unknown fields.
-        kwargs: dict = {"ramp_id": ramp_id, "summary_text": text, "targets": targets}
+        kwargs: dict = {"ramp_id": ramp_id, "summary_text": text, "targets": targets_payload}
         if thread_ts:
             kwargs["thread_ts"] = thread_ts
         url = enqueue_slack_summary(**kwargs)
@@ -459,9 +462,15 @@ def _enqueue_via_drive(
 
 
 def _send_to_all_targets(
-    text: str, ramp_id: str = "", thread_ts: Optional[str] = None
+    text: str, ramp_id: str = "", thread_ts: Optional[str] = None,
+    targets: Optional[list] = None,
 ) -> dict:
-    """Send `text` to every target in config.SLACK_RAMP_NOTIFY_TARGETS.
+    """Send `text` to every target in `targets`.
+
+    `targets` defaults to config.SLACK_RAMP_NOTIFY_TARGETS (Pranav + Diego +
+    channel — the team-facing list). Granular observability pings pass
+    config.SLACK_VERBOSE_TARGETS (Pranav DM only) so Diego + the channel stay
+    at exactly two messages per ramp.
 
     Delivery order (2026-05-13 — bot-tokenless preferred):
       1. Drive queue → RemoteTrigger cron posts via Claude.ai Slack MCP
@@ -474,17 +483,20 @@ def _send_to_all_targets(
       - `drive_queue`        — Drive queue write outcome (primary)
       - `webhook_fallback`   — only populated when bot+queue both failed
     """
+    target_list = config.SLACK_RAMP_NOTIFY_TARGETS if targets is None else targets
     outcomes: dict = {}
     channel_ts: Optional[str] = None  # captured from the channel post for threading
 
     # 1) Drive queue — primary path
-    outcomes["drive_queue"] = _enqueue_via_drive(text, ramp_id=ramp_id, thread_ts=thread_ts)
+    outcomes["drive_queue"] = _enqueue_via_drive(
+        text, ramp_id=ramp_id, thread_ts=thread_ts, targets=target_list
+    )
 
     # 2) Opportunistic bot-token send (kept for back-compat). When threading
     # is requested, this is the path that actually returns a usable parent_ts.
     if config.SLACK_BOT_TOKEN:
         client = WebClient(token=config.SLACK_BOT_TOKEN)
-        for target in config.SLACK_RAMP_NOTIFY_TARGETS:
+        for target in target_list:
             kind, tid = target
             ok, posted_ts = _send_to_target(client, target, text, thread_ts=thread_ts)
             outcomes[f"{kind}:{tid}"] = ok
@@ -493,7 +505,7 @@ def _send_to_all_targets(
             if ok and kind == "channel" and posted_ts and channel_ts is None:
                 channel_ts = posted_ts
     else:
-        for kind, tid in config.SLACK_RAMP_NOTIFY_TARGETS:
+        for kind, tid in target_list:
             outcomes[f"{kind}:{tid}"] = False
 
     if channel_ts is not None:
@@ -533,13 +545,12 @@ def notify_success(ramp_record, result: dict, version: int = 1) -> dict:
 
 
 def notify_new_ramp(ramp_record) -> dict:
-    """Slack ping fired when the poller first sees a Smart Ramp.
+    """Detection ping — Pranav DM ONLY (observability).
 
-    Threading (2026-05-22): this is the PARENT message of the per-ramp
-    thread. If notify_new_ramp has already fired once for this ramp (and a
-    thread_ts is in Postgres), we still post fresh — that's OK; the only
-    side-effect of re-posting is two parents in the channel, which is rare
-    in practice since notify_new_ramp only fires on the first poller tick.
+    Routed to SLACK_VERBOSE_TARGETS so Diego + the channel are not pinged on
+    every detection. The team-facing per-ramp thread starts at
+    notify_briefs_ready (prep done), which captures the channel thread parent.
+    Posts top-level (no thread_ts) so it lands cleanly in Pranav's DM.
     """
     text = build_new_ramp_message(
         ramp_id=ramp_record.id,
@@ -547,19 +558,9 @@ def notify_new_ramp(ramp_record) -> dict:
         requester_name=getattr(ramp_record, "requester_name", "") or "—",
         summary=getattr(ramp_record, "summary", "") or "",
     )
-    out = _send_to_all_targets(text, ramp_id=ramp_record.id)
-    # Persist the channel ts so notify_briefs_ready + notify_success thread
-    # under it. Best-effort: Postgres outage just means later pings post
-    # top-level instead of replying.
-    posted_ts = out.get("channel_ts")
-    if posted_ts:
-        try:
-            from src.ui_decisions import set_slack_thread_ts
-            set_slack_thread_ts(ramp_record.id, posted_ts)
-            log.info("Slack thread parent ts=%s persisted for ramp=%s", posted_ts, ramp_record.id)
-        except Exception as exc:
-            log.warning("set_slack_thread_ts failed (non-fatal): %s", exc)
-    return out
+    return _send_to_all_targets(
+        text, ramp_id=ramp_record.id, targets=config.SLACK_VERBOSE_TARGETS,
+    )
 
 
 def _lookup_thread_ts(ramp_id: str) -> Optional[str]:
@@ -581,8 +582,13 @@ def notify_briefs_ready(
     cohorts_count: int,
     fell_back_to_legacy: bool = False,
 ) -> dict:
-    """Slack ping fired after prep finishes. Threaded under notify_new_ramp's
-    channel post when a parent ts exists."""
+    """Prep-done ping — TOP-LEVEL parent of the per-ramp team thread.
+
+    This is the FIRST of exactly two team-facing messages per ramp (Diego +
+    channel + Pranav). It posts top-level and captures the channel post ts as
+    the thread parent so notify_success (campaigns-ready) replies in-thread.
+    Best-effort: a Postgres outage just means notify_success posts top-level
+    instead of threading."""
     text = build_briefs_ready_message(
         ramp_id=ramp_record.id,
         project_name=ramp_record.project_name or "—",
@@ -591,9 +597,16 @@ def notify_briefs_ready(
         cohorts_count=cohorts_count,
         fell_back_to_legacy=fell_back_to_legacy,
     )
-    return _send_to_all_targets(
-        text, ramp_id=ramp_record.id, thread_ts=_lookup_thread_ts(ramp_record.id),
-    )
+    out = _send_to_all_targets(text, ramp_id=ramp_record.id)
+    posted_ts = out.get("channel_ts")
+    if posted_ts:
+        try:
+            from src.ui_decisions import set_slack_thread_ts
+            set_slack_thread_ts(ramp_record.id, posted_ts)
+            log.info("Slack thread parent ts=%s persisted for ramp=%s", posted_ts, ramp_record.id)
+        except Exception as exc:
+            log.warning("set_slack_thread_ts failed (non-fatal): %s", exc)
+    return out
 
 
 def notify_escalation(

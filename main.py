@@ -1318,6 +1318,15 @@ def _process_inmail_campaigns(
                     )
                     continue
                 seen_keys.add(_dedup_key)
+            # Per-cohort idempotency: skip a (cohort × geo) that already has a
+            # live LinkedIn InMail campaign (bypassed on replace).
+            if _cohort_channel_already_live(ramp_id, "linkedin", "inmail", cohort, geo_group):
+                log.info(
+                    "_process_inmail_campaigns: skipping (cohort=%r geo=%r) — already has a "
+                    "live LinkedIn InMail campaign (idempotent re-launch)",
+                    cohort.name, geo_group.cluster,
+                )
+                continue
             tg_cat      = classify_tg(cohort.name, cohort.rules)
             group_geos  = geo_group.geos or raw_geos
 
@@ -2029,6 +2038,23 @@ def _apply_generalist_language_skill(facet_urns: dict[str, list[str]], cohort) -
     out["skills"] = skills
     log.info("Applied generalist language skill: locale=%s → %s", locale, urn)
     return out
+
+
+def _cohort_channel_already_live(ramp_id, platform: str, campaign_type: str, cohort, geo_group) -> bool:
+    """Per-cohort launch idempotency: True when this (cohort × geo × channel ×
+    type) already has a live campaign and should be skipped on a re-launch — so
+    a forced re-run creates campaigns ONLY for cohorts that don't have them yet
+    (surgically adds a newly-added cohort instead of duplicating the rest).
+
+    Off when SKIP_EXISTING_COHORT_CAMPAIGNS is false, on a REPLACE_EXISTING run
+    (replace archives + recreates on purpose), or when there's no ramp_id."""
+    if config.REPLACE_EXISTING or not config.SKIP_EXISTING_COHORT_CAMPAIGNS or not ramp_id:
+        return False
+    from src.ui_decisions import campaign_exists_for_cohort_channel
+    return campaign_exists_for_cohort_channel(
+        ramp_id, platform, campaign_type,
+        getattr(cohort, "name", ""), getattr(geo_group, "cluster", ""),
+    )
 
 
 # ── Phase 2.6: Smart Ramp dual-arm pipeline ──────────────────────────────────
@@ -3370,6 +3396,17 @@ def _process_static_campaigns(
                     )
                     continue
                 seen_keys.add(_dedup_key)
+            # Per-cohort idempotency: skip a (cohort × geo) that already has a
+            # live LinkedIn static campaign so a re-launch only creates the new
+            # cohorts (bypassed on replace). Saves the downstream copy/image gen.
+            if _cohort_channel_already_live(ramp_id, "linkedin", "static", cohort, geo_group):
+                log.info(
+                    "_process_static_campaigns: skipping (cohort=%r geo=%r) — already has a "
+                    "live LinkedIn campaign (idempotent re-launch; set "
+                    "SKIP_EXISTING_COHORT_CAMPAIGNS=false or use replace to recreate)",
+                    cohort.name, geo_group.cluster,
+                )
+                continue
             geo_label  = geo_group.cluster_label
             group_geos = geo_group.geos or raw_geos
             log.info(
@@ -3732,6 +3769,18 @@ def _process_static_campaigns(
             if group_geos:
                 facet_urns = _apply_geo_overrides(facet_urns, group_geos, urn_res)
             facet_urns = _apply_generalist_language_skill(facet_urns, cohort)
+
+            # Cold-start cohorts bypass Stage C — guard against shipping a
+            # geo-only (country-wide) static campaign when no skill/title facet
+            # resolved (the GMR-0024 ~290M class). Mirrors the InMail arm guard.
+            if linkedin_targeting_collapsed(cohort, facet_urns):
+                log.warning(
+                    "_process_static_campaigns: cohort '%s' geo=%s targeting collapsed to "
+                    "geo-only (no skill/title facet resolved) — skipped to avoid a "
+                    "country-wide spend. Needs human targeting.",
+                    cohort.name, geo_group.cluster_label,
+                )
+                continue
 
             # Per-geo audience recheck (2026-05-20). Stage C's audience check
             # used the cohort's facet URNs without geo intersection. A cohort
@@ -4475,6 +4524,15 @@ def _process_extra_platform_arm(
         variants   = meta["variants"]
         base_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
         by_cohort_key = f"{base_id}_{geo_group.campaign_suffix}"
+
+        # Per-cohort idempotency: skip a (cohort × geo) that already has a live
+        # campaign on this platform (bypassed on replace).
+        if _cohort_channel_already_live(ramp_id, platform, "static", cohort, geo_group):
+            log.info(
+                "_process_extra_platform_arm[%s]: skipping (cohort=%r geo=%r) — already has a "
+                "live campaign (idempotent re-launch)", platform, cohort.name, geo_group.cluster,
+            )
+            continue
 
         # Per (cohort × geo) isolation: failure in one combo never aborts another.
         try:
