@@ -98,6 +98,14 @@ jobs:
         with:
           fetch-depth: 1
 
+      # Non-Latin creative overlays (Hindi/Bengali/Thai/Arabic/CJK/Hangul…):
+      # libraqm0 = Pillow RAQM shaping; fonts-noto-* = glyph coverage. Without
+      # these the compositor falls back to Inter and renders "?".
+      - name: Install fonts + libraqm (non-Latin creative text)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libraqm0 fonts-noto-core fonts-noto-cjk
+
       - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:

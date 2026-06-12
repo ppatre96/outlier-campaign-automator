@@ -12,6 +12,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Fonts + shaping for non-Latin creative overlays (Hindi/Bengali/Thai/
+      # Arabic/CJK/Hangul…). Without these the compositor falls back to Inter,
+      # which lacks the glyphs → "?" in the ad. libraqm0 enables Pillow's RAQM
+      # layout engine (conjuncts/RTL); fonts-noto-* provide the glyph coverage
+      # the script-aware _load_font expects at /usr/share/fonts/.../noto.
+      - name: Install fonts + libraqm (non-Latin creative text)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libraqm0 fonts-noto-core fonts-noto-cjk
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
