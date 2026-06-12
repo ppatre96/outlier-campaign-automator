@@ -1176,6 +1176,21 @@ def _derive_next_steps(ctx: dict, blockers: set[str]) -> list[str]:
 
 # ── InMail campaign sub-pipeline ──────────────────────────────────────────────
 
+def _fmt_advertised_rate(base_rate_usd: float | None) -> str:
+    """Format the resolved Smart Ramp pay rate for ad copy, PRESERVING cents.
+
+    `int()` truncation was dropping the cents (e.g. $22.50/hr → "$22/hr"). Show
+    two decimals only when there is a fractional part, so "$22.50/hr" but
+    "$29/hr" (not "$29.00/hr"). Returns "" when no rate resolved — never a
+    default; see [[feedback_smart_ramp_authoritative_data]].
+    """
+    if base_rate_usd is None:
+        return ""
+    if base_rate_usd % 1:
+        return f"${base_rate_usd:.2f}/hr"
+    return f"${int(base_rate_usd)}/hr"
+
+
 def _process_inmail_campaigns(
     selected, flow_id, location,
     sheets, li_client, urn_res,
@@ -1236,7 +1251,7 @@ def _process_inmail_campaigns(
     if not geo_groups:
         geo_groups = [GeoCampaignGroup(
             cluster="global_mix", cluster_label="Global", geos=[],
-            median_multiplier=1.0, advertised_rate=(f"${int(base_rate_usd)}/hr" if base_rate_usd is not None else ""),
+            median_multiplier=1.0, advertised_rate=_fmt_advertised_rate(base_rate_usd),
             campaign_suffix="global",
         )]
     # Experimentation caps: max 3 cohorts per geo cluster, all angles tested
@@ -1689,7 +1704,15 @@ def _retry_li_campaign(
             log.error("LINKEDIN_INMAIL_SENDER_URN not set — cannot retry InMail for %s", cohort._stg_id)
             return
 
-        variants = build_inmail_variants(tg_cat, cohort, claude_key)
+        # Pay rate is authoritative from Smart Ramp (row.job_post_pay_rates),
+        # never a hardcoded default. Resolve it here so retried InMail copy
+        # carries the correct $/hr (or stays rate-free) instead of the old $50.
+        from src.attribution_resolver import parse_job_post_pay_rate
+        _retry_rate = parse_job_post_pay_rate(row.get("job_post_pay_rates"))
+        variants = build_inmail_variants(
+            tg_cat, cohort, claude_key,
+            hourly_rate=_fmt_advertised_rate(_retry_rate),
+        )
         variant  = variants[0]  # default to Angle A for retries
 
         if dry_run:
@@ -3366,7 +3389,7 @@ def _process_static_campaigns(
         from src.geo_tiers import GeoCampaignGroup
         geo_groups = [GeoCampaignGroup(
             cluster="global_mix", cluster_label="Global", geos=[],
-            median_multiplier=1.0, advertised_rate=(f"${int(base_rate_usd)}/hr" if base_rate_usd is not None else ""),
+            median_multiplier=1.0, advertised_rate=_fmt_advertised_rate(base_rate_usd),
             campaign_suffix="global",
         )]
     if not geo_groups:
@@ -3374,7 +3397,7 @@ def _process_static_campaigns(
         from src.geo_tiers import GeoCampaignGroup
         geo_groups = [GeoCampaignGroup(
             cluster="global_mix", cluster_label="Global", geos=[],
-            median_multiplier=1.0, advertised_rate=(f"${int(base_rate_usd)}/hr" if base_rate_usd is not None else ""),
+            median_multiplier=1.0, advertised_rate=_fmt_advertised_rate(base_rate_usd),
             campaign_suffix="global",
         )]
 
@@ -5398,7 +5421,7 @@ def _process_row_both_modes(
                 geo_groups = [GeoCampaignGroup(
                     cluster="global_mix", cluster_label="Global", geos=raw_geos,
                     median_multiplier=1.0,
-                    advertised_rate=(f"${int(base_rate_usd)}/hr" if base_rate_usd is not None else ""),
+                    advertised_rate=_fmt_advertised_rate(base_rate_usd),
                     campaign_suffix="global",
                 )]
 
