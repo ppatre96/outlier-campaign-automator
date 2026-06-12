@@ -1200,6 +1200,7 @@ def _process_inmail_campaigns(
     destination_url_override: str | None = None,
     included_geos: list[str] | None = None,
     base_rate_usd: float | None = None,
+    rate_geo_specific: bool = False,
     ramp_id: str | None = None,
     cohort_id_override: str | None = None,
     cohort_description: str = "",
@@ -1247,7 +1248,7 @@ def _process_inmail_campaigns(
     from src.campaign_registry import log_campaign as _reg_log_inmail
 
     raw_geos = included_geos or []
-    geo_groups = group_geos_for_campaigns(raw_geos, base_rate_usd)
+    geo_groups = group_geos_for_campaigns(raw_geos, base_rate_usd, apply_geo_multiplier=not rate_geo_specific)
     if not geo_groups:
         geo_groups = [GeoCampaignGroup(
             cluster="global_mix", cluster_label="Global", geos=[],
@@ -3340,6 +3341,7 @@ def _process_static_campaigns(
     cohort_id_override: str | None = None,
     cohort_description: str = "",
     base_rate_usd: float | None = None,
+    rate_geo_specific: bool = False,
     unique_id: str | None = None,
     naming_meta: dict | None = None,
     seen_keys: set | None = None,
@@ -3382,7 +3384,7 @@ def _process_static_campaigns(
     # Split included_geos into ethnic creative clusters, each getting its own
     # LinkedIn campaign with geo-appropriate photo_subject + computed rate.
     # G4 blocked countries are strictly skipped here.
-    geo_groups = group_geos_for_campaigns(raw_geos, base_rate_usd)
+    geo_groups = group_geos_for_campaigns(raw_geos, base_rate_usd, apply_geo_multiplier=not rate_geo_specific)
     if not geo_groups and raw_geos:
         # All geos were G4 — fall back to single group with empty geos (global)
         log.warning("_process_static_campaigns: all included_geos are G4 blocked — creating global campaign")
@@ -5337,6 +5339,12 @@ def _process_row_both_modes(
     # a $50 default — wrong rate in ads is a critical risk.
     import os as _os
     base_rate_usd: float | None = None
+    # True when base_rate_usd is the Smart Ramp job_post_pay_rates value — an
+    # authoritative, locale/geo-specific advertised rate that must NOT be passed
+    # through the country pay-multiplier or $5 rounding (that mangled $22.50→$20
+    # for he-IL, $7.50→$5 for kn-IN). Only a US-baseline OUTLIER_BASE_RATE_USD
+    # gets the geo multiplier. See [[feedback_smart_ramp_authoritative_data]].
+    rate_geo_specific = False
     _env_rate = (_os.environ.get("OUTLIER_BASE_RATE_USD") or "").strip()
     if _env_rate:
         try:
@@ -5360,9 +5368,10 @@ def _process_row_both_modes(
         _sr_rate = parse_job_post_pay_rate(row.get("job_post_pay_rates"))
         if _sr_rate is not None:
             base_rate_usd = _sr_rate
+            rate_geo_specific = True
             log.info(
                 "_process_row_both_modes: pay rate from Smart Ramp job_post_pay_rates "
-                "%r → base_rate_usd=$%.2f/hr",
+                "%r → base_rate_usd=$%.2f/hr (geo-specific, no multiplier)",
                 row.get("job_post_pay_rates"), base_rate_usd,
             )
     if base_rate_usd is None:
@@ -5414,7 +5423,9 @@ def _process_row_both_modes(
             import config as _cfg
 
             raw_geos = included_geos or []
-            geo_groups = group_geos_for_campaigns(raw_geos, base_rate_usd)
+            geo_groups = group_geos_for_campaigns(
+                raw_geos, base_rate_usd, apply_geo_multiplier=not rate_geo_specific,
+            )
             if not geo_groups:
                 # Mirror the static arm's fallback so brief gen still happens
                 # even when the geo grouper returns empty.
@@ -5584,6 +5595,7 @@ def _process_row_both_modes(
                 seen_keys=seen_inmail_keys,
                 daily_budget_cents=linkedin_budget_cents,
                 base_rate_usd=base_rate_usd,
+                rate_geo_specific=rate_geo_specific,
             )
             return r if isinstance(r, dict) else {}
         except Exception:
@@ -5618,6 +5630,7 @@ def _process_row_both_modes(
                 seen_keys=seen_static_keys,
                 daily_budget_cents=linkedin_budget_cents,
                 base_rate_usd=base_rate_usd,
+                rate_geo_specific=rate_geo_specific,
                 create_linkedin_campaigns=linkedin_enabled,
             )
             return r if isinstance(r, dict) else {}
