@@ -43,7 +43,7 @@ class UIDecisionsUnavailable(Exception):
 class Decision:
     ramp_id:        str
     status:         str           # ramp_status enum value as string
-    channels:       list[str]     # subset of {'linkedin','meta','google'}
+    channels:       list[str]     # subset of {'linkedin','meta','google','google_search','reddit'}
     budgets:        dict[str, int]  # cents/day per channel
     decided_by:     Optional[str] = None
     decided_at:     Optional[str] = None   # ISO 8601

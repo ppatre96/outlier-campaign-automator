@@ -283,6 +283,58 @@ META_CUSTOM_EVENT_STR        = os.getenv("META_CUSTOM_EVENT_STR", "worker_skill_
 META_CUSTOM_CONVERSION_ID    = os.getenv("META_CUSTOM_CONVERSION_ID", "")
 META_ATTRIBUTION_WINDOW_DAYS = int(os.getenv("META_ATTRIBUTION_WINDOW_DAYS", "7"))
 
+# ── Reddit Ads ────────────────────────────────────────────────────────────────
+# New channel (2026-06-11). v1 is CREATIVE-ONLY: the pipeline generates image +
+# free-form ad assets + a targeting/conversion manifest to Drive for manual
+# upload in Reddit Ads Manager. Programmatic campaign creation (RedditClient
+# Phase 2) is gated behind REDDIT_API_ENABLED and stays OFF until Reddit's
+# allow-list Ads API access is granted — the Reddit Ads API is allow-list gated
+# and SEPARATE from the Ads Manager UI we already have.
+REDDIT_API_ENABLED   = os.getenv("REDDIT_API_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+REDDIT_CLIENT_ID     = os.getenv("REDDIT_CLIENT_ID", "")
+REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET", "")
+REDDIT_ACCESS_TOKEN  = os.getenv("REDDIT_ACCESS_TOKEN", "")
+REDDIT_REFRESH_TOKEN = os.getenv("REDDIT_REFRESH_TOKEN", "")
+REDDIT_AD_ACCOUNT_ID = os.getenv("REDDIT_AD_ACCOUNT_ID", "")  # "t2_<id>" / a2_ ad account
+
+# Reddit conversion tracking (worker_skill_grant via Segment — Tuan 2026-06-11).
+# The Segment destination is enabled with per-pod mappings ready to toggle on,
+# but the Reddit pixel id + per-pod event names were NOT provided yet — fill
+# these from Tuan before flipping REDDIT_API_ENABLED on. Reddit also MANDATES a
+# conversion_pixel_id on every ad group / CBO campaign from 2026-07-13. Mirrors
+# LINKEDIN_POD_CONVERSION_IDS. Segment pod_category mapping:
+#   coders→"Coding", specialist→"Expert", languages→"Language", generalist→"Generalist".
+REDDIT_PIXEL_ID      = os.getenv("REDDIT_PIXEL_ID", "")
+REDDIT_POD_CONVERSION_EVENTS = {
+    "all":        os.getenv("REDDIT_WS_EVENT_ALL", ""),         # WS_all
+    "coders":     os.getenv("REDDIT_WS_EVENT_CODERS", ""),      # WS_Coders     (Coding)
+    "specialist": os.getenv("REDDIT_WS_EVENT_SPECIALIST", ""),  # WS_Specialist (Expert)
+    "languages":  os.getenv("REDDIT_WS_EVENT_LANGUAGES", ""),   # WS_Languages  (Language)
+    "generalist": os.getenv("REDDIT_WS_EVENT_GENERALIST", ""),  # WS_Generalist (Generalist)
+}
+
+# Per-pod default subreddit targeting (community targeting is Reddit's primary
+# lever). Pipeline-side curated defaults; override the whole map via
+# REDDIT_POD_SUBREDDITS_JSON env. The arm targets users active in / subscribed
+# to these communities. Confirm the final lists with marketing.
+try:
+    _reddit_subs_env = os.getenv("REDDIT_POD_SUBREDDITS_JSON", "")
+    _REDDIT_SUBS_OVERRIDE = _json.loads(_reddit_subs_env) if _reddit_subs_env else {}
+except Exception:
+    _REDDIT_SUBS_OVERRIDE = {}
+REDDIT_POD_SUBREDDITS = {
+    "coders":     ["cscareerquestions", "programming", "learnprogramming", "datascience"],
+    "specialist": ["medicine", "AskEngineers", "labrats", "datascience"],
+    "languages":  ["languagelearning", "translator"],
+    "generalist": ["jobs", "WorkOnline", "beermoney", "forhire"],
+    **_REDDIT_SUBS_OVERRIDE,  # env override wins
+}
+# Optional broad interest / keyword layers (AND-ed with subreddits when set).
+REDDIT_INTERESTS = [s.strip() for s in os.getenv("REDDIT_INTERESTS", "").split(",") if s.strip()]
+REDDIT_KEYWORDS  = [s.strip() for s in os.getenv("REDDIT_KEYWORDS", "").split(",") if s.strip()]
+# Suggested daily budget (USD) surfaced in the Reddit handoff manifest.
+REDDIT_DEFAULT_DAILY_USD = int(os.getenv("REDDIT_DEFAULT_DAILY_USD", "50"))
+
 # Minimum short-side px a creative must have before ANY platform's upload_image
 # will send it (Meta, LinkedIn, Google). Real pipeline creatives are ≥1080 on
 # every side (4:5=1080×1350, 1:1=1080, 9:16=1080×1920); a floor of 600 cleanly

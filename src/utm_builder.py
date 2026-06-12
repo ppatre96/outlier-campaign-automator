@@ -41,6 +41,7 @@ _PLATFORM_TO_UTM_SOURCE = {
     "linkedin": "LinkedIn",
     "meta":     "Facebook",   # Meta Ads sources tag as Facebook on the LP side
     "google":   "Google",
+    "reddit":   "Reddit",
 }
 
 

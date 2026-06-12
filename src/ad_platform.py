@@ -33,7 +33,7 @@ from typing import Any, Literal, Optional
 import config
 
 
-PlatformName = Literal["linkedin", "meta", "google", "google_search"]
+PlatformName = Literal["linkedin", "meta", "google", "google_search", "reddit"]
 
 
 @dataclass(frozen=True)
@@ -129,11 +129,32 @@ GOOGLE_SEARCH_CONSTRAINTS = PlatformConstraints(
 )
 
 
+# Reddit promoted image ad: the post TITLE is the headline (Reddit titles are
+# generous — ~300 chars; verify the exact ad-title limit against the Reddit Ads
+# API v3 ref before relying on it). A Reddit image/link post has no separate
+# description field, and the CTA is an enum button. The free-form/native text
+# post variant carries a much longer body — that limit lives in copy_adapter,
+# not here, since this drives the IMAGE ad. 1:1 renders cleanly in the feed.
+REDDIT_CONSTRAINTS = PlatformConstraints(
+    name="reddit",
+    headline_max_chars=300,
+    description_max_chars=300,
+    primary_text_max_chars=None,
+    cta_max_chars=None,  # Reddit CTAs are an enum (Sign Up, Learn More, etc.)
+    image_aspects=((1, 1),),
+    headline_count=1,
+    description_count=1,
+    supports_inmail=False,
+    supports_special_ad_category=False,
+)
+
+
 PLATFORM_CONSTRAINTS: dict[str, PlatformConstraints] = {
     "linkedin":      LINKEDIN_CONSTRAINTS,
     "meta":          META_CONSTRAINTS,
     "google":        GOOGLE_CONSTRAINTS,
     "google_search": GOOGLE_SEARCH_CONSTRAINTS,
+    "reddit":        REDDIT_CONSTRAINTS,
 }
 
 

@@ -4354,6 +4354,31 @@ def _process_extra_platform_arm(
                     str(base_id_e)[:12], cluster_suffix, angle_label_e, _exc,
                 )
 
+        # Reddit feed promoted image is 1:1 (1200×1200). Compose a fresh square
+        # so the Reddit creative isn't inherited from a 4:5 (Meta) rewrite of the
+        # shared spec. (The free-form/native text post carries no image.)
+        if platform == "reddit" and variant_e:
+            try:
+                from src.gemini_creative import generate_imagen_photo
+                from src.image_adapter import compose_ad_for_platform, primary_aspect
+                r_aspect = primary_aspect("reddit")  # (1, 1)
+                r_bg = generate_imagen_photo(variant_e, aspect=r_aspect)
+                r_png = compose_ad_for_platform(
+                    bg_image=r_bg, copy_variant=variant_e,
+                    platform="reddit", angle=angle_label_e, aspect=r_aspect,
+                )
+                png_path_e = r_png
+                spec["png_path"] = r_png
+                log.info(
+                    "_process_extra_platform_arm[reddit]: 1:1 PNG ready %s", r_png,
+                )
+            except Exception as _exc:
+                log.warning(
+                    "_process_extra_platform_arm[reddit]: 1:1 photo gen FAILED "
+                    "cohort=%s geo=%s angle=%s — falling back to existing PNG: %s",
+                    str(base_id_e)[:12], cluster_suffix, angle_label_e, _exc,
+                )
+
         drive_url_e = ""
         if config.GDRIVE_ENABLED and png_path_e and Path(str(png_path_e)).exists():
             try:
@@ -4373,6 +4398,31 @@ def _process_extra_platform_arm(
         drive_urls_by_spec[spec_key] = drive_url_e
 
         platform_copy_e = adapt_copy_for_platform(variant_e, platform, icp=getattr(cohort_e, "_icp", None)) if variant_e else {}
+        # Reddit: the manual-upload manifest needs the targeting + conversion an
+        # operator would otherwise have to reconstruct — per-pod subreddits +
+        # interests/keywords (from the resolver), the intended worker_skill_grant
+        # conversion event for this pod, the pixel id, suggested budget, and
+        # which ad formats to build (image + free-form). platform_copy already
+        # carries the image title/cta + free-form title/body.
+        reddit_extra: dict = {}
+        if platform == "reddit":
+            try:
+                _rt = resolver.resolve_cohort(cohort_e, geos=list(group_geos_e))
+            except Exception as _exc:
+                log.warning("_process_extra_platform_arm[reddit]: resolver failed for %s: %s", spec_key, _exc)
+                _rt = {}
+            from src.reddit_api import reddit_pod_conversion_event
+            _pod = _rt.get("pod", "")
+            reddit_extra = {
+                "reddit_pod":                 _pod,
+                "reddit_subreddits":          _rt.get("subreddits", []),
+                "reddit_interests":           _rt.get("interests", []),
+                "reddit_keywords":            _rt.get("keywords", []),
+                "reddit_conversion_event":    reddit_pod_conversion_event(_pod) or "(pending Tuan: Reddit pixel id + per-pod WS event names)",
+                "reddit_pixel_id":            config.REDDIT_PIXEL_ID or "(pending Tuan)",
+                "reddit_suggested_daily_usd": config.REDDIT_DEFAULT_DAILY_USD,
+                "reddit_ad_formats":          ["image", "free_form"],
+            }
         handoff_entries.append({
             "cohort_name":      getattr(cohort_e, "name", ""),
             "cohort_stg_id":    getattr(cohort_e, "_stg_id", ""),
@@ -4389,6 +4439,7 @@ def _process_extra_platform_arm(
             "platform_copy":    platform_copy_e,
             "destination_url":  destination_url_override or "",
             "rules":            list(getattr(cohort_e, "rules", []) or []),
+            **reddit_extra,
         })
 
     manual_handoff_url = ""
@@ -4914,6 +4965,21 @@ def _process_extra_platform_arm(
                         local_png_path=str(png_path) if png_path else None,
                         ad_name=f"{campaign_name} | {angle_label}",
                     )
+                elif platform == "reddit":
+                    # Reddit image ad: title=headline, free-form body/title carried
+                    # for the native text-post variant. Returns local_fallback while
+                    # REDDIT_API_ENABLED is off (creative-only); raises when on-but-
+                    # unimplemented (caught per-cohort) — Phase 1 already exported.
+                    ad_result = client.create_image_ad(
+                        campaign_id=sub_id,
+                        image_id=image_id,
+                        headline=platform_copy.get("title", ""),
+                        description=platform_copy.get("freeform_body", ""),
+                        intro_text=platform_copy.get("freeform_title", ""),
+                        cta=platform_copy.get("cta"),
+                        destination_url=utm_url,
+                        ad_name=f"{campaign_name} | {angle_label}",
+                    )
                 else:  # meta
                     ad_result = client.create_image_ad(
                         campaign_id=sub_id,
@@ -5107,6 +5173,22 @@ def _build_extra_platform_clients(enabled: list[str]) -> dict:
                 "Skipping Google Search arm — GOOGLE_ADS_DEVELOPER_TOKEN / "
                 "GOOGLE_ADS_REFRESH_TOKEN / GOOGLE_ADS_CUSTOMER_ID not all set"
             )
+    # 2026-06-11 — Reddit. Built UNCONDITIONALLY (unlike Meta/Google cred-gating):
+    # v1 is creative-only (export image + free-form creatives + manifest to Drive
+    # for manual upload), which needs no API creds. RedditClient self-gates its
+    # programmatic create methods on config.REDDIT_API_ENABLED, so when the
+    # allow-list API access lands, flipping the flag upgrades this same arm to
+    # full programmatic create with no dispatch change.
+    if "reddit" in enabled:
+        from src.reddit_api import RedditClient
+        from src.reddit_targeting import RedditSubredditResolver
+        try:
+            out["reddit"] = {
+                "client":   RedditClient(),
+                "resolver": RedditSubredditResolver(),
+            }
+        except Exception as exc:
+            log.warning("Skipping Reddit arm — init failed: %s", exc)
     return out
 
 

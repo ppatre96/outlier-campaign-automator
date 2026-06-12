@@ -38,7 +38,7 @@ END $$;
 CREATE TABLE IF NOT EXISTS ramp_decisions (
     ramp_id         TEXT        PRIMARY KEY,                -- e.g. "GMR-0021"
     status          ramp_status NOT NULL DEFAULT 'prep_running',
-    channels        TEXT[]      NOT NULL DEFAULT '{}',      -- subset of {'linkedin','meta','google'}
+    channels        TEXT[]      NOT NULL DEFAULT '{}',      -- subset of {'linkedin','meta','google','google_search','reddit'}
     budgets         JSONB       NOT NULL DEFAULT '{}'::jsonb, -- {'linkedin': 5000, 'meta': 100, 'google': 0} in cents/day
     decided_by      TEXT,                                    -- Google email of the approver (null until first decision)
     decided_at      TIMESTAMPTZ,
