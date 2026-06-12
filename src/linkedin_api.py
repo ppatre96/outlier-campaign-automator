@@ -404,6 +404,48 @@ class LinkedInClient(AdPlatformClient):
         self._raise_for_status(resp, "renameCampaign")
         log.info("Renamed campaign %s → %s", campaign_id, new_name)
 
+    def get_creative(self, creative_urn_or_id: str) -> dict:
+        """GET a sponsoredCreative. Used to resolve a Message Ad creative's
+        backing inMailContents URN (`content.reference`). Uses LinkedIn-Version
+        202506 to match the InMail create path."""
+        from urllib.parse import quote
+        cid = creative_urn_or_id
+        if not cid.startswith("urn:li:"):
+            cid = f"urn:li:sponsoredCreative:{cid}"
+        headers = self._default_headers()
+        headers["LinkedIn-Version"] = "202506"
+        resp = self._req(
+            "GET",
+            self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/creatives/{quote(cid, safe='')}"),
+            headers=headers,
+        )
+        self._raise_for_status(resp, "getCreative")
+        return resp.json()
+
+    def rename_inmail_content(self, content_urn_or_id: str, new_name: str) -> None:
+        """Rename an existing inMailContents object (the InMail ad name shown in
+        Campaign Manager) via Rest.li PARTIAL_UPDATE. Unlike rename_campaign this
+        does NOT prefix — the caller passes the full pipe-delimited spec name.
+        Uses LinkedIn-Version 202506 (same as the InMail create path).
+
+        The resource is keyed by the FULL adInMailContent URN (URL-encoded), not
+        the bare numeric id — a numeric key 400s ("Key parameter value invalid")."""
+        from urllib.parse import quote
+        urn = content_urn_or_id
+        if not urn.startswith("urn:li:"):
+            urn = f"urn:li:adInMailContent:{urn}"
+        headers = self._default_headers()
+        headers["LinkedIn-Version"] = "202506"
+        headers["X-RestLi-Method"] = "PARTIAL_UPDATE"
+        resp = self._req(
+            "POST",
+            self._url(f"inMailContents/{quote(urn, safe='')}"),
+            json={"patch": {"$set": {"name": new_name[:255]}}},
+            headers=headers,
+        )
+        self._raise_for_status(resp, "renameInMailContent")
+        log.info("Renamed inMailContent %s → %s", urn, new_name)
+
     def update_campaign_budget(
         self,
         campaign_id_or_urn: str,
