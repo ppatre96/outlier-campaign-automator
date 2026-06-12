@@ -482,15 +482,22 @@ COLD_START_MULTI_COHORT      = os.getenv("COLD_START_MULTI_COHORT", "true").lowe
 # base-role title fold so the cohort stays a single-facet (skills-only) audience
 # instead of ANDing titles + skills down to a tiny intersection.
 #
-# GMR-0024 → target accessibility / assistive-technology PROFESSIONALS (who reach
-# blind contributors and are often blind/low-vision themselves) via LinkedIn
-# skill facets. All facets validated live against typeahead (≈4.1M US). Geo is
-# sourced from Smart Ramp (US-only) at launch, not here.
+# GMR-0024 = "Blind Evals" — needs legally-blind Android/TalkBack END-USERS, not
+# sighted accessibility auditors. "Legally blind" isn't a LinkedIn facet, so we
+# proxy via the screen-reader / braille SKILLS that BLV individuals themselves
+# list: JAWS + NVDA + Braille. (Retightened 2026-06-12: the prior set added the
+# broad auditor skills WCAG / Section 508 / Accessibility / Assistive Technology
+# — those catch mostly SIGHTED compliance professionals and ballooned the
+# audience to ~4.1M US. Screen-reader/braille-user skills alone ≈120K US, a far
+# better persona match.) All URNs validated live via typeahead + audienceCounts:
+# JAWS 17526, NV Access NVDA 58673, Braille 28900. NOTE: even this is a proxy —
+# BLV TalkBack end-users are not reliably reachable on LinkedIn; Meta / Reddit /
+# BLV-community channels are likely better. Geo from Smart Ramp (US) at launch.
 COHORT_SPEC_OVERRIDES: dict[str, list[dict]] = {
     "GMR-0024": [
         {
-            "label": "Accessibility & assistive-technology professionals",
-            "required_skills": ["Assistive Technology", "Accessibility", "JAWS", "WCAG", "Section 508"],
+            "label": "Screen reader & braille users (blind / low-vision)",
+            "required_skills": ["JAWS", "NVDA", "Braille"],
             "job_titles": [],
             "fields_of_study": [],
             "degrees": [],
