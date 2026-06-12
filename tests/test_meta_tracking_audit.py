@@ -18,17 +18,25 @@ def _rows():
         {"platform": "meta", "platform_campaign_id": "adset_BAD", "smart_ramp_id": "GMR-0023",
          "campaign_name": "bad", "cohort_geo": "ar"},
         {"platform": "google", "platform_campaign_id": "ag_x", "smart_ramp_id": "GMR-0023"},  # ignored
+        # Parent campaign-group row: platform_campaign_id is the Meta CAMPAIGN
+        # id (no promoted_object). Must be skipped — auditing it is a false
+        # positive (it's deliberately absent from _reader so a regression would
+        # KeyError or bump `checked`).
+        {"platform": "meta", "platform_campaign_id": "campaign_PARENT", "campaign_type": "parent",
+         "smart_ramp_id": "GMR-0023", "campaign_name": "meta_root", "cohort_geo": ""},
     ]
 
 
 def _reader(adset_id):
+    # Mirrors get_promoted_object: a campaign id (the parent row) reads {} live,
+    # which would be flagged as a violation if the parent weren't skipped.
     return {
         # correct pixel-event form
         "adset_OK": {"pixel_id": str(config.META_PIXEL_ID), "custom_event_type": "OTHER",
                      "custom_event_str": config.META_CUSTOM_EVENT_STR},
         # the archived-custom-conversion trap
         "adset_BAD": {"custom_conversion_id": "986478843749388"},
-    }[adset_id]
+    }.get(adset_id, {})
 
 
 def test_flags_and_repairs_bad_tracking(monkeypatch):
@@ -101,6 +109,26 @@ def test_published_flags_needs_rebuild_when_autorebuild_off(monkeypatch):
     assert out["detail"][0]["needs_rebuild"] is True
     assert out["handled"] == []
     assert events[0][0] == "meta_tracking_needs_rebuild"
+
+
+def test_skips_parent_campaign_group_row(monkeypatch):
+    """The parent row's platform_campaign_id is a Meta CAMPAIGN id (no
+    promoted_object → reads {}). It must NOT be checked or flagged — auditing
+    it is a false positive on every new Meta campaign."""
+    import src.ui_decisions as ui
+    monkeypatch.setattr(ui, "log_event", lambda *a, **k: None)
+
+    out = mta.audit_meta_tracking(
+        _rows(), autofix=True, reader=_reader,
+        fixer=lambda aid: (_ for _ in ()).throw(AssertionError(f"fixed {aid}"))
+              if aid == "campaign_PARENT" else True,
+    )
+
+    assert out["checked"] == 2                                       # only the 2 ad sets
+    cids = [v["container_id"] for v in out["violations"]]
+    assert "campaign_PARENT" not in cids                             # parent never flagged
+    assert cids == ["adset_BAD"]
+    assert "campaign_PARENT" not in out["handled"]
 
 
 def test_exclude_skips_repair():

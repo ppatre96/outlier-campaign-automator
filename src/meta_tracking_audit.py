@@ -67,6 +67,14 @@ def audit_meta_tracking(
     for row in rows:
         if (row.get("platform") or "").strip().lower() != "meta":
             continue
+        # Skip the parent campaign-group row. Its platform_campaign_id is the
+        # Meta CAMPAIGN id, which has no promoted_object — that lives on the ad
+        # set. Only the ad-set rows (campaign_type "static"/"inmail") carry the
+        # ad_set_id we can read tracking from. Without this guard every parent
+        # row reads {} → flagged as a violation + a futile repair attempt on a
+        # campaign id (false-positive on every new Meta campaign).
+        if (row.get("campaign_type") or "").strip().lower() == "parent":
+            continue
         adset = row.get("platform_campaign_id") or ""
         if not adset or adset in seen:
             continue
