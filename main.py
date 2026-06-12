@@ -1535,6 +1535,9 @@ def _process_inmail_campaigns(
                         body=variant.body,
                         cta_label=variant.cta_label,
                         destination_url=utm_url,
+                        # Readable ad name = campaign-spec name + angle, so the
+                        # InMail ad is legible in Campaign Manager (vs inmail_<ts>).
+                        ad_name=f"{campaign_name} | Angle {angle_label}",
                     )
                 except Exception as _exc:
                     log.warning(
@@ -1713,6 +1716,8 @@ def _retry_li_campaign(
             body=variant.body,
             cta_label=variant.cta_label,
             destination_url=destination_url_override,
+            # Readable ad name (retry path defaults to Angle A — see variant above).
+            ad_name=f"{cohort._stg_name} | Angle A",
         )
         sheets.write_creative(cohort._stg_id, cohort._stg_name, creative_urn)
         log.info("Retry InMail campaign %s creative %s", campaign_urn, creative_urn)
