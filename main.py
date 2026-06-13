@@ -2481,9 +2481,15 @@ def _resolve_cold_start_cohort(
                     cur.execute("DELETE FROM cohort_audience WHERE ramp_id = %s", (ramp_id,))
                     cur.execute("DELETE FROM cohort_targeting WHERE ramp_id = %s", (ramp_id,))
                     if current_sigs:
+                        # psycopg3 (not psycopg2) does NOT expand a tuple into a
+                        # SQL `IN (...)` list — `IN %s` with a tuple renders the
+                        # whole tuple as one param ("syntax error at or near $2").
+                        # Use `<> ALL(array)`: psycopg3 adapts a Python list to a
+                        # Postgres array, and `x <> ALL(arr)` == NOT IN for the
+                        # non-null cohort_signature column.
                         cur.execute(
-                            "DELETE FROM cohort_brief_rationale WHERE ramp_id = %s AND cohort_signature NOT IN %s",
-                            (ramp_id, tuple(current_sigs)),
+                            "DELETE FROM cohort_brief_rationale WHERE ramp_id = %s AND cohort_signature <> ALL(%s)",
+                            (ramp_id, list(current_sigs)),
                         )
                     else:
                         cur.execute("DELETE FROM cohort_brief_rationale WHERE ramp_id = %s", (ramp_id,))
@@ -3067,10 +3073,13 @@ def _resolve_cohorts(
                 cur.execute("DELETE FROM cohort_icp WHERE ramp_id = %s", (ramp_id_for_icp,))
                 cur.execute("DELETE FROM cohort_audience WHERE ramp_id = %s", (ramp_id_for_icp,))
                 if current_sigs:
+                    # psycopg3: `IN %s` + tuple renders as one param ($2 syntax
+                    # error). `<> ALL(%s)` + list adapts to a Postgres array and
+                    # is equivalent to NOT IN for non-null cohort_signature.
                     cur.execute(
                         "DELETE FROM cohort_brief_rationale "
-                        "WHERE ramp_id = %s AND cohort_signature NOT IN %s",
-                        (ramp_id_for_icp, tuple(current_sigs)),
+                        "WHERE ramp_id = %s AND cohort_signature <> ALL(%s)",
+                        (ramp_id_for_icp, list(current_sigs)),
                     )
                 else:
                     # No cohorts mined this run → wipe everything for the ramp.
