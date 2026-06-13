@@ -285,10 +285,11 @@ Return ONLY this JSON shape:
 
 # ── Reddit ───────────────────────────────────────────────────────────────────
 
-# Reddit promoted-ad CTA buttons we allow (human-readable; the programmatic
-# Phase-2 enum value is verified against the Reddit Ads API v3 ref at build
-# time). Recruitment-appropriate subset.
-_REDDIT_CTAS = {"Sign Up", "Apply Now", "Learn More", "Get Started"}
+# Reddit promoted-ad CTA buttons we allow — a recruitment-appropriate subset of
+# the v3 API's call_to_action enum (verified live 2026-06-13). NB: "Get Started"
+# is NOT a valid Reddit CTA, so it's excluded here (and remapped to "Sign Up" in
+# reddit_api as a belt-and-suspenders guard).
+_REDDIT_CTAS = {"Sign Up", "Apply Now", "Learn More"}
 # Soft cap for the free-form/native post body. Reddit allows ~40k chars, but a
 # native, high-performing recruitment post is short — keep it tight.
 _REDDIT_FREEFORM_MAX = 1200
@@ -322,7 +323,7 @@ an honest, specific value prop. No hype, no buzzwords, no exclamation spam.
 
 FIELDS + HARD LIMITS:
 - title:          MAX {c.headline_max_chars} characters. The promoted IMAGE-ad post title. Specific + concrete; name the work + the payment.
-- cta:            One of: Sign Up, Apply Now, Learn More, Get Started. Pick the most natural.
+- cta:            One of: Sign Up, Apply Now, Learn More. Pick the most natural.
 - freeform_title: MAX {c.headline_max_chars} characters. The native TEXT-post title — can be slightly more conversational/curious than `title`.
 - freeform_body:  MAX {_REDDIT_FREEFORM_MAX} characters. A short native Reddit post body: 2-4 short paragraphs, peer voice, concrete task + payment + flexibility, one clear closing line pointing to the link. Plain text, no markdown headers, no bullet spam.
 
