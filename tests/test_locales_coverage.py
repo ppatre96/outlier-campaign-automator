@@ -13,10 +13,22 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 from src.locales import get_locale
 
-# The 14 locale cohorts GMR-0023 (Multimango i18n) defines in Smart Ramp.
+# The 17 locale cohorts GMR-0023 (Multimango i18n) defines in Smart Ramp.
+# he-il / kn-in / ru-ru were added after es-mx and were missing from LOCALES,
+# so their "X generalist contributors" cohorts beam-mined noise + got no
+# language-skill targeting (Kannada gap surfaced 2026-06-12).
 GMR0023_LOCALES = [
     "bn-in", "de-de", "fr-fr", "hi-in", "id-id", "it-it", "ko-kr",
     "pt-br", "th-th", "tl-ph", "vi-vn", "zh-cn", "ar-eg", "es-mx",
+    "he-il", "kn-in", "ru-ru",
+]
+
+# These take the LinkedIn language-skill path (targets the language WITHIN the
+# geo, not geo-only) — must have a resolved skill URN in LINKEDIN_LANGUAGE_SKILL.
+LANGUAGE_SKILL_LOCALES = [
+    "bn-in", "de-de", "fr-fr", "hi-in", "id-id", "it-it", "ko-kr",
+    "pt-br", "th-th", "tl-ph", "vi-vn", "zh-cn", "ar-eg",
+    "he-il", "kn-in", "ru-ru",
 ]
 
 
@@ -27,6 +39,16 @@ def test_locale_recognized(loc):
     assert lt.locale == loc
     assert lt.meta_locale_id is not None
     assert lt.google_language_const is not None
+
+
+@pytest.mark.parametrize("loc", LANGUAGE_SKILL_LOCALES)
+def test_language_skill_resolves(loc):
+    from src.locales import linkedin_skill_urn
+    urn = linkedin_skill_urn(loc)
+    assert urn and urn.startswith("urn:li:skill:"), (
+        f"{loc} missing from LINKEDIN_LANGUAGE_SKILL → LinkedIn audience would be "
+        f"geo-only (no language-skill facet, e.g. the Kannada gap)"
+    )
 
 
 def test_generalist_cohort_takes_locale_path_for_es_mx():

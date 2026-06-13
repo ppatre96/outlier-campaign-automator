@@ -1176,6 +1176,21 @@ def _derive_next_steps(ctx: dict, blockers: set[str]) -> list[str]:
 
 # ── InMail campaign sub-pipeline ──────────────────────────────────────────────
 
+def _fmt_advertised_rate(base_rate_usd: float | None) -> str:
+    """Format the resolved Smart Ramp pay rate for ad copy, PRESERVING cents.
+
+    `int()` truncation was dropping the cents (e.g. $22.50/hr → "$22/hr"). Show
+    two decimals only when there is a fractional part, so "$22.50/hr" but
+    "$29/hr" (not "$29.00/hr"). Returns "" when no rate resolved — never a
+    default; see [[feedback_smart_ramp_authoritative_data]].
+    """
+    if base_rate_usd is None:
+        return ""
+    if base_rate_usd % 1:
+        return f"${base_rate_usd:.2f}/hr"
+    return f"${int(base_rate_usd)}/hr"
+
+
 def _process_inmail_campaigns(
     selected, flow_id, location,
     sheets, li_client, urn_res,
@@ -1185,6 +1200,7 @@ def _process_inmail_campaigns(
     destination_url_override: str | None = None,
     included_geos: list[str] | None = None,
     base_rate_usd: float | None = None,
+    rate_geo_specific: bool = False,
     ramp_id: str | None = None,
     cohort_id_override: str | None = None,
     cohort_description: str = "",
@@ -1232,11 +1248,11 @@ def _process_inmail_campaigns(
     from src.campaign_registry import log_campaign as _reg_log_inmail
 
     raw_geos = included_geos or []
-    geo_groups = group_geos_for_campaigns(raw_geos, base_rate_usd)
+    geo_groups = group_geos_for_campaigns(raw_geos, base_rate_usd, apply_geo_multiplier=not rate_geo_specific)
     if not geo_groups:
         geo_groups = [GeoCampaignGroup(
             cluster="global_mix", cluster_label="Global", geos=[],
-            median_multiplier=1.0, advertised_rate=(f"${int(base_rate_usd)}/hr" if base_rate_usd is not None else ""),
+            median_multiplier=1.0, advertised_rate=_fmt_advertised_rate(base_rate_usd),
             campaign_suffix="global",
         )]
     # Experimentation caps: max 3 cohorts per geo cluster, all angles tested
@@ -1689,7 +1705,15 @@ def _retry_li_campaign(
             log.error("LINKEDIN_INMAIL_SENDER_URN not set — cannot retry InMail for %s", cohort._stg_id)
             return
 
-        variants = build_inmail_variants(tg_cat, cohort, claude_key)
+        # Pay rate is authoritative from Smart Ramp (row.job_post_pay_rates),
+        # never a hardcoded default. Resolve it here so retried InMail copy
+        # carries the correct $/hr (or stays rate-free) instead of the old $50.
+        from src.attribution_resolver import parse_job_post_pay_rate
+        _retry_rate = parse_job_post_pay_rate(row.get("job_post_pay_rates"))
+        variants = build_inmail_variants(
+            tg_cat, cohort, claude_key,
+            hourly_rate=_fmt_advertised_rate(_retry_rate),
+        )
         variant  = variants[0]  # default to Angle A for retries
 
         if dry_run:
@@ -3317,6 +3341,7 @@ def _process_static_campaigns(
     cohort_id_override: str | None = None,
     cohort_description: str = "",
     base_rate_usd: float | None = None,
+    rate_geo_specific: bool = False,
     unique_id: str | None = None,
     naming_meta: dict | None = None,
     seen_keys: set | None = None,
@@ -3359,14 +3384,14 @@ def _process_static_campaigns(
     # Split included_geos into ethnic creative clusters, each getting its own
     # LinkedIn campaign with geo-appropriate photo_subject + computed rate.
     # G4 blocked countries are strictly skipped here.
-    geo_groups = group_geos_for_campaigns(raw_geos, base_rate_usd)
+    geo_groups = group_geos_for_campaigns(raw_geos, base_rate_usd, apply_geo_multiplier=not rate_geo_specific)
     if not geo_groups and raw_geos:
         # All geos were G4 — fall back to single group with empty geos (global)
         log.warning("_process_static_campaigns: all included_geos are G4 blocked — creating global campaign")
         from src.geo_tiers import GeoCampaignGroup
         geo_groups = [GeoCampaignGroup(
             cluster="global_mix", cluster_label="Global", geos=[],
-            median_multiplier=1.0, advertised_rate=(f"${int(base_rate_usd)}/hr" if base_rate_usd is not None else ""),
+            median_multiplier=1.0, advertised_rate=_fmt_advertised_rate(base_rate_usd),
             campaign_suffix="global",
         )]
     if not geo_groups:
@@ -3374,7 +3399,7 @@ def _process_static_campaigns(
         from src.geo_tiers import GeoCampaignGroup
         geo_groups = [GeoCampaignGroup(
             cluster="global_mix", cluster_label="Global", geos=[],
-            median_multiplier=1.0, advertised_rate=(f"${int(base_rate_usd)}/hr" if base_rate_usd is not None else ""),
+            median_multiplier=1.0, advertised_rate=_fmt_advertised_rate(base_rate_usd),
             campaign_suffix="global",
         )]
 
@@ -4354,6 +4379,31 @@ def _process_extra_platform_arm(
                     str(base_id_e)[:12], cluster_suffix, angle_label_e, _exc,
                 )
 
+        # Reddit feed promoted image is 1:1 (1200×1200). Compose a fresh square
+        # so the Reddit creative isn't inherited from a 4:5 (Meta) rewrite of the
+        # shared spec. (The free-form/native text post carries no image.)
+        if platform == "reddit" and variant_e:
+            try:
+                from src.gemini_creative import generate_imagen_photo
+                from src.image_adapter import compose_ad_for_platform, primary_aspect
+                r_aspect = primary_aspect("reddit")  # (1, 1)
+                r_bg = generate_imagen_photo(variant_e, aspect=r_aspect)
+                r_png = compose_ad_for_platform(
+                    bg_image=r_bg, copy_variant=variant_e,
+                    platform="reddit", angle=angle_label_e, aspect=r_aspect,
+                )
+                png_path_e = r_png
+                spec["png_path"] = r_png
+                log.info(
+                    "_process_extra_platform_arm[reddit]: 1:1 PNG ready %s", r_png,
+                )
+            except Exception as _exc:
+                log.warning(
+                    "_process_extra_platform_arm[reddit]: 1:1 photo gen FAILED "
+                    "cohort=%s geo=%s angle=%s — falling back to existing PNG: %s",
+                    str(base_id_e)[:12], cluster_suffix, angle_label_e, _exc,
+                )
+
         drive_url_e = ""
         if config.GDRIVE_ENABLED and png_path_e and Path(str(png_path_e)).exists():
             try:
@@ -4373,6 +4423,31 @@ def _process_extra_platform_arm(
         drive_urls_by_spec[spec_key] = drive_url_e
 
         platform_copy_e = adapt_copy_for_platform(variant_e, platform, icp=getattr(cohort_e, "_icp", None)) if variant_e else {}
+        # Reddit: the manual-upload manifest needs the targeting + conversion an
+        # operator would otherwise have to reconstruct — per-pod subreddits +
+        # interests/keywords (from the resolver), the intended worker_skill_grant
+        # conversion event for this pod, the pixel id, suggested budget, and
+        # which ad formats to build (image + free-form). platform_copy already
+        # carries the image title/cta + free-form title/body.
+        reddit_extra: dict = {}
+        if platform == "reddit":
+            try:
+                _rt = resolver.resolve_cohort(cohort_e, geos=list(group_geos_e))
+            except Exception as _exc:
+                log.warning("_process_extra_platform_arm[reddit]: resolver failed for %s: %s", spec_key, _exc)
+                _rt = {}
+            from src.reddit_api import reddit_pod_conversion_event
+            _pod = _rt.get("pod", "")
+            reddit_extra = {
+                "reddit_pod":                 _pod,
+                "reddit_subreddits":          _rt.get("subreddits", []),
+                "reddit_interests":           _rt.get("interests", []),
+                "reddit_keywords":            _rt.get("keywords", []),
+                "reddit_conversion_event":    reddit_pod_conversion_event(_pod) or "(pending Tuan: Reddit pixel id + per-pod WS event names)",
+                "reddit_pixel_id":            config.REDDIT_PIXEL_ID or "(pending Tuan)",
+                "reddit_suggested_daily_usd": config.REDDIT_DEFAULT_DAILY_USD,
+                "reddit_ad_formats":          ["image", "free_form"],
+            }
         handoff_entries.append({
             "cohort_name":      getattr(cohort_e, "name", ""),
             "cohort_stg_id":    getattr(cohort_e, "_stg_id", ""),
@@ -4389,6 +4464,7 @@ def _process_extra_platform_arm(
             "platform_copy":    platform_copy_e,
             "destination_url":  destination_url_override or "",
             "rules":            list(getattr(cohort_e, "rules", []) or []),
+            **reddit_extra,
         })
 
     manual_handoff_url = ""
@@ -4914,6 +4990,21 @@ def _process_extra_platform_arm(
                         local_png_path=str(png_path) if png_path else None,
                         ad_name=f"{campaign_name} | {angle_label}",
                     )
+                elif platform == "reddit":
+                    # Reddit image ad: title=headline, free-form body/title carried
+                    # for the native text-post variant. Returns local_fallback while
+                    # REDDIT_API_ENABLED is off (creative-only); raises when on-but-
+                    # unimplemented (caught per-cohort) — Phase 1 already exported.
+                    ad_result = client.create_image_ad(
+                        campaign_id=sub_id,
+                        image_id=image_id,
+                        headline=platform_copy.get("title", ""),
+                        description=platform_copy.get("freeform_body", ""),
+                        intro_text=platform_copy.get("freeform_title", ""),
+                        cta=platform_copy.get("cta"),
+                        destination_url=utm_url,
+                        ad_name=f"{campaign_name} | {angle_label}",
+                    )
                 else:  # meta
                     ad_result = client.create_image_ad(
                         campaign_id=sub_id,
@@ -5107,6 +5198,22 @@ def _build_extra_platform_clients(enabled: list[str]) -> dict:
                 "Skipping Google Search arm — GOOGLE_ADS_DEVELOPER_TOKEN / "
                 "GOOGLE_ADS_REFRESH_TOKEN / GOOGLE_ADS_CUSTOMER_ID not all set"
             )
+    # 2026-06-11 — Reddit. Built UNCONDITIONALLY (unlike Meta/Google cred-gating):
+    # v1 is creative-only (export image + free-form creatives + manifest to Drive
+    # for manual upload), which needs no API creds. RedditClient self-gates its
+    # programmatic create methods on config.REDDIT_API_ENABLED, so when the
+    # allow-list API access lands, flipping the flag upgrades this same arm to
+    # full programmatic create with no dispatch change.
+    if "reddit" in enabled:
+        from src.reddit_api import RedditClient
+        from src.reddit_targeting import RedditSubredditResolver
+        try:
+            out["reddit"] = {
+                "client":   RedditClient(),
+                "resolver": RedditSubredditResolver(),
+            }
+        except Exception as exc:
+            log.warning("Skipping Reddit arm — init failed: %s", exc)
     return out
 
 
@@ -5232,6 +5339,12 @@ def _process_row_both_modes(
     # a $50 default — wrong rate in ads is a critical risk.
     import os as _os
     base_rate_usd: float | None = None
+    # True when base_rate_usd is the Smart Ramp job_post_pay_rates value — an
+    # authoritative, locale/geo-specific advertised rate that must NOT be passed
+    # through the country pay-multiplier or $5 rounding (that mangled $22.50→$20
+    # for he-IL, $7.50→$5 for kn-IN). Only a US-baseline OUTLIER_BASE_RATE_USD
+    # gets the geo multiplier. See [[feedback_smart_ramp_authoritative_data]].
+    rate_geo_specific = False
     _env_rate = (_os.environ.get("OUTLIER_BASE_RATE_USD") or "").strip()
     if _env_rate:
         try:
@@ -5255,9 +5368,10 @@ def _process_row_both_modes(
         _sr_rate = parse_job_post_pay_rate(row.get("job_post_pay_rates"))
         if _sr_rate is not None:
             base_rate_usd = _sr_rate
+            rate_geo_specific = True
             log.info(
                 "_process_row_both_modes: pay rate from Smart Ramp job_post_pay_rates "
-                "%r → base_rate_usd=$%.2f/hr",
+                "%r → base_rate_usd=$%.2f/hr (geo-specific, no multiplier)",
                 row.get("job_post_pay_rates"), base_rate_usd,
             )
     if base_rate_usd is None:
@@ -5309,14 +5423,16 @@ def _process_row_both_modes(
             import config as _cfg
 
             raw_geos = included_geos or []
-            geo_groups = group_geos_for_campaigns(raw_geos, base_rate_usd)
+            geo_groups = group_geos_for_campaigns(
+                raw_geos, base_rate_usd, apply_geo_multiplier=not rate_geo_specific,
+            )
             if not geo_groups:
                 # Mirror the static arm's fallback so brief gen still happens
                 # even when the geo grouper returns empty.
                 geo_groups = [GeoCampaignGroup(
                     cluster="global_mix", cluster_label="Global", geos=raw_geos,
                     median_multiplier=1.0,
-                    advertised_rate=(f"${int(base_rate_usd)}/hr" if base_rate_usd is not None else ""),
+                    advertised_rate=_fmt_advertised_rate(base_rate_usd),
                     campaign_suffix="global",
                 )]
 
@@ -5479,6 +5595,7 @@ def _process_row_both_modes(
                 seen_keys=seen_inmail_keys,
                 daily_budget_cents=linkedin_budget_cents,
                 base_rate_usd=base_rate_usd,
+                rate_geo_specific=rate_geo_specific,
             )
             return r if isinstance(r, dict) else {}
         except Exception:
@@ -5513,6 +5630,7 @@ def _process_row_both_modes(
                 seen_keys=seen_static_keys,
                 daily_budget_cents=linkedin_budget_cents,
                 base_rate_usd=base_rate_usd,
+                rate_geo_specific=rate_geo_specific,
                 create_linkedin_campaigns=linkedin_enabled,
             )
             return r if isinstance(r, dict) else {}

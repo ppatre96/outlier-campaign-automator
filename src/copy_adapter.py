@@ -142,6 +142,8 @@ def adapt_copy_for_platform(
         # is shared. Routing google_search here fixes the arm aborting with
         # "unknown platform 'google_search'" before any Search campaign was made.
         return _adapt_for_google(variant, constraints, icp=icp)
+    if platform == "reddit":
+        return _adapt_for_reddit(variant, constraints, icp=icp)
     raise ValueError(f"adapt_copy_for_platform: unknown platform {platform!r}")
 
 
@@ -278,6 +280,103 @@ Return ONLY this JSON shape:
         "headlines":     headlines,
         "long_headline": long_headline,
         "descriptions":  descriptions,
+    }
+
+
+# ── Reddit ───────────────────────────────────────────────────────────────────
+
+# Reddit promoted-ad CTA buttons we allow (human-readable; the programmatic
+# Phase-2 enum value is verified against the Reddit Ads API v3 ref at build
+# time). Recruitment-appropriate subset.
+_REDDIT_CTAS = {"Sign Up", "Apply Now", "Learn More", "Get Started"}
+# Soft cap for the free-form/native post body. Reddit allows ~40k chars, but a
+# native, high-performing recruitment post is short — keep it tight.
+_REDDIT_FREEFORM_MAX = 1200
+
+
+def _adapt_for_reddit(variant: dict, c: PlatformConstraints, *, icp=None) -> dict:
+    """LLM-rewrite the canonical variant into BOTH Reddit ad formats:
+
+      - image ad:  a promoted-post `title` (the headline over/with the image)
+                   + a `cta` button label.
+      - free-form: a native, Reddit-voiced text post (`freeform_title` +
+                   `freeform_body`) — conversational, peer-to-peer, value-first,
+                   NOT corporate (Redditors distrust ad-speak).
+
+    Returns one dict carrying both forms. Falls back to deterministic
+    truncation of the canonical copy on LLM failure, and runs a brand-voice
+    banned-term pass on the free-form body (which bypasses the image QC path)."""
+    headline_in    = (variant.get("headline") or "").strip()
+    subhead_in     = (variant.get("subheadline") or "").strip()
+    intro_in       = (variant.get("intro_text") or "").strip()
+    ad_headline_in = (variant.get("ad_headline") or "").strip()
+    ad_desc_in     = (variant.get("ad_description") or "").strip()
+
+    prompt = f"""\
+Rewrite the following Outlier ad copy for Reddit. Produce TWO formats in one JSON object.
+Output STRICT JSON only — no markdown fences, no commentary.
+
+Reddit culture: users distrust corporate/marketing tone. Write like a knowledgeable
+peer posting in a niche community, not a recruiter. Lead with a concrete outcome or
+an honest, specific value prop. No hype, no buzzwords, no exclamation spam.
+
+FIELDS + HARD LIMITS:
+- title:          MAX {c.headline_max_chars} characters. The promoted IMAGE-ad post title. Specific + concrete; name the work + the payment.
+- cta:            One of: Sign Up, Apply Now, Learn More, Get Started. Pick the most natural.
+- freeform_title: MAX {c.headline_max_chars} characters. The native TEXT-post title — can be slightly more conversational/curious than `title`.
+- freeform_body:  MAX {_REDDIT_FREEFORM_MAX} characters. A short native Reddit post body: 2-4 short paragraphs, peer voice, concrete task + payment + flexibility, one clear closing line pointing to the link. Plain text, no markdown headers, no bullet spam.
+
+{_BANNED_VOCAB_BLOCK}
+
+CANONICAL COPY (rewrite preserving angle + specificity):
+- headline:       {headline_in!r}
+- subheadline:    {subhead_in!r}
+- intro_text:     {intro_in!r}
+- ad_headline:    {ad_headline_in!r}
+- ad_description: {ad_desc_in!r}
+{_icp_block(icp)}
+Return ONLY this JSON shape:
+{{"title": "...", "cta": "...", "freeform_title": "...", "freeform_body": "..."}}
+"""
+    out: dict[str, Any] = {}
+    try:
+        raw = call_claude(messages=[{"role": "user", "content": prompt}], max_tokens=800)
+        out = _extract_json(raw) or {}
+    except Exception as exc:
+        log.warning("Reddit copy adapter LLM failed (%s) — using deterministic truncation", exc)
+
+    title          = _truncate(out.get("title") or headline_in or ad_headline_in, c.headline_max_chars)
+    freeform_title = _truncate(out.get("freeform_title") or title, c.headline_max_chars)
+    freeform_body  = _truncate(
+        out.get("freeform_body") or " ".join(p for p in [intro_in, subhead_in, ad_desc_in] if p),
+        _REDDIT_FREEFORM_MAX,
+    )
+    cta = (out.get("cta") or "Sign Up").strip().title()
+    if cta not in _REDDIT_CTAS:
+        cta = "Sign Up"
+
+    # Brand-voice safety net on the free-form body + titles (they skip the
+    # image-creative QC path). Best-effort — never blocks ad generation.
+    try:
+        from src.brand_voice_validator import BrandVoiceValidator
+        _bv = BrandVoiceValidator()
+        title, _ = _bv.rewrite_banned_terms(title)
+        freeform_title, _ = _bv.rewrite_banned_terms(freeform_title)
+        freeform_body, _ = _bv.rewrite_banned_terms(freeform_body)
+    except Exception as exc:  # pragma: no cover - defensive
+        log.debug("Reddit banned-term rewrite skipped (non-fatal): %s", exc)
+
+    return {
+        "angle":          variant.get("angle"),
+        "angleLabel":     variant.get("angleLabel"),
+        "photo_subject":  variant.get("photo_subject"),
+        "tgLabel":        variant.get("tgLabel"),
+        # Image-ad form:
+        "title":          title,
+        "cta":            cta,
+        # Free-form / native text-post form:
+        "freeform_title": freeform_title,
+        "freeform_body":  freeform_body,
     }
 
 

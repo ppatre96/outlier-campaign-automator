@@ -265,7 +265,7 @@ def _count_rendered_lines(text: str, font_size_frac: float, canvas_size: int = 1
     border = int(canvas_size * 0.033)
     photo_w = canvas_size - 2 * border
     max_text_w = int(photo_w * (0.88 if bold else 0.82))
-    font = _load_font(int(canvas_size * font_size_frac), bold=bold)
+    font = _load_font(int(canvas_size * font_size_frac), bold=bold, text=text)
 
     # Account for explicit \n in the string (caller-inserted breaks)
     parts = text.split("\n")

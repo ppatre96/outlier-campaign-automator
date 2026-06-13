@@ -47,11 +47,39 @@ LINKEDIN_ORG_ID           = os.getenv("LINKEDIN_ORG_ID", "")
 LINKEDIN_DESTINATION      = os.getenv("LINKEDIN_DESTINATION_URL", "https://outlier.ai/")
 LINKEDIN_INMAIL_SENDER_URN = os.getenv("LINKEDIN_INMAIL_SENDER_URN", "")
 # Custom footer / Terms & Conditions appended to every Message Ad (reviewer
-# feedback GMR-0024, 2026-06-11). Sent as the inMailContents `customFooter`
-# field only when non-empty. Set the canonical text in Doppler
-# (LINKEDIN_INMAIL_FOOTER); kept empty here until the marketing/legal copy is
-# confirmed so we never ship placeholder legal text.
-LINKEDIN_INMAIL_FOOTER     = os.getenv("LINKEDIN_INMAIL_FOOTER", "")
+# feedback GMR-0024). Sent as the inMailContents `customFooter` field
+# ("The terms and conditions of the content. Shown on the bottom of the
+# message." — LinkedIn Message Ads API) only when non-empty. Canonical legal
+# copy provided by marketing/legal 2026-06-12; override per-account via the
+# LINKEDIN_INMAIL_FOOTER Doppler secret if it ever changes.
+_DEFAULT_INMAIL_FOOTER = """Personal Information We Collect
+
+When we talk about "personal information" (or "personal data") we're talking about a broad range of information. Data protection laws around the world define this concept in different ways, but in general, we mean any information that relates to an identifiable, living individual person.
+
+A. Personal Information You Provide Us Directly. We may collect the following personal information you provide directly to us:
+
+- Registration information: Personal information we collect when you register for a user account to access Outlier Systems (your "Account"). This may include your name, country of residence, mobile phone number, email address, postal address, and other demographic information, which includes things like background information related to your experience and education. In certain instances, you may be asked to provide proof of your identity, such as a driver license or other government-issued ID, and location to access or use Outlier Systems or task on certain projects.
+- Your activity when you use our services: Personal information we collect when you use Outlier Systems and how you use them. We might know, for instance, that you completed the security review or that you undertook and/or completed a task for third-party customers ("Customers") or performed support services related to such tasks (collectively, "Tasks"). If you submit, upload, publish or otherwise make available text, audio, and/or visual content and information, including commentary, questions, and feedback on Outlier Systems related to Tasks, support requests, and submission of entries for competitions and promotions (collectively, "User Content"), we may collect your User Content.
+- Marketing, events, and communications information: Personal information we collect when you express interest in obtaining information about Outlier Systems, such as by signing up for emails or other communications. This may include things such as your name, email address, mailing address, phone number, title, or company name.
+- Feedback and support information: Personal information we collect when you contact us for support with your Account, or to notify us of any suspected misuse of Outlier Systems or violations of applicable law, the Terms of Use, the Community Guidelines, or other applicable policies, including when you contact us at: support@tryoutlier.com, legal@tryoutlier.com, privacy@tryoutlier.com or security@tryoutlier.com, or other Outlier communication channels.
+- Survey Information: Personal information we collect in response to surveys that we may conduct in order to improve Outlier Systems.
+- Financial and payment information: Personal information we collect in order to process payment to you or provide tax documentation.
+
+B. Personal Information We Collect From You Automatically. We use tools and services commonly used on the internet, such as log files, cookies, pixel tags, and similar technologies to automatically collect personal information from your devices while you navigate the Outlier Site or interact with emails we send to you. In this context, we collect things like IP address, browser or device type, operating system, the website you visited before the Outlier Site, and identifiers of your devices. For more information, please also visit our Cookies Policy.
+
+C. Personal Information We Collect From Third Parties. We may also collect personal information from third-party sources. For example:
+
+- if you create or log into your Account using your Google or Facebook account credentials, we will access and collect your name, email address, country of residence, and age range from these third parties
+- if one of our business partners provisioned you an Account, we will access and collect the information you provided to them for this purpose
+- if you submit, upload, publish or otherwise make available User Content on other platforms related to Tasks, we may collect your User Content
+- if you opt-in for an identity verification or a background check, our screening vendor may provide us with certain personal information, such as your name, date of birth, address, government-issued ID, phone number, email address, and picture
+- our payment facilitation vendor may provide us with tax documentation, which includes things like your taxpayer identification number, related to payments made to you
+
+Community Guidelines: https://tryoutlier.com/legal-pages/community-guidelines
+Terms of Use: https://tryoutlier.com/legal-pages/terms-of-use
+Cookies Policy: https://tryoutlier.com/legal-pages/cookies-policy
+Privacy Policy: https://tryoutlier.com/legal-pages/privacy-policy"""
+LINKEDIN_INMAIL_FOOTER     = os.getenv("LINKEDIN_INMAIL_FOOTER", _DEFAULT_INMAIL_FOOTER)
 # Public profile URN of the LinkedIn member who authorized the OAuth token.
 # Required to create image ad creatives (DSC posts via w_member_social scope).
 # Find at: linkedin.com/in/<id> → the <id> portion, e.g. urn:li:person:AbCdEfGhIj
@@ -283,6 +311,58 @@ META_CUSTOM_EVENT_STR        = os.getenv("META_CUSTOM_EVENT_STR", "worker_skill_
 META_CUSTOM_CONVERSION_ID    = os.getenv("META_CUSTOM_CONVERSION_ID", "")
 META_ATTRIBUTION_WINDOW_DAYS = int(os.getenv("META_ATTRIBUTION_WINDOW_DAYS", "7"))
 
+# ── Reddit Ads ────────────────────────────────────────────────────────────────
+# New channel (2026-06-11). v1 is CREATIVE-ONLY: the pipeline generates image +
+# free-form ad assets + a targeting/conversion manifest to Drive for manual
+# upload in Reddit Ads Manager. Programmatic campaign creation (RedditClient
+# Phase 2) is gated behind REDDIT_API_ENABLED and stays OFF until Reddit's
+# allow-list Ads API access is granted — the Reddit Ads API is allow-list gated
+# and SEPARATE from the Ads Manager UI we already have.
+REDDIT_API_ENABLED   = os.getenv("REDDIT_API_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+REDDIT_CLIENT_ID     = os.getenv("REDDIT_CLIENT_ID", "")
+REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET", "")
+REDDIT_ACCESS_TOKEN  = os.getenv("REDDIT_ACCESS_TOKEN", "")
+REDDIT_REFRESH_TOKEN = os.getenv("REDDIT_REFRESH_TOKEN", "")
+REDDIT_AD_ACCOUNT_ID = os.getenv("REDDIT_AD_ACCOUNT_ID", "")  # "t2_<id>" / a2_ ad account
+
+# Reddit conversion tracking (worker_skill_grant via Segment — Tuan 2026-06-11).
+# The Segment destination is enabled with per-pod mappings ready to toggle on,
+# but the Reddit pixel id + per-pod event names were NOT provided yet — fill
+# these from Tuan before flipping REDDIT_API_ENABLED on. Reddit also MANDATES a
+# conversion_pixel_id on every ad group / CBO campaign from 2026-07-13. Mirrors
+# LINKEDIN_POD_CONVERSION_IDS. Segment pod_category mapping:
+#   coders→"Coding", specialist→"Expert", languages→"Language", generalist→"Generalist".
+REDDIT_PIXEL_ID      = os.getenv("REDDIT_PIXEL_ID", "")
+REDDIT_POD_CONVERSION_EVENTS = {
+    "all":        os.getenv("REDDIT_WS_EVENT_ALL", ""),         # WS_all
+    "coders":     os.getenv("REDDIT_WS_EVENT_CODERS", ""),      # WS_Coders     (Coding)
+    "specialist": os.getenv("REDDIT_WS_EVENT_SPECIALIST", ""),  # WS_Specialist (Expert)
+    "languages":  os.getenv("REDDIT_WS_EVENT_LANGUAGES", ""),   # WS_Languages  (Language)
+    "generalist": os.getenv("REDDIT_WS_EVENT_GENERALIST", ""),  # WS_Generalist (Generalist)
+}
+
+# Per-pod default subreddit targeting (community targeting is Reddit's primary
+# lever). Pipeline-side curated defaults; override the whole map via
+# REDDIT_POD_SUBREDDITS_JSON env. The arm targets users active in / subscribed
+# to these communities. Confirm the final lists with marketing.
+try:
+    _reddit_subs_env = os.getenv("REDDIT_POD_SUBREDDITS_JSON", "")
+    _REDDIT_SUBS_OVERRIDE = _json.loads(_reddit_subs_env) if _reddit_subs_env else {}
+except Exception:
+    _REDDIT_SUBS_OVERRIDE = {}
+REDDIT_POD_SUBREDDITS = {
+    "coders":     ["cscareerquestions", "programming", "learnprogramming", "datascience"],
+    "specialist": ["medicine", "AskEngineers", "labrats", "datascience"],
+    "languages":  ["languagelearning", "translator"],
+    "generalist": ["jobs", "WorkOnline", "beermoney", "forhire"],
+    **_REDDIT_SUBS_OVERRIDE,  # env override wins
+}
+# Optional broad interest / keyword layers (AND-ed with subreddits when set).
+REDDIT_INTERESTS = [s.strip() for s in os.getenv("REDDIT_INTERESTS", "").split(",") if s.strip()]
+REDDIT_KEYWORDS  = [s.strip() for s in os.getenv("REDDIT_KEYWORDS", "").split(",") if s.strip()]
+# Suggested daily budget (USD) surfaced in the Reddit handoff manifest.
+REDDIT_DEFAULT_DAILY_USD = int(os.getenv("REDDIT_DEFAULT_DAILY_USD", "50"))
+
 # Minimum short-side px a creative must have before ANY platform's upload_image
 # will send it (Meta, LinkedIn, Google). Real pipeline creatives are ≥1080 on
 # every side (4:5=1080×1350, 1:1=1080, 9:16=1080×1920); a floor of 600 cleanly
@@ -402,15 +482,22 @@ COLD_START_MULTI_COHORT      = os.getenv("COLD_START_MULTI_COHORT", "true").lowe
 # base-role title fold so the cohort stays a single-facet (skills-only) audience
 # instead of ANDing titles + skills down to a tiny intersection.
 #
-# GMR-0024 → target accessibility / assistive-technology PROFESSIONALS (who reach
-# blind contributors and are often blind/low-vision themselves) via LinkedIn
-# skill facets. All facets validated live against typeahead (≈4.1M US). Geo is
-# sourced from Smart Ramp (US-only) at launch, not here.
+# GMR-0024 = "Blind Evals" — needs legally-blind Android/TalkBack END-USERS, not
+# sighted accessibility auditors. "Legally blind" isn't a LinkedIn facet, so we
+# proxy via the screen-reader / braille SKILLS that BLV individuals themselves
+# list: JAWS + NVDA + Braille. (Retightened 2026-06-12: the prior set added the
+# broad auditor skills WCAG / Section 508 / Accessibility / Assistive Technology
+# — those catch mostly SIGHTED compliance professionals and ballooned the
+# audience to ~4.1M US. Screen-reader/braille-user skills alone ≈120K US, a far
+# better persona match.) All URNs validated live via typeahead + audienceCounts:
+# JAWS 17526, NV Access NVDA 58673, Braille 28900. NOTE: even this is a proxy —
+# BLV TalkBack end-users are not reliably reachable on LinkedIn; Meta / Reddit /
+# BLV-community channels are likely better. Geo from Smart Ramp (US) at launch.
 COHORT_SPEC_OVERRIDES: dict[str, list[dict]] = {
     "GMR-0024": [
         {
-            "label": "Accessibility & assistive-technology professionals",
-            "required_skills": ["Assistive Technology", "Accessibility", "JAWS", "WCAG", "Section 508"],
+            "label": "Screen reader & braille users (blind / low-vision)",
+            "required_skills": ["JAWS", "NVDA", "Braille"],
             "job_titles": [],
             "fields_of_study": [],
             "degrees": [],

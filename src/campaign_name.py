@@ -55,7 +55,7 @@ _POD_FROM_TG = {
 }
 
 # Channel display names per spec.
-_CHANNEL_LABEL = {"linkedin": "LinkedIn", "meta": "Meta", "google": "Google"}
+_CHANNEL_LABEL = {"linkedin": "LinkedIn", "meta": "Meta", "google": "Google", "reddit": "Reddit"}
 
 # Format display names per spec.
 _FORMAT_LABEL_FROM_CAMPAIGN_TYPE = {"static": "Single Image", "inmail": "Inmail"}

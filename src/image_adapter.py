@@ -69,6 +69,7 @@ _PRIMARY_ASPECT: dict[str, tuple[int, int]] = {
     "fb":       (4, 5),      # FB Feed 1080×1350 (Drive-folder alias of meta)
     "ig":       (4, 5),      # IG Feed 1080×1350 (Drive-folder alias of meta)
     "tiktok":   (9, 16),     # TikTok in-feed / Carousel slide 1080×1920
+    "reddit":   (1, 1),      # Reddit feed promoted image 1200×1200 (new channel 2026-06-11)
 }
 
 # Pixel dimensions for each aspect — sized for sharpness on the platform's

@@ -542,6 +542,8 @@ def compute_geo_rate(base_rate_usd: float, country_code: str) -> str:
 def group_geos_for_campaigns(
     included_geos: list[str],
     base_rate_usd: float | None = None,
+    *,
+    apply_geo_multiplier: bool = True,
 ) -> list[GeoCampaignGroup]:
     """
     Split included_geos into per-campaign geo groups.
@@ -583,9 +585,18 @@ def group_geos_for_campaigns(
         )
 
     def _rate_str(multiplier: float) -> str:
-        """Return formatted rate or '' if base rate is unresolved."""
+        """Return formatted rate or '' if base rate is unresolved.
+
+        When apply_geo_multiplier is False the rate is the Smart Ramp
+        `job_post_pay_rates` value — already the authoritative, locale-specific
+        rate. Advertise it VERBATIM: no country multiplier and no $5 rounding
+        (both would mangle e.g. $22.50→$20 for Israel, $7.50→$5 for India).
+        Only a US-baseline rate (OUTLIER_BASE_RATE_USD) gets the geo multiplier.
+        """
         if base_rate_usd is None:
             return ""
+        if not apply_geo_multiplier:
+            return f"${base_rate_usd:.2f}/hr" if base_rate_usd % 1 else f"${int(base_rate_usd)}/hr"
         return _format_rate(base_rate_usd * multiplier)
 
     # If single geo: simple single-group result.

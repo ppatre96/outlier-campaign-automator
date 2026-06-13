@@ -99,6 +99,25 @@ LOCALES: dict[str, LocaleTargeting] = {
         "es-mx", "Mexican Spanish", 23, 1003, "es_MX",
         ["trabajo desde casa", "trabajo en línea", "ganar dinero en línea", "trabajo remoto", "ingreso extra en línea"],
     ),
+    # he-il / kn-in / ru-ru were added to GMR-0023 AFTER the es-mx fix and were
+    # likewise missing here → is_generalist_cohort() failed (b) "known locale",
+    # so these "X generalist contributors" cohorts fell to Stage-A beam (résumé
+    # noise) instead of targeting the language WITHIN the geo. All IDs resolved
+    # live 2026-06-12 (not guessed): LinkedIn skill via typeahead_facet('skills'),
+    # Meta adlocale via Graph search?type=adlocale, Google language_constant via
+    # the Ads API. Google uses the legacy code "iw" for Hebrew (id 1027).
+    "he-il": LocaleTargeting(
+        "he-il", "Hebrew", 29, 1027, "he_IL",
+        ["עבודה מהבית", "עבודה אונליין", "הכנסה מהאינטרנט", "עבודה מרחוק", "הכנסה נוספת"],
+    ),
+    "kn-in": LocaleTargeting(
+        "kn-in", "Kannada", 75, 1086, "kn_IN",
+        ["ಮನೆಯಿಂದ ಕೆಲಸ", "ಆನ್‌ಲೈನ್ ಕೆಲಸ", "ಆನ್‌ಲೈನ್‌ನಲ್ಲಿ ಹಣ ಗಳಿಸಿ", "ಮನೆಯಿಂದಲೇ ಕೆಲಸ"],
+    ),
+    "ru-ru": LocaleTargeting(
+        "ru-ru", "Russian", 17, 1031, "ru_RU",
+        ["работа из дома", "работа онлайн", "заработок в интернете", "удаленная работа", "подработка онлайн"],
+    ),
 }
 
 
@@ -122,6 +141,9 @@ LINKEDIN_LANGUAGE_SKILL: dict[str, str] = {
     "vi-vn": "urn:li:skill:8669",    # Vietnamese
     "zh-cn": "urn:li:skill:2473",    # Chinese
     "ar-eg": "urn:li:skill:25093",   # Egyptian Arabic
+    "he-il": "urn:li:skill:5494",    # Hebrew (typeahead 2026-06-12)
+    "kn-in": "urn:li:skill:14655",   # Kannada (typeahead 2026-06-12)
+    "ru-ru": "urn:li:skill:2708",    # Russian (typeahead 2026-06-12)
 }
 
 

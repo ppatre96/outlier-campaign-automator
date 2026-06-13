@@ -171,7 +171,7 @@ def build_inmail_variants(
     destination_url: str = "https://app.outlier.ai/en/contributors/projects",
     angle_keys: list[str] | None = None,
     extra_angles: dict | None = None,
-    hourly_rate: str = "$50",
+    hourly_rate: str = "",
     geo_icp_hint: str = "",
 ) -> list[InMailVariant]:
     """
@@ -307,7 +307,7 @@ def _build_prompt(
     tg_category: str,
     angle_key: str,
     angle_cfg: dict,
-    hourly_rate: str = "$50",
+    hourly_rate: str = "",
 ) -> str:
     control_note = (
         "NOTE: Data (12-month, 17.4M sends) shows the FLEXIBILITY angle has the highest "
@@ -318,9 +318,24 @@ def _build_prompt(
         "NOTE: Financial is the best angle for Coders TG specifically. For Medical/PhD TGs "
         "it under-indexes — compensate by making the task description very concrete.\n\n"
     )
+    # The rate is authoritative (Smart Ramp). NEVER invent or default one: if no
+    # rate resolved, the copy must be rate-free rather than hallucinating a figure
+    # (that is how wrong rates like a stray "$20" or "$50" reach a live ad).
+    rate = (hourly_rate or "").strip().lstrip("$").strip()
+    if rate:
+        rate_line = (
+            f'Hourly rate for this TG: ${rate}/hr. Use this EXACT figure verbatim, '
+            f'including any cents. Never round it, never change it, never say "up to $X".'
+        )
+    else:
+        rate_line = (
+            "No hourly rate is available for this audience. Do NOT mention any specific "
+            "$/hr figure, dollar amount, or earnings number anywhere in the subject or "
+            "body. Lead on the work itself, flexibility, and the remote nature instead."
+        )
     return f"""You are writing a LinkedIn InMail (Message Ad) for Outlier — an AI data platform where domain experts earn payment doing flexible, remote AI tasks (reviewing, rating, generating content to improve AI models). Outlier has paid over $500M to contributors globally.
 
-Hourly rate for this TG: {hourly_rate}/hr (use this exact figure — never say "up to $X").
+{rate_line}
 
 {control_note}{cohort_summary}
 
@@ -358,14 +373,16 @@ CRITICAL WRITING RULES (based on 12-month performance data — these directly af
    BAD:  "helping improve AI models" (too vague to motivate action)
 
 6. NO em dashes (—). Use a period or comma instead.
-7. No bullet points or headers — plain paragraphs only.
+7. PARAGRAPH SPACING: break the body into 3-4 short paragraphs and put a BLANK LINE
+   between every paragraph (one empty line between them) so the message renders with
+   clear spacing and is easy to read. No bullet points or headers, plain paragraphs only.
 8. Do NOT start with "Hi" or "Hello".
 9. CTA label: always output exactly "Apply now" — the button text is fixed and not chosen per angle.
 10. Subject line: ≤60 characters including spaces. Count carefully.
 
 Write your response EXACTLY in this format (no other text):
 SUBJECT: <subject line, max 60 chars>
-BODY: <body text, 100–130 words, plain paragraphs>
+BODY: <body text, 100–130 words, 3-4 short paragraphs each separated by a blank line>
 CTA_LABEL: <button label, max 20 chars>"""
 
 

@@ -472,12 +472,93 @@ def _make_gradient_overlay(width: int, height: int, angle: str) -> Image.Image:
     return Image.fromarray((combined * 255).astype(np.uint8), "RGBA")
 
 
-def _load_font(size: int, bold: bool = False):
+# ── Script-aware fonts ──────────────────────────────────────────────────────
+# Inter (brand font) only covers Latin/Cyrillic/Greek. When the copy LLM emits a
+# native-script overlay (e.g. Hindi Devanagari "AI को हिंदी विशेषज्ञ चाहिए") Inter
+# has no glyphs → PIL renders "?". We detect the dominant non-Latin script and
+# load a font that covers it. Complex scripts (Devanagari/Bengali/Tamil/Telugu/
+# Thai/Arabic) also need shaping (conjuncts, reordering, RTL) → require libraqm
+# (Pillow's RAQM layout engine). raqm is loaded dynamically; gate on its presence
+# so this still runs (sans shaping) where libraqm isn't installed.
+try:
+    from PIL import features as _pil_features
+    _RAQM_OK = bool(_pil_features.check("raqm"))
+except Exception:
+    _RAQM_OK = False
+
+# script → ordered font candidates (macOS system .ttc first, then Linux/CI Noto).
+_SCRIPT_FONTS: dict[str, list[str]] = {
+    "devanagari": ["/System/Library/Fonts/Supplemental/Kohinoor.ttc",
+                   "/System/Library/Fonts/Supplemental/Devanagari Sangam MN.ttc",
+                   "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf"],
+    "bengali":    ["/System/Library/Fonts/Supplemental/Bangla Sangam MN.ttc",
+                   "/usr/share/fonts/truetype/noto/NotoSansBengali-Regular.ttf"],
+    "kannada":    ["/System/Library/Fonts/Supplemental/Kannada Sangam MN.ttc",
+                   "/System/Library/Fonts/Supplemental/NotoSansKannada.ttc",
+                   "/usr/share/fonts/truetype/noto/NotoSansKannada-Regular.ttf"],
+    "tamil":      ["/System/Library/Fonts/Supplemental/Tamil Sangam MN.ttc",
+                   "/usr/share/fonts/truetype/noto/NotoSansTamil-Regular.ttf"],
+    "telugu":     ["/System/Library/Fonts/Supplemental/Kohinoor Telugu.ttc",
+                   "/usr/share/fonts/truetype/noto/NotoSansTelugu-Regular.ttf"],
+    "thai":       ["/System/Library/Fonts/Supplemental/Thonburi.ttc",
+                   "/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf"],
+    "arabic":     ["/System/Library/Fonts/Supplemental/GeezaPro.ttc",
+                   "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf"],
+    "hebrew":     ["/System/Library/Fonts/Supplemental/Arial Hebrew.ttc",
+                   "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf"],
+    "han":        ["/System/Library/Fonts/PingFang.ttc",
+                   "/System/Library/Fonts/Supplemental/Hiragino Sans GB.ttc",
+                   "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"],
+    "hangul":     ["/System/Library/Fonts/AppleSDGothicNeo.ttc",
+                   "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"],
+}
+# Broad last-resort cover for any non-Latin script.
+_BROAD_UNICODE_FONTS = ["/Library/Fonts/Arial Unicode.ttf",
+                        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"]
+
+# (lo, hi, script) Unicode blocks. Cyrillic/Greek/Latin are covered by Inter so
+# are intentionally absent (treated as "no special font needed").
+_SCRIPT_RANGES = [
+    (0x0590, 0x05FF, "hebrew"), (0x0600, 0x06FF, "arabic"), (0x0750, 0x077F, "arabic"),
+    (0x0900, 0x097F, "devanagari"), (0x0980, 0x09FF, "bengali"),
+    (0x0B80, 0x0BFF, "tamil"), (0x0C00, 0x0C7F, "telugu"), (0x0C80, 0x0CFF, "kannada"),
+    (0x0E00, 0x0E7F, "thai"),
+    (0x1100, 0x11FF, "hangul"), (0xAC00, 0xD7AF, "hangul"),
+    (0x3040, 0x30FF, "han"), (0x4E00, 0x9FFF, "han"), (0x3400, 0x4DBF, "han"),
+]
+
+
+def _detect_script(text: str) -> str | None:
+    """Dominant non-Latin script in `text`, or None (Latin/Cyrillic/empty)."""
+    for ch in text or "":
+        cp = ord(ch)
+        for lo, hi, name in _SCRIPT_RANGES:
+            if lo <= cp <= hi:
+                return name
+    return None
+
+
+def _truetype(path: str, size: int):
+    kwargs = {"layout_engine": ImageFont.Layout.RAQM} if _RAQM_OK else {}
+    return ImageFont.truetype(path, size, **kwargs)
+
+
+def _load_font(size: int, bold: bool = False, text: str = ""):
     """
-    Load Inter font (Outlier brand standard).
-    Bold for headlines, Regular for subheadlines.
-    Falls back to system fonts if Inter is unavailable.
+    Load a font that can render `text`. Inter (brand standard) for Latin/Cyrillic;
+    a script-specific font for non-Latin overlays (Hindi/Bengali/Thai/Arabic/CJK/
+    Hangul/…) so they don't render as "?". Bold→headlines, Regular→subheadlines
+    (non-Latin .ttc collections ignore weight — correct glyphs beat exact weight).
     """
+    script = _detect_script(text)
+    if script:
+        for path in _SCRIPT_FONTS.get(script, []) + _BROAD_UNICODE_FONTS:
+            try:
+                return _truetype(path, size)
+            except (IOError, OSError):
+                continue
+        # fall through to Inter/fallbacks (will likely show "?" but never crashes)
+
     inter_paths = (
         [
             "/System/Library/Fonts/Inter.ttf",
@@ -491,13 +572,12 @@ def _load_font(size: int, bold: bool = False):
             "/usr/share/fonts/truetype/inter/Inter-Regular.ttf",
         ]
     )
-    # Try Inter first
     for path in inter_paths:
         try:
-            return ImageFont.truetype(path, size)
+            return _truetype(path, size)
         except (IOError, OSError):
             continue
-    # Fallback chain (Avenir Next → Arial → Liberation)
+    # Fallback chain (Avenir Next → Arial → Liberation → DejaVu)
     fallback_candidates = (
         [
             "/System/Library/Fonts/Avenir Next.ttc",
@@ -513,7 +593,7 @@ def _load_font(size: int, bold: bool = False):
     )
     for path in fallback_candidates:
         try:
-            return ImageFont.truetype(path, size)
+            return _truetype(path, size)
         except (IOError, OSError):
             continue
     try:
@@ -815,11 +895,11 @@ def compose_ad(
     # Headline font: 72px starting, shrink to fit ≤2 lines in full canvas width.
     hl_size = int(size * 0.060)
     hl_min  = int(size * 0.045)
-    hl_font  = _load_font(hl_size, bold=True)
+    hl_font  = _load_font(hl_size, bold=True, text=headline)
     hl_lines = _wrap_text(headline, hl_font, max_text_w)
     while len(hl_lines) > 2 and hl_size > hl_min:
         hl_size -= int(size * 0.003)
-        hl_font  = _load_font(hl_size, bold=True)
+        hl_font  = _load_font(hl_size, bold=True, text=headline)
         hl_lines = _wrap_text(headline, hl_font, max_text_w)
 
     LINE_SPACING = 12
@@ -832,7 +912,7 @@ def compose_ad(
     available_height = hl_bottom - (photo_y + TOP_MARGIN_PX)
     while hl_height > available_height and hl_size > hl_min:
         hl_size -= int(size * 0.003)
-        hl_font  = _load_font(hl_size, bold=True)
+        hl_font  = _load_font(hl_size, bold=True, text=headline)
         hl_lines = _wrap_text(headline, hl_font, max_text_w)
         hl_height = hl_size * len(hl_lines) + LINE_SPACING * (len(hl_lines) - 1)
 
@@ -844,7 +924,7 @@ def compose_ad(
     )
 
     # Subheadline — full-width centered, anchored to bottom of photo area
-    sh_font  = _load_font(int(size * 0.044))
+    sh_font  = _load_font(int(size * 0.044), text=subheadline)
     sh_lines = _wrap_text(subheadline, sh_font, int(photo_w * 0.82))
     _draw_text_left(
         draw, sh_lines, sh_font,
