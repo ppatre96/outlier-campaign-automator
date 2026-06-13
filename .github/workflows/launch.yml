@@ -62,3 +62,13 @@ jobs:
             doppler secrets set LINKEDIN_REFRESH_TOKEN="$NEW_REFRESH" --silent
             echo "Persisted refreshed LINKEDIN_REFRESH_TOKEN to Doppler."
           fi
+          # Reddit ADS token refreshes-on-401 the same way — the pipeline writes
+          # new values to .env; persist each non-empty one. (The media token uses
+          # a browser-free password-grant mint, so there's nothing to persist.)
+          for KEY in REDDIT_ACCESS_TOKEN REDDIT_REFRESH_TOKEN; do
+            VAL=$(grep "^$KEY=" .env | cut -d= -f2- || true)
+            if [ -n "$VAL" ]; then
+              doppler secrets set "$KEY"="$VAL" --silent
+              echo "Persisted refreshed $KEY to Doppler."
+            fi
+          done

@@ -100,6 +100,164 @@ class TestRedditClientGating:
             assert "REDDIT_API_ENABLED" in str(exc)
 
 
+class TestRedditClientPhase2:
+    """Phase-2 programmatic create payloads (HTTP layer mocked). Mirrors the
+    live-validated contract: CONVERSIONS/PAUSED campaign, micros budget +
+    community/geo targeting on the ad group, and the post→ad image-ad sequence
+    with CTA-enum remapping."""
+
+    def _client(self, monkeypatch):
+        monkeypatch.setattr(config, "REDDIT_API_ENABLED", True)
+        c = RedditClient()
+        c._token = "tok"
+        c._account_id = "a2_test"
+        return c
+
+    def test_campaign_group_payload(self, monkeypatch):
+        c = self._client(monkeypatch)
+        captured = {}
+        def fake_api(method, path, payload=None):
+            captured.update(method=method, path=path, payload=payload)
+            return {"id": "111"}
+        monkeypatch.setattr(c, "_api", fake_api)
+        cid = c.create_campaign_group("My Campaign")
+        assert cid == "111"
+        assert captured["method"] == "POST" and captured["path"].endswith("/campaigns")
+        assert captured["payload"]["objective"] == "CONVERSIONS"
+        assert captured["payload"]["configured_status"] == "PAUSED"
+        assert captured["payload"]["funding_instrument_id"] == config.REDDIT_FUNDING_INSTRUMENT_ID
+
+    def test_ad_group_budget_and_targeting(self, monkeypatch):
+        c = self._client(monkeypatch)
+        captured = {}
+        monkeypatch.setattr(c, "_api", lambda m, p, payload=None: (captured.update(p=payload) or {"id": "222"}))
+        targeting = {"geo_locations": ["us", "CA"], "subreddits": ["programming"],
+                     "interests": ["software_v3"], "keywords": [], "pod": "coders"}
+        agid = c.create_campaign("AG", "111", targeting, daily_budget_cents=5000)
+        assert agid == "222"
+        pl = captured["p"]
+        assert pl["goal_value"] == 5000 * 10_000          # cents → micros
+        assert pl["goal_type"] == "DAILY_SPEND"
+        assert pl["configured_status"] == "PAUSED"
+        assert pl["bid_value"] == int(config.REDDIT_DEFAULT_BID_USD * 1_000_000)
+        assert pl["conversion_pixel_id"] == "a2_test"      # falls back to account id
+        assert pl["targeting"]["geolocations"] == ["US", "CA"]
+        assert pl["targeting"]["communities"] == ["programming"]
+        assert pl["targeting"]["excluded_communities"] == config.REDDIT_EXCLUDED_SUBREDDITS
+
+    def test_ad_group_default_budget_when_unset(self, monkeypatch):
+        c = self._client(monkeypatch)
+        captured = {}
+        monkeypatch.setattr(c, "_api", lambda m, p, payload=None: (captured.update(p=payload) or {"id": "x"}))
+        c.create_campaign("AG", "111", {"geo_locations": [], "subreddits": []})
+        assert captured["p"]["goal_value"] == config.REDDIT_DEFAULT_DAILY_USD * 1_000_000
+
+    def test_image_ad_post_then_ad_with_cta_remap(self, monkeypatch):
+        c = self._client(monkeypatch)
+        calls = []
+        def fake_api(method, path, payload=None):
+            calls.append((path, payload))
+            return {"id": "post_t3"} if path.endswith("/posts") else {"id": "ad_999"}
+        monkeypatch.setattr(c, "_api", fake_api)
+        res = c.create_image_ad(
+            campaign_id="222", image_id="https://i.redd.it/x.png",
+            headline="H", description="free-form body",
+            cta="Get Started",  # invalid Reddit CTA → remap to Sign Up
+            destination_url="https://outlier.ai/x", ad_name="My Ad",
+        )
+        assert res.status == "ok" and res.creative_id == "ad_999"
+        post_path, post_pl = calls[0]
+        ad_path, ad_pl = calls[1]
+        assert post_path.endswith("/posts") and post_pl["type"] == "IMAGE"
+        assert "body" not in post_pl                       # IMAGE posts carry no body
+        assert post_pl["content"][0]["call_to_action"] == "Sign Up"
+        assert ad_path.endswith("/ads")
+        assert ad_pl["post_id"] == "post_t3" and ad_pl["ad_group_id"] == "222"
+        assert ad_pl["configured_status"] == "PAUSED"
+
+    def test_image_ad_returns_error_result_on_api_failure(self, monkeypatch):
+        c = self._client(monkeypatch)
+        def boom(*a, **k): raise RuntimeError("400 bad")
+        monkeypatch.setattr(c, "_api", boom)
+        res = c.create_image_ad(campaign_id="222", image_id="u", headline="h", description="d")
+        assert res.status == "error" and "400 bad" in res.error_message
+
+    def test_api_refreshes_ads_token_on_401_and_retries(self, monkeypatch):
+        c = self._client(monkeypatch)
+        monkeypatch.setattr(config, "REDDIT_REFRESH_TOKEN", "rt")
+
+        class Resp:
+            def __init__(self, status):
+                self.status_code = status
+                self.ok = status < 400
+                self.text = '{"data":{"id":"ok"}}' if self.ok else "unauthorized"
+            def json(self): return {"data": {"id": "ok"}}
+
+        calls = {"n": 0}
+        class FakeSession:
+            headers = {}
+            def request(self, *a, **k):
+                calls["n"] += 1
+                return Resp(401) if calls["n"] == 1 else Resp(200)
+        c._session = FakeSession()
+        refreshed = {"n": 0}
+        monkeypatch.setattr("src.reddit_api.refresh_reddit_token",
+                            lambda which="ads": refreshed.update(n=refreshed["n"] + 1) or "newtok")
+        data = c._api("POST", "/x", {"a": 1})
+        assert data == {"id": "ok"}
+        assert calls["n"] == 2 and refreshed["n"] == 1   # retried once after refresh
+
+    def test_refresh_reddit_token_returns_new_access(self, monkeypatch):
+        import src.reddit_api as r
+        monkeypatch.setattr(config, "REDDIT_CLIENT_ID", "cid")
+        monkeypatch.setattr(config, "REDDIT_CLIENT_SECRET", "sec")
+        monkeypatch.setattr(config, "REDDIT_REFRESH_TOKEN", "rt")
+        monkeypatch.setattr(r, "_update_env_tokens", lambda *a: None)
+
+        class Resp:
+            ok = True
+            def json(self): return {"access_token": "fresh_access"}
+        monkeypatch.setattr(r.requests, "post", lambda *a, **k: Resp())
+        assert r.refresh_reddit_token("ads") == "fresh_access"
+
+    def test_mint_media_token_password_grant(self, monkeypatch):
+        import src.reddit_api as r
+        for k in ("REDDIT_MEDIA_CLIENT_ID", "REDDIT_MEDIA_CLIENT_SECRET",
+                  "REDDIT_MEDIA_USERNAME", "REDDIT_MEDIA_PASSWORD"):
+            monkeypatch.setattr(config, k, "x")
+        class Ok:
+            ok = True; status_code = 200; text = "{}"
+            def json(self): return {"access_token": "media_tok"}
+        monkeypatch.setattr(r.requests, "post", lambda *a, **k: Ok())
+        assert r.mint_reddit_media_token() == "media_tok"
+
+    def test_mint_media_token_raises_on_oauth_error_body(self, monkeypatch):
+        import src.reddit_api as r
+        for k in ("REDDIT_MEDIA_CLIENT_ID", "REDDIT_MEDIA_CLIENT_SECRET",
+                  "REDDIT_MEDIA_USERNAME", "REDDIT_MEDIA_PASSWORD"):
+            monkeypatch.setattr(config, k, "x")
+        class Err:  # Reddit returns 200 with an error body for wrong app type
+            ok = True; status_code = 200
+            text = '{"error":"unauthorized_client"}'
+            def json(self): return {"error": "unauthorized_client"}
+        monkeypatch.setattr(r.requests, "post", lambda *a, **k: Err())
+        try:
+            r.mint_reddit_media_token()
+            assert False, "expected RuntimeError"
+        except RuntimeError as e:
+            assert "password grant failed" in str(e)
+
+    def test_get_media_token_caches_and_force_remints(self, monkeypatch):
+        c = self._client(monkeypatch)
+        n = {"mints": 0}
+        monkeypatch.setattr("src.reddit_api.mint_reddit_media_token",
+                            lambda: (n.update(mints=n["mints"] + 1), f"tok{n['mints']}")[1])
+        t1 = c._get_media_token()              # mints
+        t2 = c._get_media_token()              # cached
+        t3 = c._get_media_token(force=True)    # re-mints
+        assert t1 == t2 == "tok1" and t3 == "tok2" and n["mints"] == 2
+
+
 class TestRedditPodConversion:
     def test_unknown_pod_falls_back_to_all(self, monkeypatch):
         monkeypatch.setattr(
