@@ -4222,7 +4222,8 @@ def _process_extra_platform_arm(
     """
     from src.ad_platform import CreateAdResult
     from src.campaign_registry import log_campaign as _reg_log
-    from src.copy_adapter import adapt_copy_for_platform
+    from src.copy_adapter import adapt_copy_for_platform, localize_variant
+    from src.locales import resolve_copy_locale
     from src import launch_verify
 
     out: dict = {
@@ -4307,6 +4308,25 @@ def _process_extra_platform_arm(
                     "failed (%s) — falling back to LinkedIn-adapted variant",
                     platform, _exc,
                 )
+
+        # ── Localize the variant for non-LinkedIn channels + locale-defined
+        # cohorts (2026-06-17). Translates headline/subheadline (→ the image
+        # overlay) + body fields into the cohort's language, keeping $/USD/
+        # numerals + "Outlier" in English. No-op for English cohorts or when
+        # LOCALIZE_PLATFORM_COPY is off. Done BEFORE PNG composition so the
+        # overlay renders in-language (image_adapter passes text= so the
+        # script-aware font + RAQM shaping engage — no tofu). LinkedIn is
+        # excluded by design; this arm only runs meta/google/google_search/reddit.
+        copy_locale_e = resolve_copy_locale(cohort_e, getattr(cohort_e, "_icp", None))
+        if config.LOCALIZE_PLATFORM_COPY and copy_locale_e and variant_e:
+            variant_e = localize_variant(variant_e, copy_locale_e)
+            if isinstance(variants_e, list) and angle_idx_e < len(variants_e):
+                variants_e[angle_idx_e] = variant_e
+            log.info(
+                "_process_extra_platform_arm[%s]: localized variant → %s for cohort=%s geo=%s angle=%s",
+                platform, copy_locale_e.display_language,
+                getattr(cohort_e, "name", "")[:40], cluster_suffix, angle_label_e,
+            )
 
         # 2026-05-20: Meta arm regenerates a fresh 4:5 (1080×1350) photo
         # instead of reusing the LinkedIn 1:1 composite. Per Meta Help Center
@@ -4431,7 +4451,7 @@ def _process_extra_platform_arm(
                 )
         drive_urls_by_spec[spec_key] = drive_url_e
 
-        platform_copy_e = adapt_copy_for_platform(variant_e, platform, icp=getattr(cohort_e, "_icp", None)) if variant_e else {}
+        platform_copy_e = adapt_copy_for_platform(variant_e, platform, icp=getattr(cohort_e, "_icp", None), locale=copy_locale_e) if variant_e else {}
         # Reddit: the manual-upload manifest needs the targeting + conversion an
         # operator would otherwise have to reconstruct — per-pod subreddits +
         # interests/keywords (from the resolver), the intended worker_skill_grant
@@ -4860,7 +4880,7 @@ def _process_extra_platform_arm(
             variant     = variants[angle_idx] if angle_idx < len(variants) else {}
             row_id = f"{by_cohort_key}_{angle_label}"
 
-            platform_copy = adapt_copy_for_platform(variant, platform, icp=getattr(cohort, "_icp", None)) if variant else {}
+            platform_copy = adapt_copy_for_platform(variant, platform, icp=getattr(cohort, "_icp", None), locale=resolve_copy_locale(cohort, getattr(cohort, "_icp", None))) if variant else {}
 
             # Drive URL was uploaded in Phase 1; reuse the cached URL to avoid
             # a duplicate Drive write (idempotent at the filename level — the

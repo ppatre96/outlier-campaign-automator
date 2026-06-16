@@ -637,6 +637,12 @@ You produce TWO TEXT SETS:
 - **ad_description**: MAX 100 characters. Optional (empty string allowed). Recommended for stronger conversion.
 - **cta_button**: ALWAYS "APPLY".
 
+### NEWCOMER CONTEXT — the reader may have never heard of Outlier
+The overlay headline can be short and punchy, but the AD COPY (intro_text + ad_description) must give a first-time reader enough to act on:
+- **intro_text** frames what Outlier is and how payment works: a platform where domain experts earn payment doing flexible, remote AI training tasks, paid hourly in USD.
+- **ad_description** names the CONCRETE task tied to this audience's expertise (e.g. "review AI-generated ECG readings for accuracy"), never a vague "help improve AI".
+A bare line like "Hindi experts paid in USD" is a FAILURE — it tells a newcomer nothing about what they'd actually do. Specificity beats hype.
+
 ### PHOTO SUBJECT
 - **photo_subject**: Use the brief's `photo_direction` directly OR refine it. Format: "[gender] [ethnicity] [specific profession], [specific activity off-screen]". NEVER an activity that puts the subject staring at a laptop/phone/tablet screen — Vision QC rejects rendered text in photos. Use paper notes, printouts, notebooks, closed laptop, etc.
 

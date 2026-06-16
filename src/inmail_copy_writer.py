@@ -368,8 +368,12 @@ CRITICAL WRITING RULES (based on 12-month performance data — these directly af
    BAD:  "Top Medical Experts Wanted" or "Push the Limits of AI (Earn $50/hr)"
    Rate must appear with $ sign in the main clause — never in parentheses.
 
-5. SPECIFICITY: Name a concrete task the reader will actually do.
-   GOOD: "evaluating AI-generated ECG interpretations for accuracy"
+5. SPECIFICITY + NEWCOMER CONTEXT: Assume the reader has never heard of Outlier.
+   Name a concrete task the reader will actually do, and make clear it's flexible,
+   remote, AI training work paid hourly in USD — without opening on the company
+   intro (rule 1). The reader should finish the body knowing WHAT they'd do, that
+   it's remote and flexible, and that it pays hourly in USD.
+   GOOD: "evaluating AI-generated ECG interpretations for accuracy, remotely, paid hourly in USD"
    BAD:  "helping improve AI models" (too vague to motivate action)
 
 6. NO em dashes (—). Use a period or comma instead.

@@ -504,6 +504,20 @@ META_LAL_BUDGET_SPLIT_PCT    = int(os.getenv("META_LAL_BUDGET_SPLIT_PCT", "70"))
 # to fall back to beam discovery for every cohort.
 GENERALIST_LOCALE_TARGETING  = os.getenv("GENERALIST_LOCALE_TARGETING", "true").lower() in ("1", "true", "yes")
 
+# ── Copy localization (2026-06-17) ─────────────────────────────────────────────
+# Write ad copy in the target locale's language for locale-defined cohorts
+# (generalist_locale facet / ICP language_pref / known LOCALES tag). Scoped to
+# the NON-LinkedIn channels (Meta, Google, Google Search, Reddit) — the per-
+# channel variant + image overlay + platform text fields are translated, while
+# "$"/USD/numerals and the brand name "Outlier" stay in English. Experimental:
+# set False to ship English copy everywhere (rollback) while we A/B native-lang.
+LOCALIZE_PLATFORM_COPY       = os.getenv("LOCALIZE_PLATFORM_COPY", "true").lower() in ("1", "true", "yes")
+# LinkedIn (static + InMail) stays English per the 2026-06-17 product decision
+# (LinkedIn audiences operate in English). This gates the legacy LinkedIn
+# native-language injection in src/figma_creative.py — OFF by default, kept for
+# reversibility. Was implicitly ON for generalist_locale cohorts before today.
+LOCALIZE_LINKEDIN_COPY       = os.getenv("LOCALIZE_LINKEDIN_COPY", "false").lower() in ("1", "true", "yes")
+
 # Cold start (no contributor frame — brand-new / ultra-niche ramps). When True
 # (default), `_resolve_cold_start_cohort` derives 1..N targeted cohorts from the
 # job description (skills + titles + fields + degrees + lookalike exclusions per
