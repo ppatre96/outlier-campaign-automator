@@ -220,42 +220,46 @@ class TestRedditClientPhase2:
         monkeypatch.setattr(r.requests, "post", lambda *a, **k: Resp())
         assert r.refresh_reddit_token("ads") == "fresh_access"
 
-    def test_mint_media_token_password_grant(self, monkeypatch):
-        import src.reddit_api as r
-        for k in ("REDDIT_MEDIA_CLIENT_ID", "REDDIT_MEDIA_CLIENT_SECRET",
-                  "REDDIT_MEDIA_USERNAME", "REDDIT_MEDIA_PASSWORD"):
-            monkeypatch.setattr(config, k, "x")
-        class Ok:
-            ok = True; status_code = 200; text = "{}"
-            def json(self): return {"access_token": "media_tok"}
-        monkeypatch.setattr(r.requests, "post", lambda *a, **k: Ok())
-        assert r.mint_reddit_media_token() == "media_tok"
+    def test_upload_image_uploads_to_gcs_and_signs(self, monkeypatch, tmp_path):
+        c = self._client(monkeypatch)
+        monkeypatch.setattr(config, "GCS_CREATIVE_BUCKET", "outlier-reddit-creatives")
+        monkeypatch.setattr("src.image_adapter.assert_min_dimensions", lambda *a, **k: None)
+        img = tmp_path / "A.png"; img.write_bytes(b"\x89PNG")
+        captured = {}
 
-    def test_mint_media_token_raises_on_oauth_error_body(self, monkeypatch):
-        import src.reddit_api as r
-        for k in ("REDDIT_MEDIA_CLIENT_ID", "REDDIT_MEDIA_CLIENT_SECRET",
-                  "REDDIT_MEDIA_USERNAME", "REDDIT_MEDIA_PASSWORD"):
-            monkeypatch.setattr(config, k, "x")
-        class Err:  # Reddit returns 200 with an error body for wrong app type
-            ok = True; status_code = 200
-            text = '{"error":"unauthorized_client"}'
-            def json(self): return {"error": "unauthorized_client"}
-        monkeypatch.setattr(r.requests, "post", lambda *a, **k: Err())
+        class FakeBlob:
+            def __init__(self, name): self.name = name
+            def upload_from_filename(self, path, content_type=None):
+                captured.update(path=path, content_type=content_type)
+            def generate_signed_url(self, version=None, expiration=None, method=None):
+                captured.update(version=version, method=method)
+                return f"https://storage.googleapis.com/{self.name}?X-Goog-Signature=abc"
+        class FakeBucket:
+            def blob(self, name): captured["blob"] = name; return FakeBlob(name)
+        class FakeClient:
+            def bucket(self, b): captured["bucket"] = b; return FakeBucket()
+        monkeypatch.setattr("google.cloud.storage.Client", lambda **k: FakeClient())
+        monkeypatch.setattr(
+            "google.oauth2.service_account.Credentials.from_service_account_file",
+            staticmethod(lambda *a, **k: object()),
+        )
+        out = c.upload_image(str(img))
+        assert out.startswith("https://storage.googleapis.com/") and "X-Goog-Signature" in out
+        assert captured["bucket"] == "outlier-reddit-creatives"
+        assert captured["blob"].startswith("reddit-creatives/") and captured["blob"].endswith("-A.png")
+        assert captured["content_type"] == "image/png"
+        assert captured["version"] == "v4" and captured["method"] == "GET"
+
+    def test_upload_image_raises_when_bucket_unset(self, monkeypatch, tmp_path):
+        c = self._client(monkeypatch)
+        monkeypatch.setattr(config, "GCS_CREATIVE_BUCKET", "")
+        monkeypatch.setattr("src.image_adapter.assert_min_dimensions", lambda *a, **k: None)
+        img = tmp_path / "A.png"; img.write_bytes(b"\x89PNG")
         try:
-            r.mint_reddit_media_token()
+            c.upload_image(str(img))
             assert False, "expected RuntimeError"
         except RuntimeError as e:
-            assert "password grant failed" in str(e)
-
-    def test_get_media_token_caches_and_force_remints(self, monkeypatch):
-        c = self._client(monkeypatch)
-        n = {"mints": 0}
-        monkeypatch.setattr("src.reddit_api.mint_reddit_media_token",
-                            lambda: (n.update(mints=n["mints"] + 1), f"tok{n['mints']}")[1])
-        t1 = c._get_media_token()              # mints
-        t2 = c._get_media_token()              # cached
-        t3 = c._get_media_token(force=True)    # re-mints
-        assert t1 == t2 == "tok1" and t3 == "tok2" and n["mints"] == 2
+            assert "GCS_CREATIVE_BUCKET not set" in str(e)
 
 
 class TestRedditPodConversion:
