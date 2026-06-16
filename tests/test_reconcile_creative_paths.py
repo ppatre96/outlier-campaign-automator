@@ -216,6 +216,43 @@ def test_already_populated_rows_left_alone(monkeypatch, fake_drive):
     assert not saved, "no patch happened, _save must not be called"
 
 
+def test_legacy_positional_idempotent_no_url_duplication(monkeypatch, fake_drive):
+    """REGRESSION: legacy_positional mode must NOT reassign URLs that are
+    already in the registry. Running twice with the same Drive + partially-
+    populated registry must not produce duplicate URL ↔ row mappings."""
+    fake_drive["folders"]["ROOT/GMR-TEST/linkedin"] = [
+        {"id": "fld_a", "name": "STG-a__anglo", "mimeType": "application/vnd.google-apps.folder"},
+        {"id": "fld_b", "name": "STG-b__anglo", "mimeType": "application/vnd.google-apps.folder"},
+    ]
+    fake_drive["folders"]["fld_a"] = [{
+        "id": "pA", "name": "A.png", "mimeType": "image/png",
+        "webViewLink": "https://drive.example/pA", "createdTime": "2026-05-14T10:00:00Z",
+    }]
+    fake_drive["folders"]["fld_b"] = [{
+        "id": "pB", "name": "A.png", "mimeType": "image/png",
+        "webViewLink": "https://drive.example/pB", "createdTime": "2026-05-14T10:01:00Z",
+    }]
+    # Pass 1: 2 empty rows + 2 PNGs. Pass 2 same Drive state, but row 1
+    # already has /pA assigned (simulating partial pre-run state).
+    records = [
+        _row(angle="A", created_at="2026-05-14 09:50 UTC",
+             creative_image_path="https://drive.example/pA"),
+        _row(angle="A", created_at="2026-05-14 09:51 UTC"),
+    ]
+    monkeypatch.setattr(reg, "_load", lambda: records)
+    monkeypatch.setattr(reg, "_save", lambda rs: None)
+
+    stats = reg.reconcile_creative_paths(
+        "GMR-TEST", "linkedin", legacy_positional=True,
+    )
+    # /pA is already in the registry — must NOT be reassigned. /pB is free.
+    assert records[0]["creative_image_path"] == "https://drive.example/pA"
+    assert records[1]["creative_image_path"] == "https://drive.example/pB"
+    # All URLs are unique across rows.
+    urls = [r["creative_image_path"] for r in records]
+    assert len(set(urls)) == len(urls), f"duplicate URL assignment: {urls}"
+
+
 def test_idempotent_second_pass(monkeypatch, fake_drive):
     """Running reconcile twice on the same state patches nothing new on pass 2."""
     fake_drive["folders"]["ROOT/GMR-TEST/linkedin"] = [
