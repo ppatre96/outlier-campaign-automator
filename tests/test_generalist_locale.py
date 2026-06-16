@@ -66,8 +66,11 @@ def test_targeting_json_is_geo_only_for_generalist():
 
 # ── Reference data ───────────────────────────────────────────────────────────
 
-def test_all_thirteen_locales_have_meta_and_google_ids():
-    assert len(LOCALES) == 13
+def test_all_locales_have_meta_and_google_ids():
+    # The locale set grows as i18n ramps are added (13 → 17 and counting), so we
+    # don't pin an exact count — the invariant is that EVERY registered locale
+    # carries the per-channel ids + keywords the resolvers need.
+    assert len(LOCALES) >= 13
     for code, lt in LOCALES.items():
         assert lt.meta_locale_id is not None, code
         assert lt.google_language_const is not None, code
