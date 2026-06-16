@@ -179,6 +179,9 @@ def test_gate_on_awaiting_approval_skips(monkeypatch):
 def test_gate_on_approved_claims_launches_completes(monkeypatch):
     import config
     monkeypatch.setattr(config, "UI_GATE_ENABLED", True)
+    # Auto-launch is opt-in (per-channel launch model, feature #3): approved
+    # ramps only claim+launch from the poller when AUTO_LAUNCH_APPROVED is set.
+    monkeypatch.setattr(config, "AUTO_LAUNCH_APPROVED", True)
     import main
     launch_result = {
         "ok": True,
@@ -225,6 +228,7 @@ def test_gate_on_approved_claims_launches_completes(monkeypatch):
 def test_gate_on_lost_claim_skips(monkeypatch):
     import config
     monkeypatch.setattr(config, "UI_GATE_ENABLED", True)
+    monkeypatch.setattr(config, "AUTO_LAUNCH_APPROVED", True)  # exercise the claim path
     import main
     fake_launch = MagicMock()
     monkeypatch.setattr(main, "_launch_ramp", fake_launch)
@@ -243,3 +247,34 @@ def test_gate_on_lost_claim_skips(monkeypatch):
     assert out["ok"] is True
     assert out["status"] == "claim_lost"
     fake_launch.assert_not_called()
+
+
+# ── Gate ON + approved + auto-launch OFF (default) → await manual launch ──────
+
+def test_gate_on_approved_without_autolaunch_awaits_manual(monkeypatch):
+    """Per-channel launch model (feature #3, the production default): an approved
+    ramp is NOT auto-launched by the poller — approval is the gate only, and the
+    ramp awaits an explicit per-channel launch from the console. The poller must
+    neither claim nor launch."""
+    import config
+    monkeypatch.setattr(config, "UI_GATE_ENABLED", True)
+    monkeypatch.setattr(config, "AUTO_LAUNCH_APPROVED", False)
+    import main
+    fake_launch = MagicMock()
+    monkeypatch.setattr(main, "_launch_ramp", fake_launch)
+
+    from src.ui_decisions import Decision
+    approved = Decision(ramp_id="GMR-MANUAL", status="approved",
+                        channels=["linkedin"], budgets={"linkedin": 5000})
+    from src import ui_decisions
+    monkeypatch.setattr(ui_decisions, "get_decision", MagicMock(return_value=approved))
+    claim = MagicMock()
+    monkeypatch.setattr(ui_decisions, "claim_ramp", claim)
+
+    from scripts.smart_ramp_poller import run_ramp_pipeline
+    out = run_ramp_pipeline(_fake_record("GMR-MANUAL"), dry_run=False, version=1)
+
+    assert out["ok"] is True
+    assert out["status"] == "awaiting_manual_launch"
+    fake_launch.assert_not_called()
+    claim.assert_not_called()

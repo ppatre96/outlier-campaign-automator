@@ -324,6 +324,42 @@ REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET", "")
 REDDIT_ACCESS_TOKEN  = os.getenv("REDDIT_ACCESS_TOKEN", "")
 REDDIT_REFRESH_TOKEN = os.getenv("REDDIT_REFRESH_TOKEN", "")
 REDDIT_AD_ACCOUNT_ID = os.getenv("REDDIT_AD_ACCOUNT_ID", "")  # "t2_<id>" / a2_ ad account
+# Reddit's Ads API has NO media-upload endpoint — an ad post ingests a public
+# media_url — and the allow-listed *ads* OAuth app above can't upload media (the
+# ads token 403s on oauth.reddit.com; minting a submit-scoped token via the
+# browser `authorization_code` flow is edge-blocked by Reddit from CI/server
+# environments — verified 2026-06-13). So creative bytes go through a SEPARATE
+# Reddit **"script" app** authenticated by `grant_type=password` (browser-free,
+# the one grant type Reddit doesn't block here). upload_image mints a short-lived
+# token on demand and uploads to oauth.reddit.com/api/media/asset.json → i.redd.it.
+# Use a DEDICATED reddit account with NO 2FA (password grant can't do 2FA). The
+# script app's developer account must equal REDDIT_MEDIA_USERNAME.
+REDDIT_MEDIA_CLIENT_ID     = os.getenv("REDDIT_MEDIA_CLIENT_ID", "")
+REDDIT_MEDIA_CLIENT_SECRET = os.getenv("REDDIT_MEDIA_CLIENT_SECRET", "")
+REDDIT_MEDIA_USERNAME      = os.getenv("REDDIT_MEDIA_USERNAME", "")
+REDDIT_MEDIA_PASSWORD      = os.getenv("REDDIT_MEDIA_PASSWORD", "")
+# Phase-2 programmatic-create constants (verified live against the v3 API
+# 2026-06-13). The funding instrument + business profile are account-level
+# constants on the Outlier AI ad account — overridable via env if they rotate.
+#   funding_instrument 749567 = "Self-Serve" (the one all live campaigns use)
+#   profile t2_scmybr6z       = "OutlierAI_Official" (posts are authored here)
+REDDIT_FUNDING_INSTRUMENT_ID = os.getenv("REDDIT_FUNDING_INSTRUMENT_ID", "749567")
+REDDIT_PROFILE_ID            = os.getenv("REDDIT_PROFILE_ID", "t2_scmybr6z")
+# Ad-group conversion optimization goal (CONVERSIONS objective). SIGN_UP mirrors
+# the live "Languages" campaigns; the per-pod worker_skill_grant events feed the
+# pixel for attribution but the ad group optimizes toward this event type.
+REDDIT_OPTIMIZATION_GOAL     = os.getenv("REDDIT_OPTIMIZATION_GOAL", "SIGN_UP")
+# Max CPC bid (USD). Reddit requires a bid_value on CPC ad groups even under the
+# MAXIMIZE_VOLUME autobid strategy (it acts as a ceiling). Entities ship PAUSED,
+# so the reviewer tunes this before un-pausing. $1.00 default.
+REDDIT_DEFAULT_BID_USD       = float(os.getenv("REDDIT_DEFAULT_BID_USD", "1.0"))
+# Always-excluded communities (our own subreddits) so ads don't serve to people
+# already in the Outlier orbit. Matches the exclusions on the live ad groups.
+REDDIT_EXCLUDED_SUBREDDITS   = [
+    s.strip() for s in os.getenv(
+        "REDDIT_EXCLUDED_SUBREDDITS", "outlier_ai,outlier,outliermarket"
+    ).split(",") if s.strip()
+]
 
 # Reddit conversion tracking (worker_skill_grant via Segment — Tuan 2026-06-11).
 # The Segment destination is enabled with per-pod mappings ready to toggle on,
