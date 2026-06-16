@@ -207,6 +207,24 @@ class TestRedditClientPhase2:
         assert data == {"id": "ok"}
         assert calls["n"] == 2 and refreshed["n"] == 1   # retried once after refresh
 
+    def test_update_campaign_budget_patches_ad_group_goal_value(self, monkeypatch):
+        c = self._client(monkeypatch)
+        captured = {}
+        monkeypatch.setattr(c, "_api",
+                            lambda m, p, payload=None: (captured.update(method=m, path=p, payload=payload) or {}))
+        c.update_campaign_budget("999", 5000)  # $50/day
+        assert captured["method"] == "PATCH" and captured["path"] == "/ad_groups/999"
+        assert captured["payload"]["goal_type"] == "DAILY_SPEND"
+        assert captured["payload"]["goal_value"] == 5000 * 10_000  # cents → micros
+
+    def test_update_campaign_budget_rejects_nonpositive(self, monkeypatch):
+        c = self._client(monkeypatch)
+        try:
+            c.update_campaign_budget("999", 0)
+            assert False, "expected ValueError"
+        except ValueError:
+            pass
+
     def test_refresh_reddit_token_returns_new_access(self, monkeypatch):
         import src.reddit_api as r
         monkeypatch.setattr(config, "REDDIT_CLIENT_ID", "cid")

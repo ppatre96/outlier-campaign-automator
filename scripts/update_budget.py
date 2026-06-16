@@ -32,7 +32,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 log = logging.getLogger("update_budget")
 
 
-PLATFORM_CHOICES = ("linkedin", "meta", "google")
+PLATFORM_CHOICES = ("linkedin", "meta", "google", "reddit")
 
 
 def main() -> int:
@@ -71,6 +71,11 @@ def main() -> int:
     elif args.platform == "google":
         from src.google_ads_api import GoogleAdsClient
         client = GoogleAdsClient()
+        client.update_campaign_budget(args.campaign_id, args.budget_cents)
+
+    elif args.platform == "reddit":
+        from src.reddit_api import RedditClient
+        client = RedditClient()
         client.update_campaign_budget(args.campaign_id, args.budget_cents)
 
     else:                                                      # pragma: no cover

@@ -295,6 +295,20 @@ class RedditClient(AdPlatformClient):
         )
         return ad_group_id
 
+    def update_campaign_budget(self, campaign_id: str, daily_budget_cents: int) -> None:
+        """Update an ad group's daily-spend budget (console budget-cell → Phase 7).
+        Reddit's budget lives on the AD GROUP (goal_value, microcurrency), not the
+        parent campaign — so `campaign_id` here is an ad-group id (matches the
+        cross-platform ABC convention, same as Meta's ad-set). cents → micros ×10_000."""
+        if daily_budget_cents <= 0:
+            raise ValueError("Reddit daily budget must be > 0 cents.")
+        self._ensure_init()
+        self._api("PATCH", f"/ad_groups/{campaign_id}", {
+            "goal_type":  "DAILY_SPEND",
+            "goal_value": daily_budget_cents * 10_000,
+        })
+        log.info("Reddit ad group %s goal_value → $%d/day", campaign_id, daily_budget_cents // 100)
+
     def upload_image(self, image_path: str | Path) -> str:
         """Host the PNG at a URL Reddit can ingest as a post's media_url.
 
