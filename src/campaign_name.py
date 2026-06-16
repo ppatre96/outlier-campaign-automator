@@ -52,6 +52,7 @@ _POD_FROM_TG = {
     "ML_ENGINEER":       "specialist",
     "MATH":              "specialist",
     "MEDICAL":           "specialist",
+    "ACCESSIBILITY":     "specialist",
 }
 
 # Channel display names per spec.
