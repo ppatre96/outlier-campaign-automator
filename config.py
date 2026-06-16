@@ -325,19 +325,20 @@ REDDIT_ACCESS_TOKEN  = os.getenv("REDDIT_ACCESS_TOKEN", "")
 REDDIT_REFRESH_TOKEN = os.getenv("REDDIT_REFRESH_TOKEN", "")
 REDDIT_AD_ACCOUNT_ID = os.getenv("REDDIT_AD_ACCOUNT_ID", "")  # "t2_<id>" / a2_ ad account
 # Reddit's Ads API has NO media-upload endpoint — an ad post ingests a public
-# media_url — and the allow-listed *ads* OAuth app above can't upload media (the
-# ads token 403s on oauth.reddit.com; minting a submit-scoped token via the
-# browser `authorization_code` flow is edge-blocked by Reddit from CI/server
-# environments — verified 2026-06-13). So creative bytes go through a SEPARATE
-# Reddit **"script" app** authenticated by `grant_type=password` (browser-free,
-# the one grant type Reddit doesn't block here). upload_image mints a short-lived
-# token on demand and uploads to oauth.reddit.com/api/media/asset.json → i.redd.it.
-# Use a DEDICATED reddit account with NO 2FA (password grant can't do 2FA). The
-# script app's developer account must equal REDDIT_MEDIA_USERNAME.
-REDDIT_MEDIA_CLIENT_ID     = os.getenv("REDDIT_MEDIA_CLIENT_ID", "")
-REDDIT_MEDIA_CLIENT_SECRET = os.getenv("REDDIT_MEDIA_CLIENT_SECRET", "")
-REDDIT_MEDIA_USERNAME      = os.getenv("REDDIT_MEDIA_USERNAME", "")
-REDDIT_MEDIA_PASSWORD      = os.getenv("REDDIT_MEDIA_PASSWORD", "")
+# `media_url`. Every simpler route is blocked: anonymous hosts (catbox/0x0) ban
+# datacenter/CI IPs; the org Drive can't be shared publicly (Workspace
+# `publishOutNotPermitted`); Reddit's own media upload needs a post-capable token
+# we can't obtain (ads-scoped app, edge-blocked auth-code, Nov-2025 app-approval
+# gate). So `upload_image` uploads the PNG to a PRIVATE GCS bucket and hands
+# Reddit a short-lived V4 **signed URL** — which works even with the org's
+# `publicAccessPrevention` ON (the object stays private; the signature in the URL
+# authorizes the one anonymous fetch). Reddit re-hosts to i.redd.it within
+# seconds, after which the signed URL expires. The pipeline's existing
+# GOOGLE_CREDENTIALS service account signs the URL locally and needs
+# `storage.objectAdmin` on the bucket; set a lifecycle rule to delete objects
+# after ~1 day (they're transient). upload_image is the only call site.
+GCS_CREATIVE_BUCKET    = os.getenv("GCS_CREATIVE_BUCKET", "")
+GCS_SIGNED_URL_TTL_MIN = int(os.getenv("GCS_SIGNED_URL_TTL_MIN", "15"))
 # Phase-2 programmatic-create constants (verified live against the v3 API
 # 2026-06-13). The funding instrument + business profile are account-level
 # constants on the Outlier AI ad account — overridable via env if they rotate.

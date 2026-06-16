@@ -22,15 +22,15 @@ TWO-PHASE rollout (see the plan + config.REDDIT_API_ENABLED):
     against the v3 API 2026-06-13. Hierarchy maps to:
       create_campaign_group → POST /ad_accounts/{acct}/campaigns   (CONVERSIONS)
       create_campaign       → POST /ad_accounts/{acct}/ad_groups   (targeting+budget)
-      upload_image          → oauth.reddit.com/api/media/asset.json → i.redd.it URL
+      upload_image          → host PNG publicly (catbox) → return URL
       create_image_ad       → POST /profiles/{profile}/posts  +  POST .../ads
     All bodies use a {"data": {...}} envelope; budgets/bids are microcurrency
     ($1 = 1_000_000). The Ads API has NO media endpoint — a post ingests a public
-    media_url, so the PNG is uploaded to Reddit's own media (asset.json), which
-    requires the OAuth token to carry the `submit` scope (the ads-only scopes are
-    not enough). conversion_pixel_id defaults to the account-level pixel; per-pod
-    REDDIT_POD_CONVERSION_EVENTS feed attribution but the ad group optimizes for
-    REDDIT_OPTIMIZATION_GOAL (SIGN_UP).
+    media_url, so upload_image uploads the PNG to a private GCS bucket (config.
+    GCS_CREATIVE_BUCKET) and returns a V4 signed URL; Reddit re-hosts it to
+    i.redd.it. conversion_pixel_id defaults to the account-level pixel; per-pod
+    REDDIT_POD_CONVERSION_EVENTS feed
+    attribution but the ad group optimizes for REDDIT_OPTIMIZATION_GOAL (SIGN_UP).
 
 Everything will be created PAUSED (mirrors the LinkedIn DRAFT / Meta PAUSED
 default). Names are auto-prefixed with `config.AGENT_NAME_PREFIX` (empty by
@@ -54,12 +54,10 @@ from src.ad_platform import (
 
 log = logging.getLogger(__name__)
 
-# Reddit Ads API v3 base + the OAuth host used only for media upload
-# (asset.json — the Ads API has no media-upload endpoint; an ad post ingests a
-# public media_url, so we upload the PNG to Reddit's own media to get an
-# i.redd.it URL). Verified live 2026-06-13.
+# Reddit Ads API v3 base. (The Ads API has no media-upload endpoint; an ad post
+# ingests a public media_url, which upload_image provides via a GCS signed URL
+# (config.GCS_CREATIVE_BUCKET) — Reddit then re-hosts to i.redd.it.)
 REDDIT_ADS_API_BASE = "https://ads-api.reddit.com/api/v3"
-REDDIT_OAUTH_BASE   = "https://oauth.reddit.com"
 
 _USER_AGENT = "outlier-campaign-agent/1.0 (by OutlierAI)"
 
@@ -84,8 +82,8 @@ _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 def refresh_reddit_token(which: str = "ads") -> str:
     """Exchange the ADS refresh token for a fresh ads access token. Writes the
     new ACCESS/REFRESH back to .env so the CI post-step persists them to Doppler
-    (mirrors the LinkedIn flow). Returns the new access token. (Media uses a
-    password-grant mint instead — see RedditClient._get_media_token.)"""
+    (mirrors the LinkedIn flow). Returns the new access token. (Media upload
+    needs no token — see RedditClient.upload_image.)"""
     assert which == "ads", "only the ads token uses refresh_token grant"
     cid     = config.REDDIT_CLIENT_ID
     secret  = config.REDDIT_CLIENT_SECRET
@@ -111,40 +109,6 @@ def refresh_reddit_token(which: str = "ads") -> str:
     _update_env_tokens("REDDIT_ACCESS_TOKEN", new_access, "REDDIT_REFRESH_TOKEN", new_refresh)
     log.info("Reddit ads access token refreshed")
     return new_access
-
-
-def mint_reddit_media_token() -> str:
-    """Mint a short-lived media token via Reddit's password grant (script app).
-    The browser authorization_code flow is edge-blocked from CI/server contexts,
-    but password grant is not. Returns the access token (~1h, no refresh — re-mint
-    on demand). Requires a Reddit "script" app + a dedicated no-2FA account whose
-    username == REDDIT_MEDIA_USERNAME and who is a developer of the app."""
-    cid    = config.REDDIT_MEDIA_CLIENT_ID
-    secret = config.REDDIT_MEDIA_CLIENT_SECRET
-    user   = config.REDDIT_MEDIA_USERNAME
-    pw     = config.REDDIT_MEDIA_PASSWORD
-    if not all([cid, secret, user, pw]):
-        raise RuntimeError(
-            "Cannot mint Reddit media token — REDDIT_MEDIA_CLIENT_ID, "
-            "REDDIT_MEDIA_CLIENT_SECRET, REDDIT_MEDIA_USERNAME, and "
-            "REDDIT_MEDIA_PASSWORD must all be set (script app + dedicated account)."
-        )
-    resp = requests.post(
-        _REDDIT_TOKEN_URL,
-        auth=(cid, secret),
-        data={"grant_type": "password", "username": user, "password": pw},
-        headers={"User-Agent": _USER_AGENT},
-        timeout=30,
-    )
-    # Reddit returns 200 with an {"error": ...} body for bad creds / wrong app type.
-    data = resp.json() if resp.ok else {}
-    if not resp.ok or "access_token" not in data:
-        raise RuntimeError(
-            f"Reddit media password grant failed → {resp.status_code}: {resp.text[:300]} "
-            "(is it a `script` app, with REDDIT_MEDIA_USERNAME a developer of it + no 2FA?)"
-        )
-    log.info("Reddit media token minted via password grant")
-    return data["access_token"]
 
 
 def _update_env_tokens(access_k: str, access_v: str, refresh_k: str, refresh_v: str) -> None:
@@ -191,7 +155,6 @@ class RedditClient(AdPlatformClient):
         self._token = config.REDDIT_ACCESS_TOKEN
         self._account_id = config.REDDIT_AD_ACCOUNT_ID
         self._session = None  # lazily created in Phase 2
-        self._media_token: Optional[str] = None  # minted on demand via password grant
         # Serialize token refresh so concurrent (cohort×geo) calls don't each
         # kick off a refresh and write competing tokens back to .env.
         self._refresh_lock = threading.Lock()
@@ -259,14 +222,6 @@ class RedditClient(AdPlatformClient):
             self._token = refresh_reddit_token("ads")
             if self._session is not None:
                 self._session.headers.update({"Authorization": f"Bearer {self._token}"})
-
-    def _get_media_token(self, force: bool = False) -> str:
-        """Return a cached media token, minting one via password grant on first
-        use or when `force` (token expired mid-run). Thread-safe."""
-        with self._refresh_lock:
-            if force or not self._media_token:
-                self._media_token = mint_reddit_media_token()
-        return self._media_token
 
     # ── lifecycle (AdPlatformClient) ────────────────────────────────────────────
 
@@ -341,53 +296,47 @@ class RedditClient(AdPlatformClient):
         return ad_group_id
 
     def upload_image(self, image_path: str | Path) -> str:
-        """Upload a PNG to Reddit's media (asset.json) and return the public
-        i.redd.it URL to use as a post's media_url. The Ads API has no media
-        endpoint and the ads token can't post, so the bytes go through a SEPARATE
-        Reddit "script" app token (minted on demand via password grant —
-        config.REDDIT_MEDIA_*) on oauth.reddit.com; Reddit re-hosts them on i.redd.it."""
+        """Host the PNG at a URL Reddit can ingest as a post's media_url.
+
+        Reddit's Ads API has no media-upload endpoint, so we upload the PNG to a
+        PRIVATE GCS bucket and return a short-lived V4 signed URL (see the config
+        note for why this beats public hosts/Drive). Reddit fetches it once and
+        re-hosts to i.redd.it, after which the signed URL expires. Returns the
+        signed URL."""
         self._ensure_init()
         image_path = str(Path(image_path))
         from src.image_adapter import assert_min_dimensions
         assert_min_dimensions(image_path, config.MIN_CREATIVE_DIMENSION, platform="reddit")
 
-        media_headers = {
-            "Authorization": f"Bearer {self._get_media_token()}",
-            "User-Agent": _USER_AGENT,
-        }
-        lease_url = f"{REDDIT_OAUTH_BASE}/api/media/asset.json"
-        lease_data = {"filepath": Path(image_path).name, "mimetype": "image/png"}
-        # 1. Ask Reddit for a presigned S3 lease (re-mint media token on 401).
-        lease = requests.post(lease_url, data=lease_data, headers=media_headers, timeout=60)
-        if lease.status_code == 401:
-            log.info("Reddit media token 401 on asset.json — re-minting + retrying once")
-            media_headers["Authorization"] = f"Bearer {self._get_media_token(force=True)}"
-            lease = requests.post(lease_url, data=lease_data, headers=media_headers, timeout=60)
-        if not lease.ok:
+        if not config.GCS_CREATIVE_BUCKET:
             raise RuntimeError(
-                f"Reddit media lease failed → {lease.status_code}: {lease.text[:300]} "
-                "(does the token have the `submit` scope?)"
+                "GCS_CREATIVE_BUCKET not set — Reddit image upload hosts the creative "
+                "on a private GCS bucket (signed URL); set the bucket in Doppler."
             )
-        args = lease.json()["args"]
-        action = "https:" + args["action"] if args["action"].startswith("//") else args["action"]
-        fields = {f["name"]: f["value"] for f in args["fields"]}
+        from datetime import timedelta
+        import hashlib
+        from google.cloud import storage
+        from google.oauth2 import service_account
 
-        # 2. PUT the bytes to S3 (no auth header — presigned form post).
-        with open(image_path, "rb") as fh:
-            up = requests.post(
-                action,
-                data=fields,
-                files={"file": (Path(image_path).name, fh, "image/png")},
-                timeout=120,
-            )
-        if up.status_code not in (200, 201):
-            raise RuntimeError(f"Reddit media S3 upload failed → {up.status_code}: {up.text[:300]}")
-
-        # 3. The public asset URL is the S3 object (action + key). Reddit ingests
-        #    it into i.redd.it when the post is created.
-        asset_url = f"{action.rstrip('/')}/{fields['key']}"
-        log.info("Reddit image uploaded %s → %s", Path(image_path).name, asset_url)
-        return asset_url
+        creds = service_account.Credentials.from_service_account_file(config.GOOGLE_CREDENTIALS)
+        client = storage.Client(credentials=creds, project=getattr(creds, "project_id", None))
+        # Unique-ish object name so concurrent (cohort×geo×angle) uploads of a
+        # same-named PNG (e.g. "A.png") don't clobber each other mid-flight.
+        digest = hashlib.md5(image_path.encode()).hexdigest()[:10]
+        blob = client.bucket(config.GCS_CREATIVE_BUCKET).blob(
+            f"reddit-creatives/{digest}-{Path(image_path).name}"
+        )
+        blob.upload_from_filename(image_path, content_type="image/png")
+        url = blob.generate_signed_url(
+            version="v4",
+            expiration=timedelta(minutes=config.GCS_SIGNED_URL_TTL_MIN),
+            method="GET",
+        )
+        log.info(
+            "Reddit creative uploaded gs://%s/%s → signed URL (%dm TTL); Reddit re-hosts to i.redd.it",
+            config.GCS_CREATIVE_BUCKET, blob.name, config.GCS_SIGNED_URL_TTL_MIN,
+        )
+        return url
 
     def create_image_ad(
         self,
