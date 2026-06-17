@@ -5280,8 +5280,15 @@ def _process_row_both_modes(
         "submitted_at":  row.get("ramp_submitted_at", "") or "",
         "pod":           row.get("job_post_pod"),
         # Name "domain" segment = Smart Ramp tool's job_post_domain (e.g. "bn-IN"),
-        # falling back to matched_domain for ramps that don't carry it.
-        "domain":        row.get("job_post_domain") or row.get("matched_domain"),
+        # falling back to matched_domain for ramps that don't carry it. When the
+        # Smart Ramp domain matcher FAILED (domain_not_found), job_post_domain is a
+        # junk guess (e.g. a BLV ramp tagged "Media & Communications") — prefer
+        # matched_domain instead so the name isn't actively misleading.
+        "domain": (
+            (row.get("matched_domain") or row.get("job_post_domain"))
+            if row.get("domain_match_failed")
+            else (row.get("job_post_domain") or row.get("matched_domain"))
+        ),
         "locale":        row.get("job_post_language_code"),
         "included_geos": row.get("included_geos") or [],
         "campaign_state": row.get("campaign_state"),
@@ -5853,6 +5860,8 @@ def _ramp_to_rows(ramp) -> list[dict]:
             "ramp_submitted_at": ramp.submitted_at or "",
             "cohort_id": cohort.id,
             "cohort_description": cohort.cohort_description,
+            # Ramp-wide brief — feeds task-card grounding alongside cohort_description.
+            "ramp_summary": ramp.summary or "",
             "selected_lp_url": cohort.selected_lp_url,
             "included_geos": cohort.included_geos,
             "matched_locales": cohort.matched_locales,
@@ -5863,6 +5872,7 @@ def _ramp_to_rows(ramp) -> list[dict]:
             "job_post_pod": getattr(cohort, "job_post_pod", None),
             "matched_domain": getattr(cohort, "matched_domain", None),
             "job_post_domain": getattr(cohort, "job_post_domain", None),
+            "domain_match_failed": getattr(cohort, "domain_match_failed", False),
             "job_post_language_code": getattr(cohort, "job_post_language_code", None),
             "campaign_state": getattr(cohort, "campaign_state", None),
             "job_post_pay_rates": getattr(cohort, "job_post_pay_rates", None),
