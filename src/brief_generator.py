@@ -117,6 +117,7 @@ def build_briefs(
     icp=None,
     channel: str = "linkedin",
     competitor_intel_path: str | pathlib.Path | None = None,
+    task_card=None,
 ) -> list[dict]:
     """Phase 1 — produce 3 structured briefs (A/B/C) for this cohort × geo.
 
@@ -176,6 +177,12 @@ def build_briefs(
         competitor_context=competitor_context,
         channel_block=channel_block,
     )
+    # Ground the brief directions (headline/photo/proof) in the real task so the
+    # downstream copy — for every channel that reshapes this canonical variant —
+    # names the actual work. No-op when task_card is None.
+    if task_card is not None:
+        from src.task_card import task_card_prompt_block
+        prompt += task_card_prompt_block(task_card)
 
     log.info("Phase 1 brief gen — cohort=%s channel=%s signals=%d geo=%s",
              cohort.name[:40], channel_norm, len(signals), ",".join(geos or []) or "—")
@@ -233,6 +240,7 @@ def build_copy_from_brief(
     hourly_rate: str = "",
     reviewer_comment: str = "",
     channel: str = "linkedin",
+    task_card=None,
 ) -> dict:
     """Phase 2 — take ONE (possibly reviewer-edited) brief and produce ONE
     variant dict in today's pipeline schema.
@@ -295,6 +303,12 @@ def build_copy_from_brief(
         geo_block=geo_block,
         channel_block=channel_block,
     )
+    # Ground the final copy in the real task (no-op when task_card is None;
+    # stays general when thin). Pairs with the NEWCOMER CONTEXT block already in
+    # the template — that asks for a concrete task, this supplies the facts.
+    if task_card is not None:
+        from src.task_card import task_card_prompt_block
+        prompt += task_card_prompt_block(task_card)
 
     # Retry loop matches build_copy_variants — LLM sometimes overshoots length
     # limits. Give it 3 attempts with the violation list fed back in.

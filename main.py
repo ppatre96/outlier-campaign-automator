@@ -48,6 +48,7 @@ from src.figma_creative import (
 )
 from src.gemini_creative import generate_imagen_creative, generate_imagen_creative_with_qc
 from src.inmail_copy_writer import build_inmail_variants
+from src.task_card import cached_card
 from src.campaign_monitor import (
     check_learning_phase,
     get_pass_rates_from_snowflake,
@@ -1276,6 +1277,7 @@ def _process_inmail_campaigns(
                         tg_cat, cohort, claude_key,
                         hourly_rate=geo_group.advertised_rate,
                         geo_icp_hint=geo_group.icp_hint,
+                        task_card=cached_card(ramp_id, cohort_id_override),
                     )
                     v = variants[["A","B","C"].index(angle_label) % len(variants)]
                 log.info("[dry-run] Subject: %s", v.subject)
@@ -1355,6 +1357,7 @@ def _process_inmail_campaigns(
                 tg_cat, cohort, claude_key,
                 hourly_rate=geo_group.advertised_rate,
                 geo_icp_hint=geo_group.icp_hint,
+                task_card=cached_card(ramp_id, cohort_id_override),
             )
             if not variants:
                 log.warning(
@@ -3537,6 +3540,7 @@ def _process_static_campaigns(
                                 geos=group_geos,
                                 hourly_rate=geo_group.advertised_rate,
                                 reviewer_comment=b.reviewer_comment or "",
+                                task_card=cached_card(ramp_id, cohort_id_override),
                             )
                             if v:
                                 variants.append(v)
@@ -4295,6 +4299,7 @@ def _process_extra_platform_arm(
                         hourly_rate=getattr(geo_group_e, "advertised_rate", "") or "",
                         reviewer_comment=_matching[0].reviewer_comment or "",
                         channel=platform,
+                        task_card=cached_card(ramp_id, cohort_id_override),
                     )
                     if _v:
                         variant_e = _v
@@ -5281,6 +5286,25 @@ def _process_row_both_modes(
         "included_geos": row.get("included_geos") or [],
         "campaign_state": row.get("campaign_state"),
     }
+
+    # Ground copy in the real task: build the task card ONCE per row (LP scrape +
+    # Smart Ramp fields → what they do / device / artifact) and cache it by
+    # (ramp_id, cohort_id). Every copy generator (InMail + Phase-2 → which all
+    # channels reshape) reads it via task_card.cached_card and grounds the copy
+    # in these facts instead of inventing them. No-op when TASK_GROUNDING_ENABLED
+    # is off; stays general (never fabricates) when grounding is thin.
+    if config.TASK_GROUNDING_ENABLED:
+        try:
+            from src.task_card import warm_task_card
+            warm_task_card(
+                ramp_id, row.get("cohort_id"),
+                lp_url=row.get("selected_lp_url"),
+                ramp_summary=row.get("ramp_summary", "") or "",
+                cohort_description=row.get("cohort_description", "") or "",
+            )
+        except Exception as _exc:
+            log.warning("task-card warm failed (non-fatal, copy stays ungrounded): %s", _exc)
+
     """Phase 2.6: run cohort discovery ONCE per row, then dispatch BOTH InMail
     + Static arms.
 
@@ -5496,6 +5520,7 @@ def _process_row_both_modes(
                                 geo_icp_hint="",  # geo ICP hints not yet wired into prep path
                                 icp=getattr(cohort, "_icp", None),
                                 channel=channel,
+                                task_card=cached_card(ramp_id, cohort_id_override),
                             )
                         except Exception as exc:
                             log.warning(

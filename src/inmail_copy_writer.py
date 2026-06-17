@@ -173,6 +173,7 @@ def build_inmail_variants(
     extra_angles: dict | None = None,
     hourly_rate: str = "",
     geo_icp_hint: str = "",
+    task_card=None,
 ) -> list[InMailVariant]:
     """
     Generate InMail variants for the given TG/cohort.
@@ -207,6 +208,12 @@ def build_inmail_variants(
         prompt = _build_prompt(cohort_summary, tg_category, angle_key, angle_cfg, hourly_rate=hourly_rate)
         if geo_icp_hint:
             prompt += geo_icp_hint
+        # Ground the body in the real task (LP + job post) so it names the actual
+        # work instead of inventing it. No-op when task_card is None; stays general
+        # (no fabricated tools/steps) when the card is thin. See src/task_card.py.
+        if task_card is not None:
+            from src.task_card import task_card_prompt_block
+            prompt += task_card_prompt_block(task_card)
         try:
             raw = call_claude(
                 messages=[{"role": "user", "content": prompt}],

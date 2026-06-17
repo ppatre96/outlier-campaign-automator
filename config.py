@@ -518,6 +518,15 @@ LOCALIZE_PLATFORM_COPY       = os.getenv("LOCALIZE_PLATFORM_COPY", "true").lower
 # reversibility. Was implicitly ON for generalist_locale cohorts before today.
 LOCALIZE_LINKEDIN_COPY       = os.getenv("LOCALIZE_LINKEDIN_COPY", "false").lower() in ("1", "true", "yes")
 
+# ── Task grounding (2026-06-17) ────────────────────────────────────────────────
+# Extract a structured "task card" (what the contributor actually does, on what
+# device, producing what artifact) from the landing page + Smart Ramp job-post
+# fields, and feed it into every copy generator (InMail, brief/Phase-2 → which
+# all channels reshape). Stops vague/invented copy (e.g. the BLV ramp's wrong
+# "JAWS/NVDA" when the real task was Android TalkBack screen recording). Costs
+# one LLM call + one LP fetch per cohort. Set False to disable (rollback).
+TASK_GROUNDING_ENABLED       = os.getenv("TASK_GROUNDING_ENABLED", "true").lower() in ("1", "true", "yes")
+
 # Cold start (no contributor frame — brand-new / ultra-niche ramps). When True
 # (default), `_resolve_cold_start_cohort` derives 1..N targeted cohorts from the
 # job description (skills + titles + fields + degrees + lookalike exclusions per
