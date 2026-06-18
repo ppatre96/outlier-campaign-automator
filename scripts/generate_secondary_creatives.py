@@ -332,24 +332,27 @@ def main(argv: list[str] | None = None) -> int:
         ramp.id, ramp.summary[:80], len(ramp.cohorts),
     )
 
-    # 2026-05-20: pay-rate resolution. Mirrors main.py's logic — read the
-    # OUTLIER_BASE_RATE_USD env override, fall back to None (rate-free copy)
-    # when unresolved. NEVER hardcode a default; wrong rate in ads is a
-    # critical risk.
+    # Pay-rate resolution mirrors main.py's _process_row_both_modes priority
+    # chain (per feedback_smart_ramp_authoritative_data — pull from Smart Ramp,
+    # NEVER guess/hardcode):
+    #   1. OUTLIER_BASE_RATE_USD env override (manual one-off; US baseline →
+    #      gets the country pay-multiplier)
+    #   2. Smart Ramp per-cohort job_post_pay_rates (authoritative, geo-specific
+    #      → must NOT be re-multiplied or $5-rounded)
+    #   3. None → rate-free copy
+    # The env override is global; the Smart Ramp rate is resolved per cohort
+    # inside the loop because each language cohort can carry its own rate.
     import os as _os
-    base_rate_usd: float | None = None
-    _env_rate = (_os.environ.get("OUTLIER_BASE_RATE_USD") or "").strip()
-    if _env_rate:
+    from src.attribution_resolver import parse_job_post_pay_rate  # noqa: E402
+
+    env_rate: float | None = None
+    _env_rate_raw = (_os.environ.get("OUTLIER_BASE_RATE_USD") or "").strip()
+    if _env_rate_raw:
         try:
-            base_rate_usd = float(_env_rate)
-            log.info("OUTLIER_BASE_RATE_USD env override → base_rate_usd=$%.2f/hr", base_rate_usd)
+            env_rate = float(_env_rate_raw)
+            log.info("OUTLIER_BASE_RATE_USD env override → base_rate_usd=$%.2f/hr (applies to all cohorts)", env_rate)
         except ValueError:
-            log.warning("OUTLIER_BASE_RATE_USD=%r is not a valid float — falling back to None", _env_rate)
-    if base_rate_usd is None:
-        log.warning(
-            "base_rate_usd unresolved (OUTLIER_BASE_RATE_USD unset). "
-            "Copy gen will skip $/hr mentions."
-        )
+            log.warning("OUTLIER_BASE_RATE_USD=%r is not a valid float — ignoring", _env_rate_raw)
 
     total_uploaded = 0
     for cohort_spec in ramp.cohorts:
@@ -362,8 +365,29 @@ def main(argv: list[str] | None = None) -> int:
         )
         cohort = _build_minimal_cohort(cohort_spec)
 
+        # Per-cohort pay rate: env override wins (US baseline → apply multiplier);
+        # else the Smart Ramp job_post_pay_rate (geo-specific → no multiplier).
+        if env_rate is not None:
+            base_rate_usd: float | None = env_rate
+            rate_geo_specific = False
+        else:
+            base_rate_usd = parse_job_post_pay_rate(cohort_spec.job_post_pay_rates)
+            rate_geo_specific = base_rate_usd is not None
+            if base_rate_usd is not None:
+                log.info(
+                    "  pay rate from Smart Ramp job_post_pay_rates %r → $%.2f/hr (geo-specific)",
+                    cohort_spec.job_post_pay_rates, base_rate_usd,
+                )
+            else:
+                log.warning(
+                    "  base_rate_usd unresolved for cohort %s (no env override, no Smart Ramp "
+                    "job_post_pay_rates) — copy will skip $/hr mentions",
+                    cohort_spec.id[:8],
+                )
+
         geo_groups = group_geos_for_campaigns(
             cohort_spec.included_geos, base_rate_usd=base_rate_usd,
+            apply_geo_multiplier=not rate_geo_specific,
         )
         log.info(
             "  → %d geo cluster(s): %s",
