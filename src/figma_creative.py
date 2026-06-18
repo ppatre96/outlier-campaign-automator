@@ -879,7 +879,7 @@ You are producing TWO TEXT SETS per variant:
 
 ### (I) IMAGE OVERLAY TEXT (baked into the 1200×1200 creative PNG)
 - **headline**: MAX 6 words AND MAX 40 characters. 1–2 lines. Bold white text over the photo. NEVER include the word "Outlier" — the brand wordmark is composited on the image separately, repeating it in the headline causes a duplicate-logo QC failure.
-- **subheadline**: MAX 7 words AND MAX 48 characters. 1–2 lines. Regular white text over the photo. NEVER include the word "Outlier" (same reason as headline).
+- **subheadline**: MAX 7 words AND MAX 48 characters. 1–2 lines. Regular white text over the photo. NEVER include the word "Outlier" (same reason as headline). FOCUS the subheadline on the AI-training work itself — what they'll actually do (e.g. "Train AI in your field", "Rate AI answers in <their domain>", "Improve AI on your expertise"). Do NOT say "from home", "remote", or "work from home": the creative's bottom strip already states the work is 100% remote, so repeating it wastes the line.
 - Every word must earn its place. Short, punchy, specific. Cut filler.
 - No logo or CTA text in the image itself.
 
