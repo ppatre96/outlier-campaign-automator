@@ -939,7 +939,11 @@ def compose_ad(
         hl_lines = _wrap_text(headline, hl_font, max_text_w)
         hl_height = hl_size * len(hl_lines) + LINE_SPACING * (len(hl_lines) - 1)
 
-    hl_top       = max(photo_y + int(photo_h * 0.01), hl_bottom - hl_height)
+    # TOP-anchored (not floated down to the hairline): the brand template keeps
+    # the headline near the top of the photo. The available_height shrink above
+    # guarantees it still ends above hl_bottom, so subject-overlap avoidance is
+    # preserved while a short headline no longer drifts toward the subject.
+    hl_top       = photo_y + TOP_MARGIN_PX
     _draw_text_left(
         draw, hl_lines, hl_font, hl_top,
         0, (255, 255, 255, 255),
