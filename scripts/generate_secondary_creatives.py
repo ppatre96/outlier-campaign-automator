@@ -217,6 +217,17 @@ def _process_cohort_geo(
         v.get("angle", ""): v for v in variants if isinstance(v, dict)
     }
 
+    # Bottom-band descriptive line uses the STATIC per-locale rate resolved from
+    # Smart Ramp (geo_group.advertised_rate, e.g. "$29/hr") — NOT a hardcoded
+    # range and NOT the compositor's generic fallback. Rate-free when the cohort
+    # has no resolved rate (never invent a number). Passed explicitly so
+    # compose_ad_for_platform uses it verbatim.
+    _rate = (geo_group.advertised_rate or "").strip()
+    bottom_text = (
+        f"Earn {_rate}, flexible hours, 100% remote." if _rate
+        else "Flexible hours, 100% remote."
+    )
+
     # Group platforms by aspect so we only call Gemini once per (angle, aspect)
     # even when multiple platforms render the same aspect (FB + IG at 4:5). A
     # platform requesting several aspects (TikTok = 9:16 + 1:1) appears under
@@ -255,6 +266,7 @@ def _process_cohort_geo(
                         platform=platform,
                         angle=angle,
                         aspect=aspect,
+                        bottom_text=bottom_text,
                     )
                 except Exception as exc:
                     log.exception(
