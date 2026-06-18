@@ -644,6 +644,28 @@ MAX_CAMPAIGNS               = int(os.getenv("MAX_CAMPAIGNS", 5))
 # Feedback agent surfaces winners/losers; losers get deprecated and replaced.
 MAX_COHORTS_PER_GEO_CLUSTER = int(os.getenv("MAX_COHORTS_PER_GEO_CLUSTER", 3))
 ANGLES_PER_COHORT           = int(os.getenv("ANGLES_PER_COHORT", 3))
+
+# ── Angle-performance "double-down" loop (2026-06-18) ──────────────────────────
+# The daily feedback pass scouts launched campaigns, decides which ANGLE (A/B/C)
+# wins per cohort×geo, and (1) refreshes the winner with a fresh variant, (2)
+# scales the winner's budget, (3) pauses+replaces losers. Analysis + the angle
+# recommendations + the Slack change summary are ALWAYS produced (safe, no live
+# mutation). The live-money/draft EXECUTION (budget, pause, draft creation) only
+# runs when ANGLE_AUTO_ACT_ENABLED is true — otherwise the changes are surfaced
+# as recommendations in the console "Live performance & recommendations" section
+# and a Slack summary, awaiting human Accept. Matches the draft-default contract.
+ANGLE_LOOP_ENABLED       = os.getenv("ANGLE_LOOP_ENABLED", "true").lower() in ("1", "true", "yes")
+ANGLE_AUTO_ACT_ENABLED   = os.getenv("ANGLE_AUTO_ACT_ENABLED", "false").lower() in ("1", "true", "yes")
+# Significance gate — don't declare a winner/loser on thin data.
+ANGLE_MIN_IMPRESSIONS    = int(os.getenv("ANGLE_MIN_IMPRESSIONS", 2000))
+# Winner = best-in-group beyond this CTR z-score OR this CPA margin below median.
+ANGLE_WINNER_Z           = float(os.getenv("ANGLE_WINNER_Z", "0.5"))
+ANGLE_WINNER_MARGIN_PCT  = float(os.getenv("ANGLE_WINNER_MARGIN_PCT", "0.20"))
+# Loser = CTR z-score at/under -ANGLE_LOSER_Z (plus the existing REC_* floors).
+ANGLE_LOSER_Z            = float(os.getenv("ANGLE_LOSER_Z", "1.0"))
+# Winner budget scaling.
+ANGLE_SCALE_FACTOR       = float(os.getenv("ANGLE_SCALE_FACTOR", "1.5"))
+ANGLE_SCALE_MAX_CENTS    = int(os.getenv("ANGLE_SCALE_MAX_CENTS", 20000))  # $200/day cap
 # Cap on natural geo clusters formed by group_geos_for_campaigns. Without this,
 # a ramp with many countries (GMR-0021 had 211 geos → 12 clusters) spawns
 # MAX_COHORTS × ANGLES × N_clusters campaigns per channel — 108+ for that ramp's
