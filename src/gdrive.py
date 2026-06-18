@@ -139,19 +139,25 @@ def upload_creative_in_hierarchy(
     channel: str,
     cohort_geo: str,
     angle: str,
+    subfolder: str = "",
 ) -> str:
-    """Upload a PNG into <root>/<ramp_id>/<channel>/<cohort_geo>/<angle>.png.
+    """Upload a PNG into <root>/<ramp_id>/<channel>/<cohort_geo>/<angle>.png,
+    or <root>/<ramp_id>/<channel>/<cohort_geo>/<subfolder>/<angle>.png when
+    `subfolder` is given.
 
-    Folders are find-or-created on each call (idempotent within a run). The
-    file is renamed to `<angle>.png` to keep cohort folders tidy. Returns
-    the file's webViewLink.
+    `subfolder` (e.g. a locale like "hi-IN") nests a per-language folder INSIDE
+    the geo-cluster folder so multiple language cohorts that share a geo cluster
+    (Hindi + Bengali + Kannada → south_asian) don't collide on identical
+    filenames. Folders are find-or-created on each call (idempotent within a
+    run). Returns the file's webViewLink.
     """
     if not getattr(config, "GDRIVE_ENABLED", False):
         log.warning("GDRIVE_ENABLED=false — skipping Drive upload for %s", file_path.name)
         return ""
 
     svc = _service()
-    target_folder = _ensure_path([ramp_id, channel, cohort_geo], svc=svc)
+    parts = [ramp_id, channel, cohort_geo] + ([subfolder.strip()] if subfolder and subfolder.strip() else [])
+    target_folder = _ensure_path(parts, svc=svc)
 
     # Filename inside the cohort folder: "A.png", "B.png", "C.png".
     # Sanitize angle in case caller passes "A " or similar.

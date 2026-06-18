@@ -63,6 +63,7 @@ from pathlib import Path
 # Bootstrap so `from src.…` works when invoked as a script
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import config  # noqa: E402
 from src.smart_ramp_client import SmartRampClient, CohortSpec  # noqa: E402
 from src.analysis import Cohort  # noqa: E402
 from src.geo_tiers import group_geos_for_campaigns  # noqa: E402
@@ -70,6 +71,8 @@ from src.figma_creative import build_copy_variants  # noqa: E402
 from src.gemini_creative import generate_imagen_photo  # noqa: E402
 from src.image_adapter import compose_ad_for_platform  # noqa: E402
 from src.gdrive import upload_creative_in_hierarchy, upload_text_in_hierarchy  # noqa: E402
+from src.locales import get_locale  # noqa: E402
+from src.copy_adapter import localize_variant  # noqa: E402
 
 log = logging.getLogger("generate_secondary_creatives")
 
@@ -187,16 +190,26 @@ def _process_cohort_geo(
         geo_group.advertised_rate, len(geo_group.geos),
     )
 
+    # Per-locale folder + localization. The cohort's locale (Smart Ramp
+    # matched_locales) names a folder INSIDE the geo-cluster folder so multiple
+    # languages sharing a cluster (hi-IN, bn-IN, kn-IN → south_asian) don't
+    # collide on identical filenames. copy_locale also drives copy localization
+    # below (gated by LOCALIZE_PLATFORM_COPY).
+    locale_code = ((cohort_spec.matched_locales or [None])[0] or "").strip()
+    copy_locale = get_locale(locale_code) if locale_code else None
+
     if dry_run:
         # Even in dry-run we want the plan to show fan-out, so synthesize the
         # would-be Drive paths without spending Gemini.
+        _loc_seg = f"{locale_code}/" if locale_code else ""
         for angle in angle_labels:
             for platform in platforms:
                 for aspect in PLATFORM_ASPECTS[platform]:
                     log.info(
-                        "[dry-run] WOULD upload %s/%s/%s/%s.png  (aspect=%s)",
-                        ramp_id, platform, geo_group.cluster,
+                        "[dry-run] WOULD upload %s/%s/%s/%s%s.png  (aspect=%s, locale=%s)",
+                        ramp_id, platform, geo_group.cluster, _loc_seg,
                         _angle_stem(angle, platform, aspect, variant_tag), aspect,
+                        locale_code or "-",
                     )
         return 0
 
@@ -217,16 +230,33 @@ def _process_cohort_geo(
         v.get("angle", ""): v for v in variants if isinstance(v, dict)
     }
 
+    # Localize the copy into the cohort's language (PR #34 parity for the
+    # secondary channels — the main pipeline already does this for Meta/Google).
+    # Gated by LOCALIZE_PLATFORM_COPY; locale-defined cohorts only. Translates
+    # headline/subheadline (image overlay); $/USD/numerals + Outlier stay English;
+    # photo_subject stays English (it's the image-gen prompt).
+    if copy_locale and config.LOCALIZE_PLATFORM_COPY:
+        for _a, _v in list(variants_by_angle.items()):
+            variants_by_angle[_a] = localize_variant(_v, copy_locale)
+        log.info(
+            "Localized copy → %s for cohort %s",
+            getattr(copy_locale, "display_language", locale_code), cohort_spec.id[:8],
+        )
+
     # Bottom-band descriptive line uses the STATIC per-locale rate resolved from
     # Smart Ramp (geo_group.advertised_rate, e.g. "$29/hr") — NOT a hardcoded
     # range and NOT the compositor's generic fallback. Rate-free when the cohort
-    # has no resolved rate (never invent a number). Passed explicitly so
-    # compose_ad_for_platform uses it verbatim.
+    # has no resolved rate (never invent a number). Localized too (rate stays
+    # English). Passed explicitly so compose_ad_for_platform uses it verbatim.
     _rate = (geo_group.advertised_rate or "").strip()
     bottom_text = (
         f"Earn {_rate}, flexible hours, 100% remote." if _rate
         else "Flexible hours, 100% remote."
     )
+    if copy_locale and config.LOCALIZE_PLATFORM_COPY:
+        bottom_text = localize_variant({"subheadline": bottom_text}, copy_locale).get(
+            "subheadline", bottom_text
+        )
 
     # Group platforms by aspect so we only call Gemini once per (angle, aspect)
     # even when multiple platforms render the same aspect (FB + IG at 4:5). A
@@ -283,6 +313,7 @@ def _process_cohort_geo(
                         channel=platform,
                         cohort_geo=geo_group.cluster,
                         angle=stem,
+                        subfolder=locale_code,
                     )
                     log.info(
                         "Drive upload OK: %s/%s/%s/%s.png → %s",
