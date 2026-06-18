@@ -934,9 +934,11 @@ def compose_ad(
     else:
         hl_bottom = int(size * 0.30)
 
-    # Headline font: 72px starting, shrink to fit ≤2 lines in full canvas width.
-    hl_size = int(size * 0.060)
-    hl_min  = int(size * 0.045)
+    # Headline font: scales with width, shrinks to fit ≤2 lines. 1080-wide
+    # portrait/story formats (9:16 / 4:5) get a larger fraction so the headline
+    # doesn't read small; 1:1 / landscape (>=1200) keep the original size.
+    hl_size = int(size * (0.060 if size >= 1200 else 0.068))
+    hl_min  = int(size * (0.045 if size >= 1200 else 0.050))
     hl_font  = _load_font(hl_size, bold=True, text=headline)
     hl_lines = _wrap_text(headline, hl_font, max_text_w)
     while len(hl_lines) > 2 and hl_size > hl_min:
@@ -969,8 +971,9 @@ def compose_ad(
         line_spacing=LINE_SPACING, canvas_width=size,
     )
 
-    # Subheadline — full-width centered, anchored to bottom of photo area
-    sh_font  = _load_font(int(size * 0.044), text=subheadline)
+    # Subheadline — full-width centered, anchored to bottom of photo area.
+    # Same portrait bump as the headline: bigger on 9:16 / 4:5, unchanged on 1:1.
+    sh_font  = _load_font(int(size * (0.044 if size >= 1200 else 0.050)), text=subheadline)
     sh_lines = _wrap_text(subheadline, sh_font, int(photo_w * 0.82))
     _draw_text_left(
         draw, sh_lines, sh_font,
