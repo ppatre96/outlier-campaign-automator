@@ -29,3 +29,14 @@ def test_load_font_receives_headline_text():
     # detection + RAQM shaping engage.
     for call in mock_load.call_args_list:
         assert call.kwargs.get("text") == HINDI_HEADLINE
+
+
+def test_platform_subheadline_field_precedence():
+    """The simple compositor now renders a subheadline; it's pulled from
+    'subheadline' (figma copy) → 'description' → 'primary_text' for non-Google,
+    and 'description' → headlines[1] for Google."""
+    assert ia._platform_subheadline({"subheadline": "S", "description": "D"}, "meta") == "S"
+    assert ia._platform_subheadline({"description": "D", "primary_text": "P"}, "tiktok") == "D"
+    assert ia._platform_subheadline({"primary_text": "P"}, "fb") == "P"
+    assert ia._platform_subheadline({"headlines": ["H1", "H2"]}, "google") == "H2"
+    assert ia._platform_subheadline({"headline": "only"}, "meta") == ""

@@ -167,7 +167,10 @@ def compose_ad_for_platform(
     if aspect is None:
         aspect = primary_aspect(platform)
     headline = _platform_headline(copy_variant, platform)
-    out = _compose_simple_image_ad(bg_image, headline, aspect, platform=platform)
+    subheadline = _platform_subheadline(copy_variant, platform)
+    out = _compose_simple_image_ad(
+        bg_image, headline, aspect, platform=platform, subheadline=subheadline,
+    )
     return _save(out, save_to, suffix=f"_{platform}_{angle}")
 
 
@@ -181,6 +184,30 @@ def _platform_headline(copy_variant: dict, platform: str) -> str:
             return headlines[0]
         return copy_variant.get("long_headline", "") or copy_variant.get("headline", "")
     return copy_variant.get("headline", "")
+
+
+def _platform_subheadline(copy_variant: dict, platform: str) -> str:
+    """Pull the supporting line to render UNDER the headline on the image.
+
+    The simple compositor previously dropped this — fine for Meta/Google where
+    body copy is a separate ad field, but the secondary creatives (esp. TikTok)
+    go to Drive for manual upload where the PNG is the whole ad, so a lone
+    headline reads as a vague one-liner. We now render a subheadline on-image
+    for every simple-compositor channel. Field name varies by copy source:
+    figma_creative.build_copy_variants → 'subheadline'; the platform copy
+    adapters → 'description' / 'primary_text'. First non-empty wins."""
+    if platform == "google":
+        headlines = copy_variant.get("headlines") or []
+        return (
+            copy_variant.get("description", "")
+            or (headlines[1] if len(headlines) > 1 else "")
+            or copy_variant.get("long_headline", "")
+        )
+    return (
+        copy_variant.get("subheadline", "")
+        or copy_variant.get("description", "")
+        or copy_variant.get("primary_text", "")
+    )
 
 
 def _add_outlier_watermark(canvas: Image.Image, platform: str = "") -> Image.Image:
@@ -245,6 +272,7 @@ def _compose_simple_image_ad(
     headline: str,
     aspect: tuple[int, int],
     platform: str = "",
+    subheadline: str = "",
 ) -> Image.Image:
     """Render an Outlier-branded image ad: full-canvas photo + headline overlay
     + a small Outlier watermark in the top-right corner. Used for Meta + Google
@@ -341,6 +369,40 @@ def _compose_simple_image_ad(
         0, (255, 255, 255, 255),
         line_spacing=LINE_SPACING, canvas_width=canvas_w,
     )
+
+    # Supporting subheadline in the lower third — gives the ad context beyond
+    # the headline (critical for TikTok/Drive hand-off where the PNG is the
+    # whole ad). White, centered, smaller than the headline, with its own scrim,
+    # sitting ABOVE the platform bottom safe-zone + the watermark.
+    if subheadline:
+        # Bottom UI safe zone (TikTok reserves ~250px for the caption/CTA strip).
+        _SAFE_BOTTOM_PX = {"tiktok": 250}
+        safe_bottom = _SAFE_BOTTOM_PX.get(platform, 0)
+        wm_reserve = int(canvas_h * 0.09)  # clear the bottom-right watermark
+
+        sub_size = int(base * 0.046)
+        sub_min = int(base * 0.032)
+        sub_font = _load_font(sub_size, bold=False, text=subheadline)
+        sub_lines = _wrap_text(subheadline, sub_font, max_text_w)
+        while len(sub_lines) > 3 and sub_size > sub_min:
+            sub_size -= max(2, int(base * 0.003))
+            sub_font = _load_font(sub_size, bold=False, text=subheadline)
+            sub_lines = _wrap_text(subheadline, sub_font, max_text_w)
+
+        SUB_SPACING = 8
+        sub_height = sub_size * len(sub_lines) + SUB_SPACING * (len(sub_lines) - 1)
+        sub_bottom = canvas_h - safe_bottom - wm_reserve
+        sub_top = sub_bottom - sub_height
+        # Never collide with the headline block above.
+        sub_top = max(sub_top, hl_top + hl_height + int(canvas_h * 0.05))
+
+        sub_scrim = Image.new("RGBA", (canvas_w, sub_height + 2 * scrim_pad_y), (0, 0, 0, 90))
+        photo.alpha_composite(sub_scrim, (0, max(0, sub_top - scrim_pad_y)))
+        _draw_text_left(
+            draw, sub_lines, sub_font, sub_top,
+            0, (255, 255, 255, 255),
+            line_spacing=SUB_SPACING, canvas_width=canvas_w,
+        )
 
     # Outlier watermark — small, semi-transparent, top-right corner.
     # Subtle brand presence without covering the photo subject (which was the
