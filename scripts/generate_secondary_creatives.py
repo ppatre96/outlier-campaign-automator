@@ -91,17 +91,20 @@ PLATFORM_ASPECTS: dict[str, list[tuple[int, int]]] = {
 }
 
 
-def _angle_stem(angle: str, platform: str, aspect: tuple[int, int]) -> str:
+def _angle_stem(angle: str, platform: str, aspect: tuple[int, int], variant_tag: str = "") -> str:
     """Drive filename stem for one creative.
 
     Single-aspect platforms (fb, ig) keep the bare angle label ("A") for
     backwards compatibility. Multi-aspect platforms (TikTok renders both 9:16
     and 1:1) get an aspect suffix so the two PNGs don't collide in the same
     cohort folder: "A_9x16", "A_1x1".
+
+    `variant_tag` (e.g. "bordered") is appended last so a re-run can write a NEW
+    set alongside the existing creatives without overwriting them — reviewers
+    keep both and launch whichever they prefer: "A_9x16_bordered".
     """
-    if len(PLATFORM_ASPECTS.get(platform, [])) > 1:
-        return f"{angle}_{aspect[0]}x{aspect[1]}"
-    return angle
+    stem = f"{angle}_{aspect[0]}x{aspect[1]}" if len(PLATFORM_ASPECTS.get(platform, [])) > 1 else angle
+    return f"{stem}_{variant_tag}" if variant_tag else stem
 
 
 _TIKTOK_HANDOFF_MD = """\
@@ -175,6 +178,7 @@ def _process_cohort_geo(
     platforms: list[str],
     angle_labels: list[str],
     dry_run: bool,
+    variant_tag: str = "",
 ) -> int:
     """Process one (cohort × geo cluster). Returns count of PNGs uploaded."""
     log.info(
@@ -192,7 +196,7 @@ def _process_cohort_geo(
                     log.info(
                         "[dry-run] WOULD upload %s/%s/%s/%s.png  (aspect=%s)",
                         ramp_id, platform, geo_group.cluster,
-                        _angle_stem(angle, platform, aspect), aspect,
+                        _angle_stem(angle, platform, aspect, variant_tag), aspect,
                     )
         return 0
 
@@ -259,7 +263,7 @@ def _process_cohort_geo(
                     )
                     continue
 
-                stem = _angle_stem(angle, platform, aspect)
+                stem = _angle_stem(angle, platform, aspect, variant_tag)
                 try:
                     url = upload_creative_in_hierarchy(
                         png_path,
@@ -303,6 +307,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dry-run", action="store_true",
         help="Print the upload plan; skip Gemini calls and Drive uploads",
+    )
+    parser.add_argument(
+        "--variant-tag", default="",
+        help="Optional filename suffix (e.g. 'bordered') so a re-run writes a NEW "
+             "set alongside existing creatives instead of overwriting them. "
+             "Result: <angle>_<aspect>_<tag>.png. Blank = no suffix.",
     )
     args = parser.parse_args(argv)
 
@@ -418,6 +428,7 @@ def main(argv: list[str] | None = None) -> int:
                 platforms=platforms,
                 angle_labels=angles,
                 dry_run=args.dry_run,
+                variant_tag=args.variant_tag.strip(),
             )
 
     # TikTok ships static slides, but in-feed is video-first — leave a handoff
