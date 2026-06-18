@@ -43,6 +43,7 @@ from src.gemini_creative import (
     _rasterize_outlier_logo,
     _wrap_text,
     compose_ad as _compose_linkedin_ad,
+    derive_bottom_text as _derive_bottom_text,
     detect_subject_bbox,
 )
 
@@ -166,10 +167,22 @@ def compose_ad_for_platform(
 
     if aspect is None:
         aspect = primary_aspect(platform)
+    # All non-LinkedIn channels now use the SAME bordered template as LinkedIn
+    # (Pranav 2026-06-18) — border + inset photo + headline + subheadline + a
+    # white bottom band whose descriptive line wraps before the logo, so the
+    # logo never overlaps copy. Rendered at the platform's aspect. The bottom
+    # line is derived the same way the LinkedIn arm derives it.
     headline = _platform_headline(copy_variant, platform)
     subheadline = _platform_subheadline(copy_variant, platform)
-    out = _compose_simple_image_ad(
-        bg_image, headline, aspect, platform=platform, subheadline=subheadline,
+    bt = bottom_text or _derive_bottom_text(subheadline)
+    out = _compose_linkedin_ad(
+        bg_image=bg_image,
+        headline=headline,
+        subheadline=subheadline,
+        angle=angle,
+        bottom_text=bt,
+        with_bottom_strip=True,
+        aspect=aspect,
     )
     return _save(out, save_to, suffix=f"_{platform}_{angle}")
 

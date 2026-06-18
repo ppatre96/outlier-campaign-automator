@@ -134,10 +134,25 @@ AD_SIZE = 1200   # 1200×1200 px for high-res LinkedIn 1:1
 # 1:1 stays AD_SIZE so the LinkedIn path is byte-identical; 9:16 / 4:5 let the
 # same template render for TikTok / Meta secondary creatives.
 _COMPOSE_CANVAS_DIMS: dict[tuple[int, int], tuple[int, int]] = {
-    (1, 1):  (AD_SIZE, AD_SIZE),
-    (9, 16): (1080, 1920),
-    (4, 5):  (1080, 1350),
+    (1, 1):     (AD_SIZE, AD_SIZE),
+    (9, 16):    (1080, 1920),
+    (4, 5):     (1080, 1350),
+    (191, 100): (1200, 628),   # Google Display landscape 1.91:1
 }
+
+
+def derive_bottom_text(subheadline: str) -> str:
+    """Build the bottom-band descriptive line from a subheadline. Reused by the
+    LinkedIn arm and the secondary-channel compositor so the bottom line is
+    consistent. Pulls the earnings figure out of the subheadline when present;
+    falls back to a generic rate line otherwise. (Copy refined later.)"""
+    earnings_match = re.search(
+        r'\$[\d,]+(?:\.\d+)?(?:\s*USD)?(?:\s*(?:/hr|per hour|weekly|hourly))?',
+        subheadline or "",
+    )
+    if earnings_match:
+        return f"Earn {earnings_match.group()} or more. Fully remote."
+    return "Earn $25–$50 USD per hour. Fully remote."
 
 # ── Outlier brand colors ───────────────────────────────────────────────────────
 OUTLIER_BROWN   = (61, 26, 0)
@@ -1097,14 +1112,7 @@ def generate_imagen_creative(
     )
     log.info("Imagen photo received (%dx%d)", bg_image.width, bg_image.height)
 
-    earnings_match = re.search(
-        r'\$[\d,]+(?:\.\d+)?(?:\s*USD)?(?:\s*(?:/hr|per hour|weekly|hourly))?',
-        subheadline,
-    )
-    if earnings_match:
-        bottom_text = f"Earn {earnings_match.group()} or more. Fully remote."
-    else:
-        bottom_text = "Earn $25–$50 USD per hour. Fully remote."
+    bottom_text = derive_bottom_text(subheadline)
 
     ad_image = compose_ad(
         bg_image=bg_image,
