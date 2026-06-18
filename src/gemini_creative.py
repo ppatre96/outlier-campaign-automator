@@ -130,6 +130,30 @@ _OUTLIER_LOGO_SVG: str = _load_outlier_logo_svg()
 # ── Output size ───────────────────────────────────────────────────────────────
 AD_SIZE = 1200   # 1200×1200 px for high-res LinkedIn 1:1
 
+# Canvas pixel dims for the bordered compose_ad template, per aspect ratio.
+# 1:1 stays AD_SIZE so the LinkedIn path is byte-identical; 9:16 / 4:5 let the
+# same template render for TikTok / Meta secondary creatives.
+_COMPOSE_CANVAS_DIMS: dict[tuple[int, int], tuple[int, int]] = {
+    (1, 1):     (AD_SIZE, AD_SIZE),
+    (9, 16):    (1080, 1920),
+    (4, 5):     (1080, 1350),
+    (191, 100): (1200, 628),   # Google Display landscape 1.91:1
+}
+
+
+def derive_bottom_text(subheadline: str) -> str:
+    """Build the bottom-band descriptive line from a subheadline. Reused by the
+    LinkedIn arm and the secondary-channel compositor so the bottom line is
+    consistent. Pulls the earnings figure out of the subheadline when present;
+    falls back to a generic rate line otherwise. (Copy refined later.)"""
+    earnings_match = re.search(
+        r'\$[\d,]+(?:\.\d+)?(?:\s*USD)?(?:\s*(?:/hr|per hour|weekly|hourly))?',
+        subheadline or "",
+    )
+    if earnings_match:
+        return f"Earn {earnings_match.group()} or more. Fully remote."
+    return "Earn $25–$50 USD per hour. Fully remote."
+
 # ── Outlier brand colors ───────────────────────────────────────────────────────
 OUTLIER_BROWN   = (61, 26, 0)
 GRADIENT_PINK   = (255, 182, 193)  # top-right corner wash (Angle A/Expertise)
@@ -637,60 +661,67 @@ def _draw_text_left(draw, lines, font, y_top, x_left, color, line_spacing=10, ca
     return y
 
 
-def _add_bottom_strip(canvas: Image.Image, bottom_text: str, strip_height_frac: float = 0.14) -> Image.Image:
+def _add_bottom_strip(canvas: Image.Image, bottom_text: str, strip_h: int) -> Image.Image:
     """
-    White strip at bottom matching Outlier Static Ads v2 reference:
-    - Left: two lines — earnings claim line 1, "Fully remote." line 2
-    - Right: actual Outlier SVG logo (rasterized and tinted to #3D1A00 brown)
-      Falls back to Inter Bold "Outlier" text only if SVG rasterization is unavailable.
+    White strip at the bottom matching Outlier Static Ads v2 reference:
+    - Left: the descriptive line, WRAPPED within the width left of the logo so
+      it never runs under / behind the wordmark (hard rule: logo must not
+      overlap copy — see feedback_creative_layout_rules).
+    - Right: the actual Outlier SVG logo (rasterized, tinted #3D1A00 brown),
+      in its own reserved slot. Falls back to Inter Bold "Outlier" text.
+
+    `strip_h` is the band height in PIXELS; the band spans the FULL canvas width
+    and sits flush at the bottom (height-aware, so it works for non-square
+    canvases like 9:16 — width was previously (mis)used as the height ref).
     """
-    size    = canvas.size[0]
-    strip_h = int(size * strip_height_frac)
-    strip_y = size - strip_h
+    w, h = canvas.size
+    strip_y = h - strip_h
     draw    = ImageDraw.Draw(canvas)
-    draw.rectangle([0, strip_y, size, size], fill=(255, 255, 255, 255))
+    draw.rectangle([0, strip_y, w, h], fill=(255, 255, 255, 255))
 
-    pad = int(size * 0.05)
+    pad = int(w * 0.05)
 
-    # Split bottom_text into two lines at ". " or mid-point
-    if ". " in bottom_text:
-        line1, line2 = bottom_text.split(". ", 1)
-        line1 = line1 + "."
-    else:
-        line1, line2 = bottom_text, ""
-
-    body_size = int(size * 0.027)
-    body_font = _load_font(body_size)
-    bold_font = _load_font(body_size, bold=True)
-
-    # Vertically center the two lines in the strip
-    line_h    = body_size + 4
-    total_h   = line_h * (2 if line2 else 1)
-    text_y    = strip_y + (strip_h - total_h) // 2
-
-    draw.text((pad, text_y), line1, font=bold_font, fill=OUTLIER_BROWN)
-    if line2:
-        draw.text((pad, text_y + line_h), line2, font=body_font, fill=OUTLIER_BROWN)
-
-    # Outlier wordmark — paste the actual SVG logo (tinted brown), right-aligned
-    logo_target_h = int(strip_h * 0.48)  # ~48% of strip height
+    # ── Logo slot FIRST so we know how much width the text may use ──────────────
+    logo_target_h = int(strip_h * 0.48)
     logo_img = _rasterize_outlier_logo(target_width=800)
+    logo_font = None
     if logo_img is not None:
-        # Scale to the target height
         scale = logo_target_h / logo_img.height
-        new_w = int(logo_img.width * scale)
-        logo_img = logo_img.resize((new_w, logo_target_h), Image.LANCZOS)
-        logo_x = size - pad - new_w
+        logo_w = int(logo_img.width * scale)
+        logo_img = logo_img.resize((logo_w, logo_target_h), Image.LANCZOS)
+        logo_x = w - pad - logo_w
         logo_y = strip_y + (strip_h - logo_target_h) // 2
+    else:
+        logo_font = _load_font(int(w * 0.055), bold=True)
+        logo_w = int(draw.textlength("Outlier", font=logo_font))
+        logo_x = w - pad - logo_w
+        logo_y = strip_y + (strip_h - int(w * 0.055)) // 2
+
+    # ── Descriptive line — wrap to the area LEFT of the logo (with a gap) ───────
+    gap = int(w * 0.04)
+    text_max_w = max(int(w * 0.30), logo_x - gap - pad)
+    body_size = int(w * 0.027)
+    body_font = _load_font(body_size, text=bottom_text)
+    lines = _wrap_text(bottom_text, body_font, text_max_w)
+    # Keep to ≤2 lines: shrink the font a little before letting it spill.
+    while len(lines) > 2 and body_size > int(w * 0.020):
+        body_size -= 2
+        body_font = _load_font(body_size, text=bottom_text)
+        lines = _wrap_text(bottom_text, body_font, text_max_w)
+
+    line_h  = body_size + 6
+    total_h = line_h * len(lines)
+    text_y  = strip_y + (strip_h - total_h) // 2
+    y = text_y
+    for ln in lines:
+        draw.text((pad, y), ln, font=body_font, fill=OUTLIER_BROWN)
+        y += line_h
+
+    # ── Paste/draw the logo in its reserved right slot ──────────────────────────
+    if logo_img is not None:
         canvas.paste(logo_img, (logo_x, logo_y), logo_img)
     else:
-        # Fallback: text wordmark in Inter Bold
-        logo_font = _load_font(int(size * 0.055), bold=True)
-        logo_text = "Outlier"
-        logo_w    = draw.textlength(logo_text, font=logo_font)
-        logo_h    = int(size * 0.055)
-        logo_y    = strip_y + (strip_h - logo_h) // 2
-        draw.text((size - pad - logo_w, logo_y), logo_text, font=logo_font, fill=OUTLIER_BROWN)
+        draw.text((logo_x, logo_y), "Outlier", font=logo_font, fill=OUTLIER_BROWN)
 
     return canvas
 
@@ -798,26 +829,33 @@ def compose_ad(
     angle: str = "A",
     bottom_text: str = "",
     with_bottom_strip: bool = True,
+    aspect: tuple[int, int] = (1, 1),
 ) -> Image.Image:
     """
     Composite the final Outlier ad creative from a background photo.
 
-    Layout (matches reference Finance-Branded-BankerMale style):
-      - White canvas (1200×1200)
-      - Photo inset with white border on all 4 sides (~3.3% each)
+    Layout (matches reference Outlier Static Ads v2 style):
+      - White canvas at the aspect's pixel dims (1:1 → 1200×1200, 9:16 → 1080×1920)
+      - Photo inset with white border on all 4 sides
       - Gradient overlay on the photo (corner washes)
-      - White bold headline centered over the photo (top area)
-      - White regular subheadline centered over the photo (near bottom)
-      - White bottom strip: earnings + Outlier wordmark
+      - White bold headline over the photo (top area)
+      - White regular subheadline over the photo (near photo bottom)
+      - White bottom strip: descriptive line (left, wraps before the logo) +
+        Outlier wordmark (right). Logo sits in its own band → never overlaps copy.
+
+    `aspect` makes the compositor canvas-size-aware so the SAME bordered template
+    renders for TikTok 9:16 / 1:1, not just LinkedIn 1:1. All proportional scaling
+    keys off the canvas WIDTH (`size`), so the 1:1 path is byte-for-byte unchanged.
     """
-    size    = AD_SIZE
+    canvas_w, canvas_h = _COMPOSE_CANVAS_DIMS.get(aspect, (AD_SIZE, AD_SIZE))
+    size    = canvas_w                   # scale reference (width); 1:1 → AD_SIZE
     border  = int(size * 0.018)          # ~22px white border — reduced to minimise top strip
 
     strip_h = int(size * 0.14) if with_bottom_strip else border
     photo_x = border
     photo_y = border
-    photo_w = size - 2 * border          # ~1156px
-    photo_h = size - strip_h - border   # 992px  (top border + bottom strip consumed)
+    photo_w = size - 2 * border               # canvas width minus L/R border
+    photo_h = canvas_h - strip_h - border     # canvas height minus top border + bottom strip
 
     # ── 1. Crop generated image to exact photo aspect ratio, then resize ───────
     # Gemini outputs a square (1:1). The photo area is photo_w × photo_h which
@@ -855,7 +893,7 @@ def compose_ad(
     photo_comp.putalpha(photo_mask)
 
     # ── 5. White canvas + paste inset photo ────────────────────────────────────
-    canvas = Image.new("RGBA", (size, size), (255, 255, 255, 255))
+    canvas = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
     canvas.paste(photo_comp, (photo_x, photo_y), photo_comp)
 
     # ── 6. Text — always placed at the TOP, full-width centered. Vertical Y
@@ -916,7 +954,11 @@ def compose_ad(
         hl_lines = _wrap_text(headline, hl_font, max_text_w)
         hl_height = hl_size * len(hl_lines) + LINE_SPACING * (len(hl_lines) - 1)
 
-    hl_top       = max(photo_y + int(photo_h * 0.01), hl_bottom - hl_height)
+    # TOP-anchored (not floated down to the hairline): the brand template keeps
+    # the headline near the top of the photo. The available_height shrink above
+    # guarantees it still ends above hl_bottom, so subject-overlap avoidance is
+    # preserved while a short headline no longer drifts toward the subject.
+    hl_top       = photo_y + TOP_MARGIN_PX
     _draw_text_left(
         draw, hl_lines, hl_font, hl_top,
         0, (255, 255, 255, 255),
@@ -936,7 +978,7 @@ def compose_ad(
     # ── 7. Bottom strip ────────────────────────────────────────────────────────
     canvas = canvas.convert("RGB")
     if with_bottom_strip and bottom_text:
-        canvas = _add_bottom_strip(canvas, bottom_text, strip_h / size)
+        canvas = _add_bottom_strip(canvas, bottom_text, strip_h)
 
     return canvas
 
@@ -1070,14 +1112,7 @@ def generate_imagen_creative(
     )
     log.info("Imagen photo received (%dx%d)", bg_image.width, bg_image.height)
 
-    earnings_match = re.search(
-        r'\$[\d,]+(?:\.\d+)?(?:\s*USD)?(?:\s*(?:/hr|per hour|weekly|hourly))?',
-        subheadline,
-    )
-    if earnings_match:
-        bottom_text = f"Earn {earnings_match.group()} or more. Fully remote."
-    else:
-        bottom_text = "Earn $25–$50 USD per hour. Fully remote."
+    bottom_text = derive_bottom_text(subheadline)
 
     ad_image = compose_ad(
         bg_image=bg_image,

@@ -43,6 +43,7 @@ from src.gemini_creative import (
     _rasterize_outlier_logo,
     _wrap_text,
     compose_ad as _compose_linkedin_ad,
+    derive_bottom_text as _derive_bottom_text,
     detect_subject_bbox,
 )
 
@@ -166,8 +167,23 @@ def compose_ad_for_platform(
 
     if aspect is None:
         aspect = primary_aspect(platform)
+    # All non-LinkedIn channels now use the SAME bordered template as LinkedIn
+    # (Pranav 2026-06-18) — border + inset photo + headline + subheadline + a
+    # white bottom band whose descriptive line wraps before the logo, so the
+    # logo never overlaps copy. Rendered at the platform's aspect. The bottom
+    # line is derived the same way the LinkedIn arm derives it.
     headline = _platform_headline(copy_variant, platform)
-    out = _compose_simple_image_ad(bg_image, headline, aspect, platform=platform)
+    subheadline = _platform_subheadline(copy_variant, platform)
+    bt = bottom_text or _derive_bottom_text(subheadline)
+    out = _compose_linkedin_ad(
+        bg_image=bg_image,
+        headline=headline,
+        subheadline=subheadline,
+        angle=angle,
+        bottom_text=bt,
+        with_bottom_strip=True,
+        aspect=aspect,
+    )
     return _save(out, save_to, suffix=f"_{platform}_{angle}")
 
 
@@ -183,60 +199,78 @@ def _platform_headline(copy_variant: dict, platform: str) -> str:
     return copy_variant.get("headline", "")
 
 
-def _add_outlier_watermark(canvas: Image.Image, platform: str = "") -> Image.Image:
-    """Overlay a small, semi-transparent Outlier wordmark in the bottom-right
-    corner — subtle brand presence without obscuring the subject's face.
+def _platform_subheadline(copy_variant: dict, platform: str) -> str:
+    """Pull the supporting line to render UNDER the headline on the image.
 
-    2026-05-20 (Option C — top-right was tried briefly, switched to bottom-
-    right per user feedback). The watermark sits:
-      - In the BOTTOM-RIGHT corner so it doesn't fight the centered subject
-        (subjects sit upper-middle of the frame in our Gemini prompts)
-      - For TikTok 9:16: ABOVE the 400px bottom CTA / username safe zone so
-        the logo isn't occluded by TikTok's UI overlay
-      - For all other aspects (4:5 / 1:1): a small ~4% margin from the
-        bottom-right corner
+    The simple compositor previously dropped this — fine for Meta/Google where
+    body copy is a separate ad field, but the secondary creatives (esp. TikTok)
+    go to Drive for manual upload where the PNG is the whole ad, so a lone
+    headline reads as a vague one-liner. We now render a subheadline on-image
+    for every simple-compositor channel. Field name varies by copy source:
+    figma_creative.build_copy_variants → 'subheadline'; the platform copy
+    adapters → 'description' / 'primary_text'. First non-empty wins."""
+    if platform == "google":
+        headlines = copy_variant.get("headlines") or []
+        return (
+            copy_variant.get("description", "")
+            or (headlines[1] if len(headlines) > 1 else "")
+            or copy_variant.get("long_headline", "")
+        )
+    return (
+        copy_variant.get("subheadline", "")
+        or copy_variant.get("description", "")
+        or copy_variant.get("primary_text", "")
+    )
 
-    Logo size: ~18% of canvas width — small enough to feel like a watermark,
-    big enough to read at thumbnail size. Opacity: ~60% via alpha-channel
-    multiplication.
-    """
-    canvas_w, canvas_h = canvas.size
 
-    wm_target_w = int(canvas_w * 0.18)
-    # White wordmark on photo (2026-05-20 user direction). Photo backgrounds
-    # are typically mid-to-dark in the bottom-right corner (warm interiors,
-    # window-light scenes), so white reads more legibly than brown.
-    logo_img = _rasterize_outlier_logo(target_width=wm_target_w, color=(255, 255, 255))
+# FIXED Outlier watermark placement per aspect ratio. Explicit pixels (NOT
+# percentages, NOT platform-keyed) so the wordmark lands at the SAME bottom-right
+# spot on every render of a given aspect — copy and photo never move it.
+#   width_px      = rendered wordmark width
+#   pad_right_px  = gap from the canvas RIGHT edge
+#   pad_bottom_px = gap from the canvas BOTTOM edge
+# 9:16 uses a larger bottom pad so the logo clears TikTok's caption / CTA UI
+# strip (which overlays the lower portion of an in-feed post). Adjust these
+# numbers to move the logo; nothing else in the compositor affects placement.
+_WATERMARK_SPEC: dict[tuple[int, int], dict[str, int]] = {
+    (9, 16):    {"width_px": 200, "pad_right_px": 48, "pad_bottom_px": 290},
+    (1, 1):     {"width_px": 200, "pad_right_px": 44, "pad_bottom_px": 44},
+    (4, 5):     {"width_px": 200, "pad_right_px": 44, "pad_bottom_px": 44},
+    (191, 100): {"width_px": 150, "pad_right_px": 32, "pad_bottom_px": 24},
+}
+_WATERMARK_DEFAULT = {"width_px": 200, "pad_right_px": 44, "pad_bottom_px": 44}
+
+
+def _watermark_placement(canvas_w: int, canvas_h: int, aspect: tuple[int, int]):
+    """Return (logo_img, x, y) for the fixed Outlier watermark, or (None, 0, 0)
+    if the logo can't be rasterized. Placement is a pure function of `aspect`
+    (via _WATERMARK_SPEC) — identical for every render regardless of copy/photo.
+    The subheadline compositor reads this so it can sit above the logo box."""
+    spec = _WATERMARK_SPEC.get(aspect, _WATERMARK_DEFAULT)
+    # White wordmark — photo bottom-right corners are typically mid/dark
+    # (warm interiors, window light), so white reads more legibly than brown.
+    logo_img = _rasterize_outlier_logo(target_width=spec["width_px"], color=(255, 255, 255))
     if logo_img is None:
-        return canvas
-
-    # Fade to ~70% opacity by scaling the alpha channel. White at 60% reads
-    # too washed-out on lighter regions; 70% holds the brand without
-    # competing with the headline overlay.
+        return None, 0, 0
+    # Fade to ~70% opacity so it reads as a watermark, not a hard logo.
     if logo_img.mode != "RGBA":
         logo_img = logo_img.convert("RGBA")
     r, g, b, a = logo_img.split()
     a = a.point(lambda p: int(p * 0.70))
     logo_img = Image.merge("RGBA", (r, g, b, a))
+    x = canvas_w - logo_img.width - spec["pad_right_px"]
+    y = canvas_h - logo_img.height - spec["pad_bottom_px"]
+    return logo_img, x, y
 
-    # Bottom-right placement, with platform-aware vertical offset to clear
-    # TikTok's bottom CTA / username safe zone. Tightened to 250px (from the
-    # earlier 400px) — the previous value pushed the watermark to ~75% down
-    # the canvas which read as "center-right" rather than "bottom-right".
-    # 250px covers TikTok's username pill + immediate CTA strip; the larger
-    # 400px is the union of EVERYTHING that can be overlaid (caption text,
-    # sidebar actions) but most of that area is partially transparent and
-    # the watermark at 60% opacity reads fine through it.
-    _TIKTOK_SAFE_BOTTOM_PX = 250
-    pad_right = int(canvas_w * 0.04)
-    pad_bottom = int(canvas_h * 0.025)
-    if platform == "tiktok":
-        wm_y = canvas_h - _TIKTOK_SAFE_BOTTOM_PX - logo_img.height - pad_bottom
-    else:
-        wm_y = canvas_h - logo_img.height - pad_bottom
-    wm_x = canvas_w - logo_img.width - pad_right
 
-    canvas.paste(logo_img, (wm_x, wm_y), logo_img)
+def _add_outlier_watermark(canvas: Image.Image, aspect: tuple[int, int]) -> Image.Image:
+    """Paste the Outlier wordmark at its FIXED per-aspect bottom-right position
+    (see _WATERMARK_SPEC). Bottom-right keeps it clear of the upper-middle photo
+    subject; the placement does not depend on copy, photo, or platform."""
+    logo_img, x, y = _watermark_placement(canvas.size[0], canvas.size[1], aspect)
+    if logo_img is None:
+        return canvas
+    canvas.paste(logo_img, (x, y), logo_img)
     return canvas
 
 
@@ -245,6 +279,7 @@ def _compose_simple_image_ad(
     headline: str,
     aspect: tuple[int, int],
     platform: str = "",
+    subheadline: str = "",
 ) -> Image.Image:
     """Render an Outlier-branded image ad: full-canvas photo + headline overlay
     + a small Outlier watermark in the top-right corner. Used for Meta + Google
@@ -342,10 +377,44 @@ def _compose_simple_image_ad(
         line_spacing=LINE_SPACING, canvas_width=canvas_w,
     )
 
-    # Outlier watermark — small, semi-transparent, top-right corner.
-    # Subtle brand presence without covering the photo subject (which was the
-    # problem with the earlier bottom-strip approach).
-    _add_outlier_watermark(photo, platform=platform)
+    # Supporting subheadline in the lower third — gives the ad context beyond
+    # the headline (critical for TikTok/Drive hand-off where the PNG is the
+    # whole ad). White, centered, smaller than the headline, with its own scrim,
+    # sitting ABOVE the platform bottom safe-zone + the watermark.
+    if subheadline:
+        # Anchor the subheadline just ABOVE the FIXED watermark box so the two
+        # never collide — the logo position is pinned per aspect, so the
+        # subheadline floats up from there rather than the logo moving for copy.
+        _wm_logo, _wm_x, _wm_top = _watermark_placement(canvas_w, canvas_h, aspect)
+        sub_floor = (_wm_top - int(canvas_h * 0.02)) if _wm_logo is not None \
+            else (canvas_h - int(canvas_h * 0.04))
+
+        sub_size = int(base * 0.046)
+        sub_min = int(base * 0.032)
+        sub_font = _load_font(sub_size, bold=False, text=subheadline)
+        sub_lines = _wrap_text(subheadline, sub_font, max_text_w)
+        while len(sub_lines) > 3 and sub_size > sub_min:
+            sub_size -= max(2, int(base * 0.003))
+            sub_font = _load_font(sub_size, bold=False, text=subheadline)
+            sub_lines = _wrap_text(subheadline, sub_font, max_text_w)
+
+        SUB_SPACING = 8
+        sub_height = sub_size * len(sub_lines) + SUB_SPACING * (len(sub_lines) - 1)
+        sub_top = sub_floor - sub_height
+        # Never collide with the headline block above.
+        sub_top = max(sub_top, hl_top + hl_height + int(canvas_h * 0.05))
+
+        sub_scrim = Image.new("RGBA", (canvas_w, sub_height + 2 * scrim_pad_y), (0, 0, 0, 90))
+        photo.alpha_composite(sub_scrim, (0, max(0, sub_top - scrim_pad_y)))
+        _draw_text_left(
+            draw, sub_lines, sub_font, sub_top,
+            0, (255, 255, 255, 255),
+            line_spacing=SUB_SPACING, canvas_width=canvas_w,
+        )
+
+    # Outlier watermark — FIXED bottom-right position per aspect (copy/photo
+    # never move it). See _WATERMARK_SPEC.
+    _add_outlier_watermark(photo, aspect)
 
     return photo.convert("RGB")
 
