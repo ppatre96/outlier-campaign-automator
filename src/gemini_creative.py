@@ -700,7 +700,11 @@ def _add_bottom_strip(canvas: Image.Image, bottom_text: str, strip_h: int) -> Im
     # ── Descriptive line — wrap to the area LEFT of the logo (with a gap) ───────
     gap = int(w * 0.04)
     text_max_w = max(int(w * 0.30), logo_x - gap - pad)
-    body_size = int(w * 0.027)
+    # Description font scales with width, but the 1080-wide portrait/story
+    # formats (9:16 / 4:5) get a larger fraction so the line doesn't read small;
+    # the wider 1:1 / landscape (>=1200) keep the original size.
+    desc_frac = 0.027 if w >= 1200 else 0.032
+    body_size = int(w * desc_frac)
     body_font = _load_font(body_size, text=bottom_text)
     lines = _wrap_text(bottom_text, body_font, text_max_w)
     # Keep to ≤2 lines: shrink the font a little before letting it spill.
