@@ -40,3 +40,15 @@ def test_platform_subheadline_field_precedence():
     assert ia._platform_subheadline({"primary_text": "P"}, "fb") == "P"
     assert ia._platform_subheadline({"headlines": ["H1", "H2"]}, "google") == "H2"
     assert ia._platform_subheadline({"headline": "only"}, "meta") == ""
+
+
+def test_watermark_placement_is_fixed_per_aspect():
+    """The Outlier watermark position is a pure function of aspect — identical
+    coords regardless of copy/photo. 9:16 clears TikTok's caption zone."""
+    l1, x1, y1 = ia._watermark_placement(1080, 1920, (9, 16))
+    l2, x2, y2 = ia._watermark_placement(1080, 1920, (9, 16))
+    assert (x1, y1) == (x2, y2)                      # deterministic
+    assert 1080 - x1 - l1.width == 48                # 48px from right
+    assert 1920 - y1 - l1.height == 290              # 290px from bottom (TikTok-safe)
+    _, xs, ys = ia._watermark_placement(1080, 1080, (1, 1))
+    assert 1080 - ys - l1.height == 44               # 1:1 → 44px from bottom (separate)
