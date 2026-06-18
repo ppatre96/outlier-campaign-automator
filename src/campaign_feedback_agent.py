@@ -711,9 +711,16 @@ def _generate_replacement_copy(
     rate: str,
     geo_label: str,
     old_hook: str = "unknown",
+    target_hook: Optional[str] = None,
 ) -> Optional[dict]:
-    """Use Claude to generate a single new copy variant for a deprecated campaign."""
-    target_hook = _HOOK_ROTATION.get(old_hook, "expert_identity")
+    """Use Claude to generate a single new copy variant.
+
+    By default rotates AWAY from `old_hook` (loser-replacement use). Pass
+    `target_hook` to pin the hook directly — used by the winner-refresh path to
+    generate a FRESH variant in the SAME winning direction instead of rotating.
+    """
+    if target_hook is None:
+        target_hook = _HOOK_ROTATION.get(old_hook, "expert_identity")
     hook_desc   = _HOOK_DESCRIPTIONS.get(target_hook, "")
 
     if winner_entry and winner_entry.get("headline"):
@@ -921,6 +928,132 @@ def _launch_replacement_campaign(
         deprecated_urn, new_campaign_urn, cohort_id, next_label, geo_label,
     )
     return new_campaign_urn
+
+
+# ── Angle double-down execution (gated by ANGLE_AUTO_ACT_ENABLED) ─────────────
+# These run only when the angle-performance loop is allowed to act live
+# (src/angle_performance.act_on_verdicts → _execute_changes). Each reuses the
+# replacement machinery above. Best-effort; the caller isolates failures.
+
+def _find_registry_entry_by_urn(ramp_id: str, campaign_urn: str) -> Optional[dict]:
+    """Look up the full Campaign Registry entry for a campaign URN in a ramp."""
+    from src.campaign_registry import get_active_campaigns
+    for row in get_active_campaigns(smart_ramp_id=ramp_id):
+        if (row.get("linkedin_campaign_urn") or row.get("platform_campaign_id")) == campaign_urn:
+            return row
+    return None
+
+
+def pause_and_replace_angle(ramp_id: str, change, li_client) -> Optional[str]:
+    """Pause a losing angle (deprecate in registry + zero its live budget) and
+    prepare a replacement DRAFT in a fresh direction. Reuses the proven
+    `_launch_replacement_campaign`. `change` is an angle_performance.PlannedChange."""
+    from src.campaign_registry import deprecate_campaign
+    loser = _find_registry_entry_by_urn(ramp_id, change.campaign_urn)
+    if not loser:
+        log.info("pause_and_replace_angle: no registry entry for %s — skip", change.campaign_urn)
+        return None
+    # Pause the live loser (best-effort), then deprecate in the registry.
+    try:
+        if (change.platform or "").lower() == "linkedin":
+            li_client.update_campaign_budget(change.campaign_urn, daily_budget_cents=0)
+    except Exception as exc:  # pragma: no cover
+        log.warning("pause_and_replace_angle: live pause failed for %s: %s", change.campaign_urn, exc)
+    try:
+        deprecate_campaign(change.campaign_urn, reason=change.rationale or "angle underperformed vs winner")
+    except Exception as exc:  # pragma: no cover
+        log.warning("pause_and_replace_angle: deprecate_campaign failed: %s", exc)
+    brief = {"problems": [change.rationale] if change.rationale else []}
+    return _launch_replacement_campaign(loser, brief, li_client)
+
+
+def create_winner_variant_draft(ramp_id: str, change, li_client) -> Optional[str]:
+    """Prepare a fresh DRAFT variant of the WINNING angle (same winning direction),
+    cloning the winner's targeting. Does NOT modify the winner. `change` is an
+    angle_performance.PlannedChange of kind 'refresh'."""
+    from src.campaign_registry import get_cohort_entries, log_campaign as _reg_log
+    from src.gemini_creative import generate_imagen_creative_with_qc
+    from src.figma_creative import rewrite_variant_copy
+
+    winner = _find_registry_entry_by_urn(ramp_id, change.campaign_urn)
+    if not winner or (winner.get("campaign_type", "static") != "static"):
+        log.info("create_winner_variant_draft: no static winner entry for %s — skip", change.campaign_urn)
+        return None
+
+    cohort_id   = winner.get("cohort_id", "")
+    geo_cluster = winner.get("geo_cluster", "")
+    cohort_name = winner.get("cohort_signature", "")
+    geo_label   = winner.get("geo_cluster_label", "")
+    rate        = winner.get("advertised_rate", "$50/hr")
+    geos        = [g.strip() for g in (winner.get("geos") or "").split(",") if g.strip()]
+    winner_urn  = winner.get("linkedin_campaign_urn") or change.campaign_urn
+
+    entries = get_cohort_entries(cohort_id, geo_cluster)
+    # Idempotency: one winner-variant (angle D+) per cohort+geo per cycle.
+    if any((e.get("angle") or "") > "C" and e.get("status") in ("active", "paused", "draft") for e in entries):
+        log.info("create_winner_variant_draft: a refreshed variant already exists for %s/%s — skip", cohort_id, geo_cluster)
+        return None
+    next_label = _next_angle_label([e.get("angle", "") for e in entries])
+
+    # Fresh variant in the SAME winning direction (expertise-led evergreen),
+    # using the winner's copy as inspiration.
+    copy_out = _generate_replacement_copy(
+        cohort_name=cohort_name,
+        old_headline=winner.get("headline", ""),
+        old_subheadline=winner.get("subheadline", ""),
+        problems=[],
+        winner_entry=winner,
+        rate=rate,
+        geo_label=geo_label,
+        target_hook="expert_identity",
+    )
+    if not copy_out or not copy_out.get("headline"):
+        log.warning("create_winner_variant_draft: copy gen empty for %s — skip", cohort_id)
+        return None
+    headline, subheadline = copy_out["headline"], copy_out.get("subheadline", "")
+    photo_subject = copy_out.get("photo_subject", "")
+    variant = {"angle": next_label, "headline": headline, "subheadline": subheadline,
+               "photo_subject": photo_subject, "cta": copy_out.get("cta", "Apply Now"), "tgLabel": cohort_name}
+
+    png_path: Optional[Path] = None
+    try:
+        png_path, _qc = generate_imagen_creative_with_qc(variant=variant, copy_rewriter=rewrite_variant_copy)
+    except Exception as exc:  # pragma: no cover
+        log.warning("create_winner_variant_draft: image gen failed for %s: %s", cohort_id, exc)
+
+    try:
+        new_urn = li_client.clone_campaign(winner_urn, f"{cohort_name[:30]} [{geo_label}] {next_label}")
+    except Exception as exc:  # pragma: no cover
+        log.error("create_winner_variant_draft: clone failed for %s: %s", winner_urn, exc)
+        return None
+
+    creative_urn = ""
+    if png_path and Path(str(png_path)).exists():
+        try:
+            image_urn = li_client.upload_image(png_path)
+            result = li_client.create_image_ad(
+                campaign_urn=new_urn, image_urn=image_urn,
+                headline=headline, description=subheadline, cta_button="APPLY",
+            )
+            creative_urn = result.creative_urn if result.status == "ok" else ""
+        except Exception as exc:  # pragma: no cover
+            log.warning("create_winner_variant_draft: creative attach failed for %s: %s", new_urn, exc)
+
+    try:
+        _reg_log(
+            smart_ramp_id=winner.get("smart_ramp_id", ""), cohort_id=cohort_id,
+            cohort_signature=cohort_name, geo_cluster=geo_cluster, geo_cluster_label=geo_label,
+            geos=geos, angle=next_label, campaign_type="static", advertised_rate=rate,
+            linkedin_campaign_urn=new_urn, creative_urn=creative_urn,
+            headline=headline, subheadline=subheadline, photo_subject=photo_subject,
+            creative_image_path=str(png_path) if png_path else "",
+        )
+    except Exception as exc:  # pragma: no cover
+        log.warning("create_winner_variant_draft: registry log failed: %s", exc)
+
+    log.info("Winner-variant draft: %s → %s (cohort=%s angle=%s) doubling down on winner",
+             winner_urn, new_urn, cohort_id, next_label)
+    return new_urn
 
 
 # ── Experiment queue management ────────────────────────────────────────────────

@@ -16,6 +16,19 @@ from src.campaign_feedback_agent import (
 )
 
 
+def test_target_hook_bypasses_rotation():
+    """Winner-refresh pins the hook directly instead of rotating away from old_hook."""
+    with patch("src.campaign_feedback_agent.call_claude") as m:
+        m.return_value = '{"headline":"h","subheadline":"s","photo_subject":"p","cta":"Apply Now"}'
+        _generate_replacement_copy(
+            "Coh", "old h", "old s", [], None, "$50/hr", "US",
+            old_hook="financial", target_hook="expert_identity",
+        )
+    prompt = m.call_args.kwargs["messages"][0]["content"]
+    assert "TARGET HOOK: expert_identity" in prompt
+    assert "TARGET HOOK: legacy_impact" not in prompt
+
+
 # ── _next_angle_label ──────────────────────────────────────────────────────────
 
 def test_next_angle_first_replacement():

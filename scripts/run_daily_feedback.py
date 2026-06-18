@@ -23,6 +23,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+import config  # noqa: E402  (needs _PROJECT_ROOT on sys.path first)
+
 
 log = logging.getLogger("run_daily_feedback")
 
@@ -109,6 +111,17 @@ def main() -> int:
             recs = agent.recommend_actions(ramp_id)
             total += len(recs)
             log.info("  %s → %d recommendations", ramp_id, len(recs))
+            # Angle double-down: decide which angle wins per cohort, surface
+            # scale/refresh/pause into the console "Live performance &
+            # recommendations" section + post a Slack change summary. Live
+            # execution gated behind ANGLE_AUTO_ACT_ENABLED (default off). Same
+            # per-ramp try/except → one ramp's failure never aborts the pass.
+            if config.ANGLE_LOOP_ENABLED:
+                from src import angle_performance
+                verdicts = angle_performance.analyze_angles(ramp_id)
+                angle_performance.act_on_verdicts(
+                    verdicts, ramp_id=ramp_id, auto_act=config.ANGLE_AUTO_ACT_ENABLED,
+                )
         except Exception as exc:
             errors += 1
             log.exception("Failed to score %s: %s", ramp_id, exc)
