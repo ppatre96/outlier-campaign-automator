@@ -1,9 +1,27 @@
 """Smart Ramp API client for fetching ramps and their cohort specifications."""
 
+import json
 import os
 import requests
 from typing import Optional
 from dataclasses import dataclass
+
+
+def _domain_match_failed(lp_guardrail_snapshot) -> bool:
+    """True when Smart Ramp's domain matcher couldn't classify the job post.
+
+    `lp_guardrail_snapshot` is a JSON string (or dict) on the cohort; when its
+    `error` is "domain_not_found", `job_post_domain` is a junk guess and naming
+    should prefer `matched_domain`. Defensive — any parse failure → False."""
+    snap = lp_guardrail_snapshot
+    if isinstance(snap, str):
+        try:
+            snap = json.loads(snap)
+        except Exception:
+            return False
+    if not isinstance(snap, dict):
+        return False
+    return str(snap.get("error", "")).strip().lower() == "domain_not_found"
 
 
 @dataclass
@@ -28,6 +46,11 @@ class CohortSpec:
     job_post_language_code: Optional[str] = None    # e.g. "en-US"
     campaign_state: Optional[dict] = None           # formData.cohorts[].campaign_state — full nested dict
     job_post_pay_rates: Optional[list[str]] = None  # formData.cohorts[].job_post_pay_rates — e.g. ["up to $35 /hr"]
+    # True when Smart Ramp's domain matcher FAILED (lp_guardrail_snapshot
+    # error == "domain_not_found"). job_post_domain then holds a junk guess
+    # (e.g. a BLV ramp tagged "Media & Communications") → naming prefers
+    # matched_domain instead. See campaign-name segment 4.
+    domain_match_failed: bool = False
 
 
 @dataclass
@@ -203,4 +226,5 @@ class SmartRampClient:
             job_post_language_code=raw.get("job_post_language_code"),
             campaign_state=raw.get("campaign_state"),
             job_post_pay_rates=raw.get("job_post_pay_rates"),
+            domain_match_failed=_domain_match_failed(raw.get("lp_guardrail_snapshot")),
         )

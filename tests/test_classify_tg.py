@@ -28,6 +28,13 @@ from src.figma_creative import classify_tg, TG_PALETTES, TG_ILLUS_VARIANTS
     ("cardiology specialist", [], "MEDICAL"),
     ("clinical nurse", [], "MEDICAL"),
 
+    # ACCESSIBILITY — new bucket (GMR-0024 BLV). Must win over LANGUAGE/GENERAL.
+    ("Screen reader & braille users (blind / low-vision)", [], "ACCESSIBILITY"),
+    ("Accessibility & assistive-technology professionals", [], "ACCESSIBILITY"),
+    ("Legally blind US-based Android/TalkBack users", [], "ACCESSIBILITY"),
+    ("WCAG auditor", [], "ACCESSIBILITY"),
+    ("cohort_9", [("skills__screen_reader", 1)], "ACCESSIBILITY"),
+
     # LANGUAGE — unchanged
     ("hindi translators", [], "LANGUAGE"),
     ("spanish linguist", [], "LANGUAGE"),
@@ -78,7 +85,7 @@ def test_tg_illus_variants_has_math():
 
 def test_all_classify_outputs_have_palette_and_illus():
     """Guardrail: every string returned by classify_tg must have a matching dict entry."""
-    expected_buckets = {"DATA_ANALYST", "ML_ENGINEER", "MATH", "MEDICAL", "LANGUAGE", "SOFTWARE_ENGINEER", "GENERAL"}
+    expected_buckets = {"DATA_ANALYST", "ML_ENGINEER", "MATH", "MEDICAL", "ACCESSIBILITY", "LANGUAGE", "SOFTWARE_ENGINEER", "GENERAL"}
     for bucket in expected_buckets:
         assert bucket in TG_PALETTES, f"{bucket} missing from TG_PALETTES"
         assert bucket in TG_ILLUS_VARIANTS, f"{bucket} missing from TG_ILLUS_VARIANTS"

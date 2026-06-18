@@ -5,7 +5,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from unittest.mock import patch
 
-from src.copy_adapter import _truncate, adapt_copy_for_platform
+import config
+from src.copy_adapter import _truncate, adapt_copy_for_platform, localize_variant
+from src.locales import get_locale
+
+HI = get_locale("hi-in")  # Hindi LocaleTargeting
+
+
+def _prompt_of(mock_claude) -> str:
+    """The user-message prompt string passed to call_claude."""
+    return mock_claude.call_args.kwargs["messages"][0]["content"]
 
 
 CANONICAL = {
@@ -107,3 +116,85 @@ class TestGoogleAdapt:
             out = adapt_copy_for_platform(CANONICAL, "google")
         assert len(out["headlines"]) == 3
         assert len(out["descriptions"]) == 3
+
+
+class TestNewcomerContext:
+    """Newcomer-context instruction is unconditional (not gated on locale)."""
+
+    def test_meta_prompt_has_newcomer_block(self):
+        with patch("src.copy_adapter.call_claude") as mock_claude:
+            mock_claude.return_value = '{"headline":"X","primary_text":"Y","description":"Z","cta":"APPLY_NOW"}'
+            adapt_copy_for_platform(CANONICAL, "meta")
+        p = _prompt_of(mock_claude)
+        assert "NEWCOMER CONTEXT" in p and "heard of Outlier" in p
+
+    def test_google_and_reddit_prompts_have_newcomer_block(self):
+        with patch("src.copy_adapter.call_claude") as mock_claude:
+            mock_claude.return_value = '{"headlines":["a"],"long_headline":"b","descriptions":["c"]}'
+            adapt_copy_for_platform(CANONICAL, "google")
+            assert "NEWCOMER CONTEXT" in _prompt_of(mock_claude)
+            mock_claude.return_value = '{"title":"a","cta":"Sign Up","freeform_title":"b","freeform_body":"c"}'
+            adapt_copy_for_platform(CANONICAL, "reddit")
+            assert "NEWCOMER CONTEXT" in _prompt_of(mock_claude)
+
+
+class TestLocalization:
+    """Language block fires for non-LinkedIn channels + a resolved locale only,
+    and is gated by LOCALIZE_PLATFORM_COPY."""
+
+    def test_meta_with_locale_injects_language_block(self):
+        with patch("src.copy_adapter.call_claude") as mock_claude:
+            mock_claude.return_value = '{"headline":"X","primary_text":"Y","description":"Z","cta":"APPLY_NOW"}'
+            adapt_copy_for_platform(CANONICAL, "meta", locale=HI)
+        p = _prompt_of(mock_claude)
+        assert "LANGUAGE REQUIREMENT" in p and "Hindi" in p
+        assert "KEEP IN ENGLISH" in p and "$50/hr" in p  # keep-$/USD rule present
+
+    def test_no_language_block_without_locale(self):
+        with patch("src.copy_adapter.call_claude") as mock_claude:
+            mock_claude.return_value = '{"headline":"X","primary_text":"Y","description":"Z","cta":"APPLY_NOW"}'
+            adapt_copy_for_platform(CANONICAL, "meta", locale=None)
+        assert "LANGUAGE REQUIREMENT" not in _prompt_of(mock_claude)
+
+    def test_language_block_gated_off_by_config(self):
+        with patch("config.LOCALIZE_PLATFORM_COPY", False), \
+             patch("src.copy_adapter.call_claude") as mock_claude:
+            mock_claude.return_value = '{"headline":"X","primary_text":"Y","description":"Z","cta":"APPLY_NOW"}'
+            adapt_copy_for_platform(CANONICAL, "meta", locale=HI)
+        assert "LANGUAGE REQUIREMENT" not in _prompt_of(mock_claude)
+
+    def test_linkedin_passthrough_ignores_locale(self):
+        # LinkedIn stays English — no LLM, returns the input object unchanged.
+        out = adapt_copy_for_platform(CANONICAL, "linkedin", locale=HI)
+        assert out is CANONICAL
+
+
+class TestLocalizeVariant:
+    def test_translates_fields(self):
+        with patch("src.copy_adapter.call_claude") as mock_claude:
+            mock_claude.return_value = (
+                '{"headline":"हिंदी विशेषज्ञ चाहिए","subheadline":"घर से काम करें",'
+                '"intro_text":"लचीला रिमोट काम","ad_headline":"अभी आवेदन करें",'
+                '"ad_description":"$50/hr, पूरी तरह रिमोट"}'
+            )
+            out = localize_variant(CANONICAL, HI)
+        assert out["headline"] == "हिंदी विशेषज्ञ चाहिए"
+        assert "$50/hr" in out["ad_description"]
+        # photo_subject is an image-gen prompt → must stay English / untouched.
+        assert out["photo_subject"] == CANONICAL["photo_subject"]
+        # keep-$/USD rule present in the translation prompt.
+        assert "KEEP IN ENGLISH" in _prompt_of(mock_claude)
+
+    def test_returns_input_on_llm_failure(self):
+        with patch("src.copy_adapter.call_claude", side_effect=RuntimeError("API down")):
+            out = localize_variant(CANONICAL, HI)
+        assert out is CANONICAL
+
+    def test_noop_without_locale(self):
+        out = localize_variant(CANONICAL, None)
+        assert out is CANONICAL
+
+    def test_noop_when_config_off(self):
+        with patch("config.LOCALIZE_PLATFORM_COPY", False):
+            out = localize_variant(CANONICAL, HI)
+        assert out is CANONICAL

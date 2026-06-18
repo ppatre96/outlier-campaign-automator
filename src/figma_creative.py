@@ -31,6 +31,7 @@ TG_PALETTES = {
     "SOFTWARE_ENGINEER": [{"r": 0.67, "g": 0.85, "b": 1.00}, {"r": 0.85, "g": 0.95, "b": 1.00}],
     "MEDICAL":           [{"r": 0.87, "g": 0.85, "b": 1.00}, {"r": 0.93, "g": 0.91, "b": 1.00}],
     "LANGUAGE":          [{"r": 0.78, "g": 0.94, "b": 0.86}, {"r": 0.88, "g": 0.98, "b": 0.94}],
+    "ACCESSIBILITY":     [{"r": 0.87, "g": 0.85, "b": 1.00}, {"r": 0.93, "g": 0.91, "b": 1.00}],
     "GENERAL":           [{"r": 0.78, "g": 0.88, "b": 1.00}, {"r": 0.88, "g": 0.94, "b": 1.00}],
 }
 
@@ -41,6 +42,7 @@ TG_ILLUS_VARIANTS = {
     "SOFTWARE_ENGINEER": ["code",   "chart",  "neural"],
     "MEDICAL":           ["brain",  "speech", "brain"],
     "LANGUAGE":          ["speech", "brain",  "speech"],
+    "ACCESSIBILITY":     ["speech", "brain",  "chart"],
     "GENERAL":           ["chart",  "code",   "neural"],
 }
 
@@ -50,7 +52,7 @@ TG_ILLUS_VARIANTS = {
 def classify_tg(cohort_name: str, rules: list) -> str:
     """
     Port of ui.html classifyTG() — keyword regex against cohort name + feature columns.
-    Returns one of: DATA_ANALYST, ML_ENGINEER, MATH, MEDICAL, LANGUAGE, SOFTWARE_ENGINEER, GENERAL
+    Returns one of: DATA_ANALYST, ML_ENGINEER, MATH, MEDICAL, ACCESSIBILITY, LANGUAGE, SOFTWARE_ENGINEER, GENERAL
     """
     # Replace __ separators with spaces so \b word-boundary regexes match correctly
     # e.g. "skills__diagnosis" → "skills  diagnosis" → \bdiagnosis\b matches
@@ -65,6 +67,8 @@ def classify_tg(cohort_name: str, rules: list) -> str:
     if re.search(r'\b(doctor|physician|clinical|nurse|dentist|surgeon|orthopedic|diagnosis|medicine|anatomy|physiology|surgery|emergency|pharmacol|therapeut|patient|hospital|healthcare)\b', text) or \
        re.search(r'(radiolog|cardiolog|oncolog|patholog|neurolog|psychiatr|pediatr|dermatol|urolog|nephrolog|gastroenterol|endocrinol|immunolog|pulmonol|ophthal|anesthesiol|internal.?med|medical|health|pharma|biotech|med.?grad)', text):
         return "MEDICAL"
+    if re.search(r'\b(accessibility|assistive|screen.?reader|braille|low.?vision|visually.?impaired|blind|wcag|talkback|voiceover|jaws|nvda|a11y|deaf|hard.?of.?hearing|captioning|disabilit)\b', text):
+        return "ACCESSIBILITY"
     if re.search(r'\b(hindi|urdu|lingui|translat|spanish|french|german|arabic|japanese|korean|chinese|portuguese|italian|language)\b', text):
         return "LANGUAGE"
     if re.search(r'\b(software|engineer|developer|backend|frontend|fullstack|swe|devops|cloud|aws|python|java|react|node)\b', text):
@@ -407,6 +411,51 @@ def build_copy_variants(
         prompt += geo_icp_hint
         log.info("Copy gen injecting geo ICP hint (%d chars)", len(geo_icp_hint))
 
+    # ── Locale-language override (generalist locale cohorts, 2026-06-10) ─────
+    # For generalist locale cohorts (e.g. "German generalist contributors"),
+    # the ICP `language_pref` field (e.g. "German") must trigger native-language
+    # copy — not just photo-subject ethnicity. Two detection paths:
+    #   (a) ICP language_pref set to a non-English language — fires for ramps
+    #       that went through _resolve_locale_cohort + upsert_cohort_icp.
+    #   (b) cohort.facet_strength["generalist_locale"] — fires for generalist
+    #       cohorts discovered in the current session before ICP is persisted.
+    # The instruction is injected BEFORE the ICP block so the model sees it
+    # early in the prompt (Anthropic context-priority: earlier = higher weight).
+    _locale_lang: str = ""
+    _locale_key: str = ""
+    # Path (b): facet_strength on the cohort object
+    _fs = getattr(cohort, "facet_strength", {}) or {}
+    if _fs.get("generalist_locale"):
+        _locale_key = str(_fs["generalist_locale"]).strip().lower().replace("_", "-")
+    # We'll also check ICP lang in the ICP block below; set _locale_lang now
+    # only from facet_strength so the ICP block's lang variable can override.
+    if _locale_key:
+        from src.locales import LOCALES as _LOCALES
+        _lt = _LOCALES.get(_locale_key)
+        if _lt:
+            _locale_lang = _lt.display_language
+
+    # LinkedIn stays English by default (2026-06-17). The native-language
+    # injection below is gated behind LOCALIZE_LINKEDIN_COPY (default OFF) —
+    # localization now happens for the non-LinkedIn channels in copy_adapter.
+    if _locale_lang and config.LOCALIZE_LINKEDIN_COPY:
+        from src.locales import locale_brand_voice_notes as _lbv
+        _vocab = _lbv(_locale_lang)
+        prompt += (
+            f"\n\n## LANGUAGE REQUIREMENT — MANDATORY\n"
+            f"**ALL copy fields (headline, subheadline, intro_text, ad_headline, ad_description) "
+            f"MUST be written in {_locale_lang}.** The brand name 'Outlier' stays in English. "
+            f"photo_subject remains in English (it's an image generation prompt, not ad copy).\n"
+            f"\nLocale brand-voice rules for {_locale_lang}:\n{_vocab}\n"
+            f"\nThis is NOT optional. The audience speaks {_locale_lang} and English-language ads "
+            f"land at a fraction of the CTR of native-language ads for this audience segment. "
+            f"Every word of ad copy (headline through ad_description) must be in {_locale_lang}.\n"
+        )
+        log.info(
+            "Copy gen: locale-language injection for '%s' → %s (facet_strength path)",
+            cohort.name, _locale_lang,
+        )
+
     # ── Cohort ICP injection ────────────────────────────────────────────────
     # Pulled from cohort_icp (Postgres) via icp_enrichment.enrich(). When
     # present, anchors the LLM on the audience's actual motivations + content
@@ -456,6 +505,26 @@ def build_copy_variants(
                 liberty, lang or "?", len(motivations), len(content_prefs),
                 len(decision_drivers), len(skill_priorities),
             )
+
+            # ICP path (a): if language_pref is a non-English language and the
+            # facet_strength path hasn't already injected a language block,
+            # inject it here so the model writes native-language copy.
+            _english_langs = {"", "English", "en", "en-US", "en-GB", "en-AU", "(not provided)"}
+            if lang and lang not in _english_langs and not _locale_lang and config.LOCALIZE_LINKEDIN_COPY:
+                from src.locales import locale_brand_voice_notes as _lbv
+                _icp_vocab = _lbv(lang)
+                prompt += (
+                    f"\n\n## LANGUAGE REQUIREMENT — MANDATORY\n"
+                    f"**ALL copy fields (headline, subheadline, intro_text, ad_headline, ad_description) "
+                    f"MUST be written in {lang}.** The brand name 'Outlier' stays in English. "
+                    f"photo_subject remains in English (image generation prompt, not ad copy).\n"
+                    f"\nLocale brand-voice rules for {lang}:\n{_icp_vocab}\n"
+                    f"\nThe audience speaks {lang}. Every word of ad copy must be in {lang}.\n"
+                )
+                log.info(
+                    "Copy gen: locale-language injection for '%s' → %s (ICP language_pref path)",
+                    cohort.name, lang,
+                )
 
     if competitor_context:
         prompt += competitor_context

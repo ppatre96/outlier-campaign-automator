@@ -48,6 +48,7 @@ from src.figma_creative import (
 )
 from src.gemini_creative import generate_imagen_creative, generate_imagen_creative_with_qc
 from src.inmail_copy_writer import build_inmail_variants
+from src.task_card import cached_card
 from src.campaign_monitor import (
     check_learning_phase,
     get_pass_rates_from_snowflake,
@@ -1276,6 +1277,7 @@ def _process_inmail_campaigns(
                         tg_cat, cohort, claude_key,
                         hourly_rate=geo_group.advertised_rate,
                         geo_icp_hint=geo_group.icp_hint,
+                        task_card=cached_card(ramp_id, cohort_id_override),
                     )
                     v = variants[["A","B","C"].index(angle_label) % len(variants)]
                 log.info("[dry-run] Subject: %s", v.subject)
@@ -1355,6 +1357,7 @@ def _process_inmail_campaigns(
                 tg_cat, cohort, claude_key,
                 hourly_rate=geo_group.advertised_rate,
                 geo_icp_hint=geo_group.icp_hint,
+                task_card=cached_card(ramp_id, cohort_id_override),
             )
             if not variants:
                 log.warning(
@@ -3537,6 +3540,7 @@ def _process_static_campaigns(
                                 geos=group_geos,
                                 hourly_rate=geo_group.advertised_rate,
                                 reviewer_comment=b.reviewer_comment or "",
+                                task_card=cached_card(ramp_id, cohort_id_override),
                             )
                             if v:
                                 variants.append(v)
@@ -4222,7 +4226,8 @@ def _process_extra_platform_arm(
     """
     from src.ad_platform import CreateAdResult
     from src.campaign_registry import log_campaign as _reg_log
-    from src.copy_adapter import adapt_copy_for_platform
+    from src.copy_adapter import adapt_copy_for_platform, localize_variant
+    from src.locales import resolve_copy_locale
     from src import launch_verify
 
     out: dict = {
@@ -4294,6 +4299,7 @@ def _process_extra_platform_arm(
                         hourly_rate=getattr(geo_group_e, "advertised_rate", "") or "",
                         reviewer_comment=_matching[0].reviewer_comment or "",
                         channel=platform,
+                        task_card=cached_card(ramp_id, cohort_id_override),
                     )
                     if _v:
                         variant_e = _v
@@ -4307,6 +4313,25 @@ def _process_extra_platform_arm(
                     "failed (%s) — falling back to LinkedIn-adapted variant",
                     platform, _exc,
                 )
+
+        # ── Localize the variant for non-LinkedIn channels + locale-defined
+        # cohorts (2026-06-17). Translates headline/subheadline (→ the image
+        # overlay) + body fields into the cohort's language, keeping $/USD/
+        # numerals + "Outlier" in English. No-op for English cohorts or when
+        # LOCALIZE_PLATFORM_COPY is off. Done BEFORE PNG composition so the
+        # overlay renders in-language (image_adapter passes text= so the
+        # script-aware font + RAQM shaping engage — no tofu). LinkedIn is
+        # excluded by design; this arm only runs meta/google/google_search/reddit.
+        copy_locale_e = resolve_copy_locale(cohort_e, getattr(cohort_e, "_icp", None))
+        if config.LOCALIZE_PLATFORM_COPY and copy_locale_e and variant_e:
+            variant_e = localize_variant(variant_e, copy_locale_e)
+            if isinstance(variants_e, list) and angle_idx_e < len(variants_e):
+                variants_e[angle_idx_e] = variant_e
+            log.info(
+                "_process_extra_platform_arm[%s]: localized variant → %s for cohort=%s geo=%s angle=%s",
+                platform, copy_locale_e.display_language,
+                getattr(cohort_e, "name", "")[:40], cluster_suffix, angle_label_e,
+            )
 
         # 2026-05-20: Meta arm regenerates a fresh 4:5 (1080×1350) photo
         # instead of reusing the LinkedIn 1:1 composite. Per Meta Help Center
@@ -4431,7 +4456,7 @@ def _process_extra_platform_arm(
                 )
         drive_urls_by_spec[spec_key] = drive_url_e
 
-        platform_copy_e = adapt_copy_for_platform(variant_e, platform, icp=getattr(cohort_e, "_icp", None)) if variant_e else {}
+        platform_copy_e = adapt_copy_for_platform(variant_e, platform, icp=getattr(cohort_e, "_icp", None), locale=copy_locale_e) if variant_e else {}
         # Reddit: the manual-upload manifest needs the targeting + conversion an
         # operator would otherwise have to reconstruct — per-pod subreddits +
         # interests/keywords (from the resolver), the intended worker_skill_grant
@@ -4860,7 +4885,7 @@ def _process_extra_platform_arm(
             variant     = variants[angle_idx] if angle_idx < len(variants) else {}
             row_id = f"{by_cohort_key}_{angle_label}"
 
-            platform_copy = adapt_copy_for_platform(variant, platform, icp=getattr(cohort, "_icp", None)) if variant else {}
+            platform_copy = adapt_copy_for_platform(variant, platform, icp=getattr(cohort, "_icp", None), locale=resolve_copy_locale(cohort, getattr(cohort, "_icp", None))) if variant else {}
 
             # Drive URL was uploaded in Phase 1; reuse the cached URL to avoid
             # a duplicate Drive write (idempotent at the filename level — the
@@ -5255,12 +5280,38 @@ def _process_row_both_modes(
         "submitted_at":  row.get("ramp_submitted_at", "") or "",
         "pod":           row.get("job_post_pod"),
         # Name "domain" segment = Smart Ramp tool's job_post_domain (e.g. "bn-IN"),
-        # falling back to matched_domain for ramps that don't carry it.
-        "domain":        row.get("job_post_domain") or row.get("matched_domain"),
+        # falling back to matched_domain for ramps that don't carry it. When the
+        # Smart Ramp domain matcher FAILED (domain_not_found), job_post_domain is a
+        # junk guess (e.g. a BLV ramp tagged "Media & Communications") — prefer
+        # matched_domain instead so the name isn't actively misleading.
+        "domain": (
+            (row.get("matched_domain") or row.get("job_post_domain"))
+            if row.get("domain_match_failed")
+            else (row.get("job_post_domain") or row.get("matched_domain"))
+        ),
         "locale":        row.get("job_post_language_code"),
         "included_geos": row.get("included_geos") or [],
         "campaign_state": row.get("campaign_state"),
     }
+
+    # Ground copy in the real task: build the task card ONCE per row (LP scrape +
+    # Smart Ramp fields → what they do / device / artifact) and cache it by
+    # (ramp_id, cohort_id). Every copy generator (InMail + Phase-2 → which all
+    # channels reshape) reads it via task_card.cached_card and grounds the copy
+    # in these facts instead of inventing them. No-op when TASK_GROUNDING_ENABLED
+    # is off; stays general (never fabricates) when grounding is thin.
+    if config.TASK_GROUNDING_ENABLED:
+        try:
+            from src.task_card import warm_task_card
+            warm_task_card(
+                ramp_id, row.get("cohort_id"),
+                lp_url=row.get("selected_lp_url"),
+                ramp_summary=row.get("ramp_summary", "") or "",
+                cohort_description=row.get("cohort_description", "") or "",
+            )
+        except Exception as _exc:
+            log.warning("task-card warm failed (non-fatal, copy stays ungrounded): %s", _exc)
+
     """Phase 2.6: run cohort discovery ONCE per row, then dispatch BOTH InMail
     + Static arms.
 
@@ -5476,6 +5527,7 @@ def _process_row_both_modes(
                                 geo_icp_hint="",  # geo ICP hints not yet wired into prep path
                                 icp=getattr(cohort, "_icp", None),
                                 channel=channel,
+                                task_card=cached_card(ramp_id, cohort_id_override),
                             )
                         except Exception as exc:
                             log.warning(
@@ -5808,6 +5860,8 @@ def _ramp_to_rows(ramp) -> list[dict]:
             "ramp_submitted_at": ramp.submitted_at or "",
             "cohort_id": cohort.id,
             "cohort_description": cohort.cohort_description,
+            # Ramp-wide brief — feeds task-card grounding alongside cohort_description.
+            "ramp_summary": ramp.summary or "",
             "selected_lp_url": cohort.selected_lp_url,
             "included_geos": cohort.included_geos,
             "matched_locales": cohort.matched_locales,
@@ -5818,6 +5872,7 @@ def _ramp_to_rows(ramp) -> list[dict]:
             "job_post_pod": getattr(cohort, "job_post_pod", None),
             "matched_domain": getattr(cohort, "matched_domain", None),
             "job_post_domain": getattr(cohort, "job_post_domain", None),
+            "domain_match_failed": getattr(cohort, "domain_match_failed", False),
             "job_post_language_code": getattr(cohort, "job_post_language_code", None),
             "campaign_state": getattr(cohort, "campaign_state", None),
             "job_post_pay_rates": getattr(cohort, "job_post_pay_rates", None),

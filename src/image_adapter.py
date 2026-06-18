@@ -312,11 +312,16 @@ def _compose_simple_image_ad(
     base = min(canvas_w, canvas_h)
     hl_size = int(base * 0.075)
     hl_min  = int(base * 0.050)
-    hl_font  = _load_font(hl_size, bold=True)
+    # Pass `text=headline` so _load_font detects non-Latin scripts (Devanagari,
+    # Bengali, Thai, Arabic, CJK, Hangul, …) and loads a script-aware font +
+    # RAQM shaping. Without it, localized overlays render as tofu/"?" — the
+    # exact regression LinkedIn's compose_ad was fixed for in d7accfb; this
+    # path (Meta/Google/Reddit) was still loading the Latin-only brand font.
+    hl_font  = _load_font(hl_size, bold=True, text=headline)
     hl_lines = _wrap_text(headline, hl_font, max_text_w)
     while len(hl_lines) > 2 and hl_size > hl_min:
         hl_size -= max(2, int(base * 0.004))
-        hl_font  = _load_font(hl_size, bold=True)
+        hl_font  = _load_font(hl_size, bold=True, text=headline)
         hl_lines = _wrap_text(headline, hl_font, max_text_w)
 
     LINE_SPACING = 10

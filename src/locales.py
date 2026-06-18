@@ -250,3 +250,93 @@ def get_locale(locale: str | None) -> LocaleTargeting | None:
         return None
     key = locale.strip().lower().replace("_", "-")
     return LOCALES.get(key)
+
+
+# ── Copy localization (2026-06-17) ─────────────────────────────────────────────
+# BCP-47 prefixes / exact codes that mean "English audience" → no localization.
+# language_pref is a BCP-47 code (e.g. "hi-IN", "en-US", "es-419"); en-* of any
+# region (en-IN, en-GB, en-AU) is an English audience and must NOT be localized.
+_ENGLISH_LANGUAGE_CODES = {"", "en"}
+
+
+# Per-language brand-voice notes for the native-language copy LLM. Keyed by the
+# LocaleTargeting.display_language label. Single source of truth — both
+# copy_adapter (Meta/Google/Reddit localization) and figma_creative consume this.
+# Languages without an entry fall back to a generic instruction (see
+# locale_brand_voice_notes). "Outlier" always stays in English.
+_LOCALE_BRAND_VOICE: dict[str, str] = {
+    "German":            "Deutsch. 'Outlier' stays in English. Avoid 'Job'/'Stelle' → 'Aufgabe'/'Gelegenheit'. Avoid 'Training' → 'Einarbeitung in die Projektrichtlinien'. Avoid 'Vergütung' → 'Zahlung'. Avoid 'Vorstellungsgespräch' → 'Eignungstest'.",
+    "French":            "Français. 'Outlier' stays in English. Avoid 'emploi'/'poste' → 'mission'/'opportunité'. Avoid 'formation' → 'prise en main des directives du projet'. Avoid 'rémunération' → 'paiement'. Avoid 'entretien' → 'évaluation'.",
+    "Italian":           "Italiano. 'Outlier' stays in English. Avoid 'lavoro'/'posizione' → 'opportunità'/'attività'. Avoid 'formazione' → 'familiarizzazione con le linee guida del progetto'. Avoid 'compenso' → 'pagamento'. Avoid 'colloquio' → 'selezione'.",
+    "Indonesian":        "Bahasa Indonesia. 'Outlier' stays in English. Avoid 'pekerjaan'/'posisi' → 'tugas'/'kesempatan'. Avoid 'pelatihan' → 'memahami panduan proyek'. Avoid 'kompensasi' → 'pembayaran'. Avoid 'wawancara' → 'seleksi'.",
+    "Tagalog":           "Filipino/Tagalog. 'Outlier' stays in English. Avoid 'trabaho'/'posisyon' → 'gawain'/'oportunidad'. Avoid 'pagsasanay' → 'pag-aaral ng alituntunin ng proyekto'. Avoid 'kabayaran' → 'bayad'. Avoid 'interbyu' → 'screening'.",
+    "Bengali":           "Bengali (বাংলা). 'Outlier' stays in English. Avoid 'চাকরি'/'পদ' → 'কাজ'/'সুযোগ'. Avoid 'প্রশিক্ষণ' → 'প্রকল্পের নির্দেশিকার সাথে পরিচিত হওয়া'. Avoid 'বেতন' → 'পেমেন্ট'. Avoid 'ইন্টারভিউ' → 'স্ক্রিনিং'.",
+    "Hindi":             "Hindi (हिन्दी). 'Outlier' stays in English. Avoid 'नौकरी'/'पद' → 'कार्य'/'अवसर'. Avoid 'प्रशिक्षण' → 'परियोजना दिशानिर्देशों से परिचित होना'. Avoid 'वेतन' → 'भुगतान'. Avoid 'साक्षात्कार' → 'स्क्रीनिंग'.",
+    "Egyptian Arabic":   "Arabic (العربية). 'Outlier' stays in English. Avoid 'وظيفة'/'منصب' → 'مهمة'/'فرصة'. Avoid 'تدريب' → 'التعرف على إرشادات المشروع'. Avoid 'راتب' → 'دفع'. Avoid 'مقابلة' → 'فحص'.",
+    "Brazilian Portuguese": "Português (Brasil). 'Outlier' stays in English. Avoid 'emprego'/'vaga' → 'tarefa'/'oportunidade'. Avoid 'treinamento' → 'familiarização com as diretrizes do projeto'. Avoid 'remuneração' → 'pagamento'. Avoid 'entrevista' → 'triagem'.",
+    "Mexican Spanish":   "Español (México). 'Outlier' stays in English. Avoid 'empleo'/'puesto' → 'tarea'/'oportunidad'. Avoid 'capacitación' → 'familiarización con las pautas del proyecto'. Avoid 'remuneración' → 'pago'. Avoid 'entrevista' → 'evaluación'.",
+    "Korean":            "Korean (한국어). 'Outlier' stays in English. Avoid '일자리'/'직책' → '작업'/'기회'. Avoid '교육' → '프로젝트 가이드라인 숙지'. Avoid '보수' → '지급'. Avoid '면접' → '심사'.",
+    "Vietnamese":        "Tiếng Việt. 'Outlier' stays in English. Avoid 'việc làm'/'vị trí' → 'nhiệm vụ'/'cơ hội'. Avoid 'đào tạo' → 'làm quen với hướng dẫn dự án'. Avoid 'lương' → 'thanh toán'. Avoid 'phỏng vấn' → 'sàng lọc'.",
+    "Thai":              "ไทย. 'Outlier' stays in English. Avoid 'งาน'/'ตำแหน่ง' → 'งาน'/'โอกาส'. Avoid 'การฝึกอบรม' → 'ทำความคุ้นเคยกับแนวทางโครงการ'. Avoid 'ค่าตอบแทน' → 'การจ่ายเงิน'. Avoid 'สัมภาษณ์' → 'การคัดกรอง'.",
+    "Simplified Chinese": "简体中文. 'Outlier' stays in English. Avoid '工作'/'职位' → '任务'/'机会'. Avoid '培训' → '熟悉项目指南'. Avoid '薪酬' → '付款'. Avoid '面试' → '筛选'.",
+    "Hebrew":            "עברית. 'Outlier' stays in English. Avoid 'משרה'/'תפקיד' → 'משימה'/'הזדמנות'. Avoid 'הכשרה' → 'היכרות עם הנחיות הפרויקט'. Avoid 'שכר' → 'תשלום'. Avoid 'ראיון' → 'סינון'.",
+    "Kannada":           "ಕನ್ನಡ. 'Outlier' stays in English. Avoid 'ಉದ್ಯೋಗ'/'ಹುದ್ದೆ' → 'ಕಾರ್ಯ'/'ಅವಕಾಶ'. Avoid 'ತರಬೇತಿ' → 'ಯೋಜನೆಯ ಮಾರ್ಗಸೂಚಿಗಳ ಪರಿಚಯ'. Avoid 'ವೇತನ' → 'ಪಾವತಿ'. Avoid 'ಸಂದರ್ಶನ' → 'ಪರಿಶೀಲನೆ'.",
+    "Russian":           "Русский. 'Outlier' stays in English. Avoid 'работа'/'должность' → 'задача'/'возможность'. Avoid 'обучение' → 'ознакомление с рекомендациями проекта'. Avoid 'оплата труда' → 'оплата'. Avoid 'собеседование' → 'отбор'.",
+}
+
+
+def locale_brand_voice_notes(display_language: str) -> str:
+    """Brand-voice / banned-term note for writing copy in `display_language`.
+
+    Single source consumed by copy_adapter (Meta/Google/Reddit localization)
+    and figma_creative. Falls back to a generic instruction for languages not
+    in `_LOCALE_BRAND_VOICE`. "Outlier" always stays in English.
+    """
+    return _LOCALE_BRAND_VOICE.get(
+        display_language,
+        f"Write all copy in {display_language}. 'Outlier' stays in English.",
+    )
+
+
+def _lang_pref_is_english(language_pref: str | None) -> bool:
+    """True when a BCP-47 language_pref denotes an English audience (en-*)."""
+    if not language_pref:
+        return True
+    code = str(language_pref).strip().lower().replace("_", "-")
+    return code in _ENGLISH_LANGUAGE_CODES or code.split("-")[0] == "en"
+
+
+def resolve_copy_locale(cohort=None, icp=None) -> LocaleTargeting | None:
+    """Resolve the target copy locale for a cohort, or None to stay in English.
+
+    Locale-defined cohorts only (2026-06-17 decision). Resolution order:
+      1. `cohort.facet_strength["generalist_locale"]` (e.g. "hi-in") — the
+         generalist/i18n per-locale cohorts.
+      2. ICP `language_pref` (BCP-47, e.g. "hi-IN") when it's a non-English
+         audience and maps to a known LOCALES entry.
+    Returns the LocaleTargeting (carries display_language) or None.
+
+    `icp` may be a dataclass or a dict — accessed leniently (mirrors
+    copy_adapter._icp_block).
+    """
+    # (1) generalist_locale facet on the cohort object.
+    fs = getattr(cohort, "facet_strength", None) or {}
+    if isinstance(fs, dict):
+        gl = fs.get("generalist_locale")
+        if gl:
+            lt = get_locale(str(gl))
+            if lt:
+                return lt
+
+    # (2) ICP language_pref.
+    if icp is not None:
+        if isinstance(icp, dict):
+            lang_pref = icp.get("language_pref", "")
+        else:
+            lang_pref = getattr(icp, "language_pref", "")
+        if not _lang_pref_is_english(lang_pref):
+            lt = get_locale(str(lang_pref))
+            if lt:
+                return lt
+
+    return None

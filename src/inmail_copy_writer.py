@@ -173,6 +173,7 @@ def build_inmail_variants(
     extra_angles: dict | None = None,
     hourly_rate: str = "",
     geo_icp_hint: str = "",
+    task_card=None,
 ) -> list[InMailVariant]:
     """
     Generate InMail variants for the given TG/cohort.
@@ -207,6 +208,12 @@ def build_inmail_variants(
         prompt = _build_prompt(cohort_summary, tg_category, angle_key, angle_cfg, hourly_rate=hourly_rate)
         if geo_icp_hint:
             prompt += geo_icp_hint
+        # Ground the body in the real task (LP + job post) so it names the actual
+        # work instead of inventing it. No-op when task_card is None; stays general
+        # (no fabricated tools/steps) when the card is thin. See src/task_card.py.
+        if task_card is not None:
+            from src.task_card import task_card_prompt_block
+            prompt += task_card_prompt_block(task_card)
         try:
             raw = call_claude(
                 messages=[{"role": "user", "content": prompt}],
@@ -368,8 +375,12 @@ CRITICAL WRITING RULES (based on 12-month performance data — these directly af
    BAD:  "Top Medical Experts Wanted" or "Push the Limits of AI (Earn $50/hr)"
    Rate must appear with $ sign in the main clause — never in parentheses.
 
-5. SPECIFICITY: Name a concrete task the reader will actually do.
-   GOOD: "evaluating AI-generated ECG interpretations for accuracy"
+5. SPECIFICITY + NEWCOMER CONTEXT: Assume the reader has never heard of Outlier.
+   Name a concrete task the reader will actually do, and make clear it's flexible,
+   remote, AI training work paid hourly in USD — without opening on the company
+   intro (rule 1). The reader should finish the body knowing WHAT they'd do, that
+   it's remote and flexible, and that it pays hourly in USD.
+   GOOD: "evaluating AI-generated ECG interpretations for accuracy, remotely, paid hourly in USD"
    BAD:  "helping improve AI models" (too vague to motivate action)
 
 6. NO em dashes (—). Use a period or comma instead.
