@@ -1,0 +1,126 @@
+name: Make Secondary Creatives
+
+# Button-triggered (console "Make TikTok creatives") / manual generation of
+# FB / IG / TikTok ad creatives for a ramp, Drive-only. Does NOT touch any
+# live ad platform API — it renders PNGs and uploads them to the Shared Drive
+# under <ramp_id>/<platform>/<cohort_geo>/<angle>.png for manual upload.
+#
+# TikTok is creative-only by design (India ban + video-first in-feed): the
+# script renders BOTH 9:16 and 1:1 and drops a _HANDOFF.md in the tiktok
+# folder explaining Carousel / video-base-frame use.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ramp_id:
+        description: "Smart Ramp id to generate creatives for (e.g. GMR-0021)"
+        required: true
+      platforms:
+        description: "Comma-separated subset of fb,ig,tiktok"
+        required: false
+        default: "tiktok"
+      angles:
+        description: "Comma-separated angle labels"
+        required: false
+        default: "A,B,C"
+      max_clusters:
+        description: "Process at most N largest geo clusters per cohort (0 = no limit)"
+        required: false
+        default: "0"
+      dry_run:
+        description: "Print the upload plan; skip Gemini + Drive uploads"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+jobs:
+  make-creatives:
+    name: Generate FB/IG/TikTok creatives (Drive-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60  # bounds runaway Gemini loops
+
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # Non-Latin creative overlays (localized copy from #34 can render
+      # Hindi/Bengali/Thai/Arabic/CJK/Hangul). libraqm0 = Pillow RAQM shaping;
+      # fonts-noto-* = glyph coverage. Without these the compositor renders "?".
+      - name: Install fonts + libraqm (non-Latin creative text)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libraqm0 fonts-noto-core fonts-noto-cjk
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          # setup-python's pip cache occasionally restores certifi METADATA
+          # without the cacert.pem payload — force-reinstall to guarantee it.
+          pip install --force-reinstall --no-deps --no-cache-dir certifi
+          python -c "import certifi, os; p = certifi.where(); print('certifi:', p, 'exists:', os.path.exists(p))"
+
+      - name: Repoint SSL_CERT_FILE at certifi
+        # httpx reads SSL_CERT_FILE first; setup-python's stale path breaks the
+        # Anthropic/Gemini client construction. Point it at fresh certifi.
+        run: |
+          CERT_PATH=$(python -c "import certifi; print(certifi.where())")
+          echo "Repointing SSL_CERT_FILE: $CERT_PATH"
+          test -f "$CERT_PATH" || { echo "certifi bundle missing"; exit 1; }
+          echo "SSL_CERT_FILE=$CERT_PATH" >> "$GITHUB_ENV"
+          echo "REQUESTS_CA_BUNDLE=$CERT_PATH" >> "$GITHUB_ENV"
+
+      - name: Ensure data + logs directories exist
+        run: mkdir -p data logs
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v4
+
+      # Drive upload + Gemini both need the Google service-account key. Without
+      # it SheetsClient/Drive init falls back to a no-op and uploads vanish.
+      - name: Write Google credentials
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: doppler run -- bash -c 'echo "$GOOGLE_CREDENTIALS_JSON" > credentials.json'
+
+      - name: Generate creatives
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: |
+          ARGS="--ramp-id ${{ github.event.inputs.ramp_id }}"
+          ARGS="$ARGS --platforms ${{ github.event.inputs.platforms }}"
+          ARGS="$ARGS --angles ${{ github.event.inputs.angles }}"
+          ARGS="$ARGS --max-clusters ${{ github.event.inputs.max_clusters }}"
+
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+
+          echo "Running: doppler run -- python scripts/generate_secondary_creatives.py $ARGS"
+          doppler run -- python scripts/generate_secondary_creatives.py $ARGS
+
+      - name: Upload run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: make-creatives-log-${{ github.run_id }}
+          path: logs/
+          retention-days: 7
+          if-no-files-found: ignore
