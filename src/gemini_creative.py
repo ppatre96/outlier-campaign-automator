@@ -703,8 +703,7 @@ def _add_bottom_strip(canvas: Image.Image, bottom_text: str, strip_h: int) -> Im
     # Description font scales with width, but the 1080-wide portrait/story
     # formats (9:16 / 4:5) get a larger fraction so the line doesn't read small;
     # the wider 1:1 / landscape (>=1200) keep the original size.
-    desc_frac = 0.027 if w >= 1200 else 0.032
-    body_size = int(w * desc_frac)
+    body_size = int(w * 0.027) if w >= 1200 else int(w * 0.032) + 2
     body_font = _load_font(body_size, text=bottom_text)
     lines = _wrap_text(bottom_text, body_font, text_max_w)
     # Keep to ≤2 lines: shrink the font a little before letting it spill.
@@ -937,7 +936,7 @@ def compose_ad(
     # Headline font: scales with width, shrinks to fit ≤2 lines. 1080-wide
     # portrait/story formats (9:16 / 4:5) get a larger fraction so the headline
     # doesn't read small; 1:1 / landscape (>=1200) keep the original size.
-    hl_size = int(size * (0.060 if size >= 1200 else 0.068))
+    hl_size = int(size * 0.060) if size >= 1200 else int(size * 0.068) + 2
     hl_min  = int(size * (0.045 if size >= 1200 else 0.050))
     hl_font  = _load_font(hl_size, bold=True, text=headline)
     hl_lines = _wrap_text(headline, hl_font, max_text_w)
@@ -973,7 +972,8 @@ def compose_ad(
 
     # Subheadline — full-width centered, anchored to bottom of photo area.
     # Same portrait bump as the headline: bigger on 9:16 / 4:5, unchanged on 1:1.
-    sh_font  = _load_font(int(size * (0.044 if size >= 1200 else 0.050)), text=subheadline)
+    sh_size  = int(size * 0.044) if size >= 1200 else int(size * 0.050) + 2
+    sh_font  = _load_font(sh_size, text=subheadline)
     sh_lines = _wrap_text(subheadline, sh_font, int(photo_w * 0.82))
     _draw_text_left(
         draw, sh_lines, sh_font,
