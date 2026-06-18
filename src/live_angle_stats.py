@@ -130,6 +130,18 @@ def meta_angle_rows(ramp_id: str, *, window_days: int = 30) -> list[dict[str, An
     dropped_imp = 0
     kept_imp = 0
     for cid, meta in index.items():
+        # Campaign-level daily budget (cents). None on no-CBO campaigns where the
+        # budget lives on the ad set — the scale executor treats None as
+        # "can't scale at campaign level" and skips. Shared across the campaign's
+        # angles, so it rides on every row for this campaign.
+        budget_cents: Optional[int] = None
+        try:
+            from facebook_business.adobjects.campaign import Campaign as _C
+            _camp = _C(cid).api_get(fields=["daily_budget"])
+            _db = _camp.get("daily_budget")
+            budget_cents = int(_db) if _db not in (None, "") else None
+        except Exception:
+            pass
         # angle → [imp, clk, spend, leads]
         agg: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0])
         try:
@@ -171,6 +183,7 @@ def meta_angle_rows(ramp_id: str, *, window_days: int = 30) -> list[dict[str, An
                 "clicks": clk,
                 "spend_usd": spend,
                 "applications": leads,
+                "daily_budget_cents": budget_cents,
             })
 
     total = kept_imp + dropped_imp
