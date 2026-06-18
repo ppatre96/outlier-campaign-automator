@@ -117,8 +117,23 @@ def main() -> int:
             # execution gated behind ANGLE_AUTO_ACT_ENABLED (default off). Same
             # per-ramp try/except → one ramp's failure never aborts the pass.
             if config.ANGLE_LOOP_ENABLED:
-                from src import angle_performance
-                verdicts = angle_performance.analyze_angles(ramp_id)
+                from src import angle_performance, live_angle_stats
+                from src import campaign_registry
+                # Meta angle stats come from LIVE ad-level insights keyed off the
+                # Postgres `campaigns` table — the local JSON registry that
+                # get_active_campaigns reads has no recent ramps and carries no
+                # refreshed metrics, which is why this loop produced zero
+                # recommendations for every ramp. Other platforms still read the
+                # JSON registry until they get the same live-source treatment.
+                rows = [
+                    r for r in campaign_registry.get_active_campaigns(smart_ramp_id=ramp_id)
+                    if (r.get("platform") or r.get("channel") or "").lower() != "meta"
+                ]
+                try:
+                    rows += live_angle_stats.meta_angle_rows(ramp_id)
+                except Exception as exc:
+                    log.warning("live Meta angle rows failed for %s: %s", ramp_id, exc)
+                verdicts = angle_performance.analyze_angles(ramp_id, rows=rows)
                 angle_performance.act_on_verdicts(
                     verdicts, ramp_id=ramp_id, auto_act=config.ANGLE_AUTO_ACT_ENABLED,
                 )

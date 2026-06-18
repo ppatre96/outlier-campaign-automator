@@ -151,3 +151,33 @@ class TestActOnVerdicts:
         assert changes == []
         persist.assert_not_called()
         slack.assert_not_called()
+
+
+class TestMetaExecution:
+    """The Meta angle-execution routing (pause loser ads / increase-only scale)."""
+
+    def test_meta_changes_route_to_meta_executor(self):
+        # Meta winner B + loser A → both changes carry platform='meta'. Execution
+        # must route to _execute_meta_change and NEVER build a LinkedIn client.
+        rows = [
+            _row("A", platform="meta", clicks=60, urn="120111"),
+            _row("B", platform="meta", clicks=400, urn="120111"),
+            _row("C", platform="meta", clicks=200, urn="120111"),
+        ]
+        verdicts = analyze_angles("GMR-X", rows=rows)
+        with patch("src.angle_performance._persist_change"), \
+             patch("src.angle_performance._post_slack"), \
+             patch("src.angle_performance._execute_meta_change") as meta_exec, \
+             patch("src.linkedin_api.LinkedInClient") as li:
+            changes = act_on_verdicts(verdicts, ramp_id="GMR-X", auto_act=True)
+        meta_rels = [c for c in changes if c.platform == "meta"]
+        assert meta_rels, "expected meta changes"
+        assert meta_exec.call_count == len(meta_rels)
+        li.assert_not_called()  # Meta-only ramp never builds a LinkedIn client
+
+    def test_angle_of_parses_name_patterns(self):
+        from src.live_angle_stats import _angle_of
+        assert _angle_of("Scale-GMR-0023 | Meta | language | hi-IN | hi-IN | IN | A") == "A"
+        assert _angle_of("hi-IN Ad C (Hindi) - Copy") == "C"
+        assert _angle_of("agent_ad_120247748160070257 - Copy") is None
+        assert _angle_of(None) is None

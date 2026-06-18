@@ -401,25 +401,33 @@ def _post_slack(ramp_id: str, text: str) -> None:
 def _execute_changes(ramp_id: str, changes: list[PlannedChange]) -> None:
     """Execute the live actions (gated behind ANGLE_AUTO_ACT_ENABLED). Each action
     reuses existing machinery and is best-effort/per-change isolated so one failure
-    never aborts the rest. Drafts (refresh) are always safe; budget/pause are live."""
+    never aborts the rest. Drafts (refresh) are always safe; budget/pause are live.
+
+    Meta changes route to _execute_meta_change (the angle is an ad-level split, so
+    'pause loser' = pause the losing-angle ads, 'scale winner' = an increase-only
+    campaign-budget bump). LinkedIn keeps its existing path. The LinkedIn client is
+    built lazily so a Meta-only ramp doesn't abort when LinkedIn auth is missing."""
     from src import campaign_feedback_agent as cfa
-    li_client = None
-    try:
-        import os
-        from src.linkedin_api import LinkedInClient
-        li_client = LinkedInClient(config.LINKEDIN_TOKEN or os.getenv("LINKEDIN_TOKEN", ""))
-    except Exception as exc:  # pragma: no cover
-        log.warning("act_on_verdicts: LinkedIn client init failed — skipping execution: %s", exc)
-        return
+    _li_box: list = []
+
+    def _li():
+        if not _li_box:
+            import os
+            from src.linkedin_api import LinkedInClient
+            _li_box.append(LinkedInClient(config.LINKEDIN_TOKEN or os.getenv("LINKEDIN_TOKEN", "")))
+        return _li_box[0]
 
     for c in changes:
         try:
-            if c.kind == "scale" and c.target_budget_cents:
-                _execute_scale(c, li_client)
+            platform = (c.platform or "").lower()
+            if platform == "meta":
+                _execute_meta_change(c)
+            elif c.kind == "scale" and c.target_budget_cents:
+                _execute_scale(c, _li())
             elif c.kind == "refresh" and hasattr(cfa, "create_winner_variant_draft"):
-                cfa.create_winner_variant_draft(ramp_id, c, li_client)
+                cfa.create_winner_variant_draft(ramp_id, c, _li())
             elif c.kind == "pause" and hasattr(cfa, "pause_and_replace_angle"):
-                cfa.pause_and_replace_angle(ramp_id, c, li_client)
+                cfa.pause_and_replace_angle(ramp_id, c, _li())
             else:
                 log.info(
                     "act_on_verdicts: %s execution not yet wired (%s) — recommendation surfaced for Accept",
@@ -427,6 +435,66 @@ def _execute_changes(ramp_id: str, changes: list[PlannedChange]) -> None:
                 )
         except Exception as exc:  # pragma: no cover - live path, per-change isolation
             log.warning("act_on_verdicts execute %s failed (%s): %s", c.kind, c.campaign_urn, exc)
+
+
+def _execute_meta_change(c: PlannedChange) -> None:  # pragma: no cover - live path
+    """Execute a Meta angle change. On Meta the three angles are ADS inside one
+    per-language campaign, so:
+
+      - pause (loser): pause the losing-angle ad(s) within the campaign. Meta then
+        reallocates that ad set's delivery to the surviving (winner) ads — this IS
+        the per-angle budget rebalance, and it's the safe, high-confidence lever.
+      - scale (winner): bump the campaign daily budget, but INCREASE-ONLY and only
+        when the campaign actually carries a campaign-level budget (CBO). The
+        shared ANGLE_SCALE_MAX_CENTS cap is LinkedIn-calibrated and far below Meta's
+        budgets, so a naive set would slash a big spender — we never reduce, and we
+        skip no-CBO campaigns (budget lives on the ad set; which ad set is
+        ambiguous) rather than guess.
+    """
+    import config
+    if not config.META_ACCESS_TOKEN:
+        log.warning("meta angle exec: META_ACCESS_TOKEN unset — skipping %s", c.campaign_urn)
+        return
+    from facebook_business.api import FacebookAdsApi
+    from facebook_business.adobjects.campaign import Campaign
+    from facebook_business.adobjects.ad import Ad
+    FacebookAdsApi.init(
+        access_token=config.META_ACCESS_TOKEN,
+        api_version=config.META_API_VERSION or "v21.0",
+    )
+    cid = c.campaign_urn
+
+    if c.kind == "pause":
+        from src.live_angle_stats import _angle_of
+        ads = Campaign(cid).get_ads(fields=["name", "status"])
+        paused = 0
+        for ad in ads:
+            if _angle_of(ad.get("name")) == c.angle and (ad.get("status") or "").upper() == "ACTIVE":
+                Ad(ad["id"]).api_update(params={"status": "PAUSED"})
+                paused += 1
+        log.info("meta pause: campaign %s angle %s → paused %d ad(s)", cid, c.angle, paused)
+
+    elif c.kind == "scale":
+        target = c.target_budget_cents
+        if not target:
+            log.info("meta scale: campaign %s has no campaign-level budget (no-CBO) — skip (recommend-only)", cid)
+            return
+        try:
+            cur = Campaign(cid).api_get(fields=["daily_budget"]).get("daily_budget")
+            cur_cents = int(cur) if cur not in (None, "") else None
+        except Exception:
+            cur_cents = None
+        if cur_cents is None:
+            log.info("meta scale: campaign %s budget not at campaign level — skip", cid)
+            return
+        if target <= cur_cents:
+            log.info("meta scale: campaign %s target %d <= current %d — skip (never reduce)", cid, target, cur_cents)
+            return
+        Campaign(cid).api_update(params={"daily_budget": int(target)})
+        log.info("meta scale: campaign %s daily_budget %d → %d cents", cid, cur_cents, target)
+
+    else:
+        log.info("meta angle exec: %s not wired for Meta (recommend-only)", c.kind)
 
 
 def _execute_scale(c: PlannedChange, li_client) -> None:  # pragma: no cover - live path
