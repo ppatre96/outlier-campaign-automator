@@ -72,6 +72,14 @@ on:
         options:
           - "true"
           - "false"
+      skip_existing:
+        description: "Per-cohort idempotency (config.SKIP_EXISTING_COHORT_CAMPAIGNS). 'true' (default) skips cohorts that already have a live campaign. Set 'false' for a one-off run that creates NEW campaigns ALONGSIDE the existing ones (no archive) — e.g. recreate a ramp's Meta set on a new creative template as PAUSED shadows of the running ones. Per-run only; never set globally in Doppler (would dup every ramp on scheduled ticks)."
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 jobs:
   poll:
@@ -177,6 +185,12 @@ jobs:
           # Relaunch (replace): archive only_channel's existing campaigns before
           # creating fresh ones. Read at config import time (config.REPLACE_EXISTING).
           REPLACE_EXISTING: ${{ github.event.inputs.replace }}
+          # Per-cohort idempotency (config.SKIP_EXISTING_COHORT_CAMPAIGNS). Blank
+          # on scheduled ticks → config defaults to true (blank-safe parse). A
+          # manual dispatch can pass "false" to create NEW campaigns alongside
+          # existing ones (no archive) — used to stand up a fresh creative-template
+          # set as PAUSED shadows of the running campaigns.
+          SKIP_EXISTING_COHORT_CAMPAIGNS: ${{ github.event.inputs.skip_existing }}
           # Verify-and-heal (piece C). Empty on scheduled runs → config parses
           # it as false (gate off). A manual dispatch can flip it on for one
           # validation ramp. Once validated, set the Doppler prd default to

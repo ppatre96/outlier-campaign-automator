@@ -574,7 +574,12 @@ COHORT_SPEC_OVERRIDES: dict[str, list[dict]] = {
 # instead of duplicating the rest). Bypassed when REPLACE_EXISTING is set (the
 # replace path archives + recreates on purpose). Set False to restore the old
 # always-create behavior.
-SKIP_EXISTING_COHORT_CAMPAIGNS = os.getenv("SKIP_EXISTING_COHORT_CAMPAIGNS", "true").lower() in ("1", "true", "yes")
+# NOTE: a *blank* value means default-true (not false). GitHub Actions injects
+# this env from a workflow_dispatch input, which is the empty string on
+# scheduled runs — without the `or "true"` fallback those ticks would parse ""
+# as false and create duplicate campaigns for every ramp. Only an explicit
+# "false" (manual dispatch) disables the skip.
+SKIP_EXISTING_COHORT_CAMPAIGNS = (os.getenv("SKIP_EXISTING_COHORT_CAMPAIGNS", "true").strip().lower() or "true") in ("1", "true", "yes")
 
 # Per-channel launch model (feature #3, 2026-06-04). When False (default),
 # approving a ramp in the console is the GATE only — the scheduled poller does
