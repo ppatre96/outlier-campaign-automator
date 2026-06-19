@@ -85,7 +85,11 @@ jobs:
   poll:
     name: Poll Smart Ramp & run pipeline
     runs-on: ubuntu-latest
-    timeout-minutes: 90  # max one ramp cycle; kills runaway image-gen loops
+    # Bumped 90 -> 180 (2026-06-19): a full-ramp recreate runs ~5 min/locale, so
+    # a 17-locale i18n ramp (e.g. GMR-0023) takes ~85-90 min and was getting
+    # cancelled at the old 90-min cap mid-run (ru-RU never created). 180 gives 2x
+    # headroom for the largest ramps while still killing genuine runaway loops.
+    timeout-minutes: 180  # max one ramp cycle; kills runaway image-gen loops
 
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
