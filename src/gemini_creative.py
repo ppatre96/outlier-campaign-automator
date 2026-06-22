@@ -146,6 +146,10 @@ def derive_bottom_text(subheadline: str) -> str:
     LinkedIn arm and the secondary-channel compositor so the bottom line is
     consistent. Pulls the earnings figure out of the subheadline when present;
     falls back to a generic rate line otherwise. (Copy refined later.)"""
+    if config.SUPPRESS_PAY_RATE:
+        # Rate-suppressed ramps (e.g. GMR-0019): no dollar figure on the band.
+        # Reuse the brand-approved rate-free phrasing from the copy-gen path.
+        return "Fully remote. Paid hourly in USD."
     earnings_match = re.search(
         r'\$[\d,]+(?:\.\d+)?(?:\s*USD)?(?:\s*(?:/hr|per hour|weekly|hourly))?',
         subheadline or "",

@@ -512,6 +512,12 @@ GENERALIST_LOCALE_TARGETING  = os.getenv("GENERALIST_LOCALE_TARGETING", "true").
 # "$"/USD/numerals and the brand name "Outlier" stay in English. Experimental:
 # set False to ship English copy everywhere (rollback) while we A/B native-lang.
 LOCALIZE_PLATFORM_COPY       = os.getenv("LOCALIZE_PLATFORM_COPY", "true").lower() in ("1", "true", "yes")
+# Suppress the pay rate everywhere in generated creatives (copy + the bottom-band
+# "Earn $X" line). When true, every copy chokepoint is forced onto its existing
+# rate-free path and derive_bottom_text drops the dollar line. Per-run / per-ramp
+# lever (e.g. GMR-0019, where the rate is the experiment variable and lives on the
+# LP, not the creative). Off by default → no effect on any other ramp.
+SUPPRESS_PAY_RATE            = os.getenv("SUPPRESS_PAY_RATE", "").strip().lower() in ("1", "true", "yes")
 # LinkedIn (static + InMail) stays English per the 2026-06-17 product decision
 # (LinkedIn audiences operate in English). This gates the legacy LinkedIn
 # native-language injection in src/figma_creative.py — OFF by default, kept for

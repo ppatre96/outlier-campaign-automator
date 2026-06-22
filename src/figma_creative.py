@@ -311,6 +311,11 @@ def build_copy_variants(
 
     Returns: [{angle, angleLabel, headline, subheadline, cta, photo_subject, tgLabel, layerUpdates}, ...]
     """
+    # Rate-suppressed ramps (config.SUPPRESS_PAY_RATE): force the rate empty so
+    # both the two-phase brief path and the single-phase prompt below take their
+    # existing rate-free branch — no $/hr figure in any copy field.
+    if config.SUPPRESS_PAY_RATE:
+        hourly_rate = ""
     # Two-phase path — runs brief gen + per-angle copy gen. Used when an
     # explicit caller asks for it (tests, future paths) but NOT the default
     # because the legacy CLI behaviour must remain bit-for-bit identical until
