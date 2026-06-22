@@ -248,7 +248,11 @@ def _process_cohort_geo(
     # range and NOT the compositor's generic fallback. Rate-free when the cohort
     # has no resolved rate (never invent a number). Localized too (rate stays
     # English). Passed explicitly so compose_ad_for_platform uses it verbatim.
-    _rate = (geo_group.advertised_rate or "").strip()
+    # Rate-suppressed ramps (config.SUPPRESS_PAY_RATE, e.g. GMR-0019): drop the
+    # rate so the band takes the rate-free branch below. This bottom_text is
+    # passed explicitly to compose_ad_for_platform, so the derive_bottom_text
+    # suppression does NOT cover it — it must be handled here at the source.
+    _rate = "" if config.SUPPRESS_PAY_RATE else (geo_group.advertised_rate or "").strip()
     bottom_text = (
         f"Earn {_rate}, flexible hours, 100% remote." if _rate
         else "Flexible hours, 100% remote."
@@ -343,6 +347,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Comma-separated angle labels (default: A,B,C)",
     )
     parser.add_argument(
+        "--only-cohort", default="",
+        help="Restrict to a single cohort by id (or a substring of its "
+             "description). Blank = all cohorts. Use when rate-suppressed cohorts "
+             "collapse to one shared creative set (e.g. GMR-0019).",
+    )
+    parser.add_argument(
         "--max-clusters", type=int, default=0,
         help="Process at most N largest geo clusters per cohort (0 = no limit). "
              "Use --max-clusters 1 for a single-cluster smoke test.",
@@ -408,7 +418,22 @@ def main(argv: list[str] | None = None) -> int:
             log.warning("OUTLIER_BASE_RATE_USD=%r is not a valid float — ignoring", _env_rate_raw)
 
     total_uploaded = 0
-    for cohort_spec in ramp.cohorts:
+    cohorts = ramp.cohorts
+    if args.only_cohort:
+        needle = args.only_cohort.strip().lower()
+        cohorts = [
+            c for c in ramp.cohorts
+            if needle in (c.id or "").lower()
+            or needle in (c.cohort_description or "").lower()
+        ]
+        log.info(
+            "--only-cohort %r → %d of %d cohorts matched",
+            args.only_cohort, len(cohorts), len(ramp.cohorts),
+        )
+        if not cohorts:
+            log.error("--only-cohort %r matched no cohort; nothing to do", args.only_cohort)
+            return 1
+    for cohort_spec in cohorts:
         log.info(
             "Cohort id=%s desc=%r target=%s geos=%d",
             cohort_spec.id[:8],

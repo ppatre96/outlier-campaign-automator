@@ -468,6 +468,11 @@ def _pay_rate_brief_block(hourly_rate: str) -> str:
     """Phase-1 block for hourly rate. Brief gen needs to know whether $$ is
     available to mention in the brief or not (so it can choose proof_points
     that don't fabricate numbers)."""
+    # Rate-suppressed ramps (config.SUPPRESS_PAY_RATE): treat the rate as
+    # unresolved so the brief leans on non-monetary value props (no $ figure).
+    import config
+    if config.SUPPRESS_PAY_RATE:
+        hourly_rate = ""
     if hourly_rate:
         return (
             f"\n\nPAY RATE FOR THIS GEO: {hourly_rate} (use this exact figure if you "

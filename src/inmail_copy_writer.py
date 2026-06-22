@@ -194,6 +194,11 @@ def build_inmail_variants(
     Falls back to hardcoded defaults if LiteLLM call fails.
     Returns list of InMailVariant objects in the order of angle_keys.
     """
+    # Rate-suppressed ramps (config.SUPPRESS_PAY_RATE): drop the rate so InMail
+    # copy ships rate-free (no $/hr in subject or body).
+    import config
+    if config.SUPPRESS_PAY_RATE:
+        hourly_rate = ""
     cohort_summary = _cohort_summary(cohort, tg_category)
     variants: list[InMailVariant] = []
 
