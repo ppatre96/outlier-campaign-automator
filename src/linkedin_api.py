@@ -990,6 +990,7 @@ class LinkedInClient(AdPlatformClient):
         ad_headline: str = "",
         ad_description: str = "",
         cta_button: str = "APPLY",
+        ad_name: str = "",
     ) -> ImageAdResult:
         """
         Create a Single Image Ad creative and attach it to a campaign.
@@ -1016,6 +1017,7 @@ class LinkedInClient(AdPlatformClient):
                 ad_headline=ad_headline,
                 ad_description=ad_description,
                 cta_button=cta_button,
+                ad_name=ad_name,
             )
             return ImageAdResult(creative_urn=urn, status="ok")
         except RuntimeError as exc:
@@ -1057,6 +1059,7 @@ class LinkedInClient(AdPlatformClient):
         ad_headline: str = "",
         ad_description: str = "",
         cta_button: str = "APPLY",
+        ad_name: str = "",
     ) -> str:
         """
         Inner raise-based implementation of create_image_ad. Returns the
@@ -1189,6 +1192,13 @@ class LinkedInClient(AdPlatformClient):
             "intendedStatus": "DRAFT",
             "content":        {"reference": post_urn},
         }
+        # Name the creative (per-ad name, e.g. "<campaign name> | A") so the A/B/C
+        # variant is identifiable in Campaign Manager — the `name` field is a
+        # writable creative attribute (same as on campaign create). Omitted when
+        # blank to preserve the prior unnamed behavior. Mirrors the Meta arm's
+        # ad_name and the InMail name.
+        if ad_name and ad_name.strip():
+            payload["name"] = ad_name.strip()[:255]
         resp = self._req("POST", self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/creatives"), json=payload)
         self._raise_for_status(resp, "createAdCreative")
         # The DSC-static creative endpoint returns x-restli-id (not x-linkedin-id
