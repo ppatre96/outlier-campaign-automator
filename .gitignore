@@ -41,9 +41,7 @@ data/*_cache.json
 # committed artifact; the per-day raw fetches under sentiment_raw/ are not.
 data/sentiment_raw/
 
-# Daily auto-logs from scheduled jobs (smart_ramp_poller, weekly_feedback_loop,
-# manual_runs/). The earlier `dry_runs/` + top-level `dryrun_*.log` files are
-# historical references for the prior architecture and stay tracked.
-logs/smart_ramp_poller/
-logs/weekly_feedback_loop/
-logs/manual_runs/
+# Logs are never committed — they capture secrets in URLs/tracebacks (a Redash
+# API key leaked via logs/weekly_feedback_loop/2026-04-27.log on a public repo).
+# Ignore the whole tree; the previously-tracked logs/ files were untracked.
+logs/
