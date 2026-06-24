@@ -45,6 +45,13 @@ LINKEDIN_ORG_ID           = os.getenv("LINKEDIN_ORG_ID", "")
 # precedence per cohort — this is only the catch-all when matched_domain isn't
 # in the map.
 LINKEDIN_DESTINATION      = os.getenv("LINKEDIN_DESTINATION_URL", "https://outlier.ai/")
+# CTA button label on LinkedIn Single Image Ads. Set on the DSC post via the
+# Posts API `contentCallToActionLabel` (the pipeline previously set NO CTA, so
+# ads defaulted and had to be fixed by hand). "APPLY" → the button shows "Apply"
+# — the standard for Outlier's job ads. Valid enum: APPLY, DOWNLOAD, VIEW_QUOTE,
+# LEARN_MORE, SIGN_UP, SUBSCRIBE, REGISTER, JOIN, ATTEND, REQUEST_DEMO, SEE_MORE,
+# BUY_NOW, SHOP_NOW.
+LINKEDIN_CTA_LABEL        = os.getenv("LINKEDIN_CTA_LABEL", "APPLY").strip().upper()
 LINKEDIN_INMAIL_SENDER_URN = os.getenv("LINKEDIN_INMAIL_SENDER_URN", "")
 # Custom footer / Terms & Conditions appended to every Message Ad (reviewer
 # feedback GMR-0024). Sent as the inMailContents `customFooter` field
