@@ -663,7 +663,7 @@ The overlay headline can be short and punchy, but the AD COPY (intro_text + ad_d
 A bare line like "Hindi experts paid in USD" is a FAILURE — it tells a newcomer nothing about what they'd actually do. Specificity beats hype.
 
 ### PHOTO SUBJECT
-- **photo_subject**: Use the brief's `photo_direction` directly OR refine it. Format: "[gender] [ethnicity] [specific profession], [specific activity off-screen]". NEVER an activity that puts the subject staring at a laptop/phone/tablet screen — Vision QC rejects rendered text in photos. Use paper notes, printouts, notebooks, closed laptop, etc.
+- **photo_subject**: Use the brief's `photo_direction` directly OR refine it. Format: "[gender] [ethnicity] [specific profession] [profession-signaling attire/prop], [specific activity off-screen]". The profession MUST be visually unmistakable — include concrete attire or a tool of the trade so a viewer instantly recognizes it (e.g. "wearing a white coat with a stethoscope", "in scrubs", "in a hard hat", "holding an ECG printout"), NOT just the role title with generic activity. A person in plain casual clothes that could be any remote worker fails this. NEVER an activity that puts the subject staring at a laptop/phone/tablet screen — Vision QC rejects rendered text in photos. Use paper notes, printouts, notebooks, closed laptop, etc.
 
 ## TEXT LAYERS IN THE BASE CREATIVE
 {layers_summary}

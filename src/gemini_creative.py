@@ -194,6 +194,15 @@ A close-up environmental portrait of a {photo_subject}. This image will be used 
 LinkedIn ad targeting {tg_label} — the subject must immediately read as a credible, \
 senior {tg_label} professional in their authentic work environment.
 
+PROFESSION VISIBILITY (REQUIRED): the subject must be instantly recognizable as their stated \
+profession (from the subject description above) through concrete visual cues — profession-specific \
+attire (e.g. a physician in a white coat or scrubs with a stethoscope; an engineer in technical \
+gear; a lawyer in formal business dress) AND/OR a signature tool or artifact of the trade visibly \
+in frame (e.g. a clinician with an ECG printout, medical imaging, or a stethoscope). A generic \
+person in plain casual clothes is NOT acceptable — a viewer must identify the profession at a \
+glance. Keep these cues even in a relaxed/remote/home setting (e.g. a doctor at home still wears a \
+white coat or has a stethoscope nearby).
+
 COMPOSITION (frame the subject so there is clear background space for a text overlay):
 - Place the subject in the LEFT or RIGHT half of the frame — NOT dead-centre. Leave the \
   opposite half mostly clear (background only, no subject pixels) so a 1-2 line headline \
