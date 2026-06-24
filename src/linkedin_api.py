@@ -1130,6 +1130,16 @@ class LinkedInClient(AdPlatformClient):
                 }
             },
         }
+        # CTA button overlay — Posts API `contentCallToActionLabel` (e.g. "Apply").
+        # The pipeline previously set NO CTA, so single image ads defaulted and the
+        # label had to be set by hand per campaign. Validate against LinkedIn's
+        # enum; default APPLY (Outlier job-ad standard) on any unknown value.
+        _VALID_CTAS = {
+            "APPLY", "DOWNLOAD", "VIEW_QUOTE", "LEARN_MORE", "SIGN_UP", "SUBSCRIBE",
+            "REGISTER", "JOIN", "ATTEND", "REQUEST_DEMO", "SEE_MORE", "BUY_NOW", "SHOP_NOW",
+        }
+        _cta = (config.LINKEDIN_CTA_LABEL or "APPLY").strip().upper()
+        dsc_payload["contentCallToActionLabel"] = _cta if _cta in _VALID_CTAS else "APPLY"
         dsc_resp = requests.post(
             "https://api.linkedin.com/rest/posts",
             json=dsc_payload,
