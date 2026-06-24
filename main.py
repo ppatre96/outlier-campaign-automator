@@ -814,6 +814,7 @@ def _process_row(
                     ad_description=variant.get("ad_description", "") if variant else "",
                     cta_button=variant.get("cta_button", "APPLY") if variant else "APPLY",
                     destination_url=destination_url_override,
+                    ad_name=f"{cohort._stg_name} | {angle_label}",
                 )
                 if ad_result.status == "ok":
                     creative_urn = ad_result.creative_urn
@@ -4043,6 +4044,9 @@ def _process_static_campaigns(
                 ad_description=variant.get("ad_description", "") if variant else "",
                 cta_button=variant.get("cta_button", "APPLY") if variant else "APPLY",
                 destination_url=utm_url,
+                # Per-ad creative name "<campaign name> | <angle>" so A/B/C is
+                # identifiable in Campaign Manager (mirrors the Meta arm's ad_name).
+                ad_name=f"{campaign_name} | {angle_label}",
             )
             _li_payloads[row_id] = {"png_path": png_path, "kwargs": _attach_kwargs}
 
