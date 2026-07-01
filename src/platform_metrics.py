@@ -10,11 +10,11 @@ For each active Meta or Google registry row it calls the platform-specific
 Insights / reporting API and pushes the result to
 `campaign_registry.update_metrics`. Failures are non-fatal.
 
-For v1 the fetchers are conservative — they pull impressions, clicks, and
-spend, computing CTR / CPC / CPM downstream in `update_metrics`. Application
-counts (the conversion metric) are left at 0 unless conversion tracking is
-configured on the platform side; that's deferred to a v2 cleanup with
-proper conversion-pixel + Google conversion-action setup.
+The fetchers pull impressions, clicks, spend, and conversions (CTR / CPC / CPM
+/ CPA are computed downstream in `update_metrics`). Conversions map to
+`applications`: Meta sums the worker_skill_all custom action_type
+(config.META_CONVERSION_ACTION_TYPE); Google reads metrics.conversions
+(GOOGLE_CONVERSION_ACTION_ID 7625599821, worker_skill_all).
 """
 from __future__ import annotations
 
@@ -86,6 +86,23 @@ def fetch_metrics_for_active_extra_platforms(window_days: int = 7) -> int:
 # ── Meta Insights ─────────────────────────────────────────────────────────────
 
 
+def _meta_conversions_from_actions(actions: Any, action_type: str) -> int:
+    """Sum the value of the conversion `action_type` from a Meta Insights
+    `actions` list. Meta reports worker_skill_all under a custom action_type
+    (see config.META_CONVERSION_ACTION_TYPE). Returns 0 when absent or the
+    action_type is unset. Pure — unit-tested."""
+    if not action_type or not isinstance(actions, (list, tuple)):
+        return 0
+    total = 0
+    for a in actions:
+        if isinstance(a, dict) and a.get("action_type") == action_type:
+            try:
+                total += int(float(a.get("value", 0) or 0))
+            except (TypeError, ValueError):
+                pass
+    return total
+
+
 def _fetch_meta_insights(campaign_id: str, window_days: int) -> dict[str, Any] | None:
     """Pull aggregate metrics for a Meta Campaign / Ad Set from the Insights
     API. `campaign_id` is the numeric Meta ID (not a URN)."""
@@ -105,7 +122,7 @@ def _fetch_meta_insights(campaign_id: str, window_days: int) -> dict[str, Any] |
     insights = ad_set.get_insights(
         params={
             "time_range":      {"since": since, "until": until},
-            "fields":          ["impressions", "clicks", "spend"],
+            "fields":          ["impressions", "clicks", "spend", "actions"],
             "level":           "adset",
         }
     )
@@ -116,7 +133,9 @@ def _fetch_meta_insights(campaign_id: str, window_days: int) -> dict[str, Any] |
         "impressions": int(row.get("impressions", 0) or 0),
         "clicks":      int(row.get("clicks", 0) or 0),
         "spend_usd":   float(row.get("spend", 0.0) or 0.0),
-        "applications": 0,
+        "applications": _meta_conversions_from_actions(
+            row.get("actions"), config.META_CONVERSION_ACTION_TYPE
+        ),
     }
 
 
@@ -131,7 +150,7 @@ def _google_query_for_id(campaign_ref: str, since: str, until: str) -> str | Non
       - bare-numeric campaign id `2390173...`              → FROM campaign (by id)
     Returns None for an unrecognized shape (caller skips). Pure — unit-tested."""
     ref = (campaign_ref or "").strip()
-    select = "SELECT metrics.impressions, metrics.clicks, metrics.cost_micros"
+    select = "SELECT metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions"
     date = f"AND segments.date BETWEEN '{since}' AND '{until}'"
     if "/adGroups/" in ref:
         return f"{select} FROM ad_group WHERE ad_group.resource_name = '{ref}' {date}"
@@ -186,14 +205,16 @@ def _fetch_google_metrics(campaign_ref: str, window_days: int) -> dict[str, Any]
     impressions = 0
     clicks = 0
     cost_micros = 0
+    conversions = 0.0
     for batch in ga_service.search_stream(customer_id=customer_id, query=query):
         for row in batch.results:
             impressions += int(row.metrics.impressions or 0)
             clicks      += int(row.metrics.clicks or 0)
             cost_micros += int(row.metrics.cost_micros or 0)
+            conversions += float(row.metrics.conversions or 0)
     return {
         "impressions": impressions,
         "clicks":      clicks,
         "spend_usd":   cost_micros / 1_000_000.0,
-        "applications": 0,
+        "applications": int(round(conversions)),
     }

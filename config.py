@@ -316,6 +316,14 @@ META_CUSTOM_EVENT_STR        = os.getenv("META_CUSTOM_EVENT_STR", "worker_skill_
 # Retired 2026-06-09 (archived in Meta); kept only for audit display, NOT used
 # for ad-set promoted_object anymore.
 META_CUSTOM_CONVERSION_ID    = os.getenv("META_CUSTOM_CONVERSION_ID", "")
+# Insights `actions` action_type that reports the worker_skill_all value-based
+# conversion. The ad set optimizes on the pixel custom event (not a Custom
+# Conversion object), but Meta still reports the event under this custom
+# action_type — verified live on delivering GMR-0023 ad sets. The metrics
+# refresh sums this action's value into `applications`. Empty → skip (0).
+META_CONVERSION_ACTION_TYPE  = os.getenv(
+    "META_CONVERSION_ACTION_TYPE", "offsite_conversion.custom.952900040153781"
+)
 META_ATTRIBUTION_WINDOW_DAYS = int(os.getenv("META_ATTRIBUTION_WINDOW_DAYS", "7"))
 
 # ── Reddit Ads ────────────────────────────────────────────────────────────────
