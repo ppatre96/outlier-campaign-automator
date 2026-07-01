@@ -536,7 +536,7 @@ def update_metrics(
     """
     with _registry_lock:
         records = _load()
-        updated = False
+        matched = None
         for rec in records:
             if _id_match(rec, linkedin_campaign_urn):
                 rec["impressions"] = impressions
@@ -548,13 +548,23 @@ def update_metrics(
                 rec["applications"] = applications
                 rec["cpa_usd"] = round(spend_usd / applications, 2) if applications else None
                 rec["last_metrics_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-                updated = True
+                matched = rec
                 break
-        if updated:
+        if matched is not None:
             _save(records)
             log.info("Registry: metrics updated for %s", linkedin_campaign_urn)
         else:
             log.warning("Registry: campaign not found for metrics update: %s", linkedin_campaign_urn)
+    # Also persist the updated metrics to Postgres so the console dashboard can
+    # roll up impressions/spend/conversions without the Sheet (log_campaign
+    # already dual-writes structure this way). Outside the registry lock —
+    # mirrors log_campaign. Best-effort.
+    if matched is not None:
+        try:
+            from src.ui_decisions import upsert_campaign
+            upsert_campaign(matched)
+        except Exception as exc:
+            log.warning("Registry Postgres metrics write failed (non-fatal): %s", exc)
 
 
 def reconcile_creative_paths(
