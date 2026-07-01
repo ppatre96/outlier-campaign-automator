@@ -26,6 +26,18 @@ import config
 
 log = logging.getLogger(__name__)
 
+# Statuses that mean the campaign is gone — skip fetching metrics for these.
+# Everything else (active / ENABLED / PAUSED / LIMITED / empty) still has
+# historical metrics worth refreshing. The registry mixes pipeline vocab
+# ("active") with platform-native vocab ("ENABLED", "PAUSED", "REMOVED"), so a
+# strict `== "active"` check silently skipped live ENABLED rows.
+_DEAD_STATUSES = {"removed", "archived", "deleted", "deprecated", "cancelled"}
+
+
+def _is_live(status: str | None) -> bool:
+    """True if a campaign row is worth refreshing metrics for."""
+    return (status or "").strip().lower() not in _DEAD_STATUSES
+
 
 def fetch_metrics_for_active_extra_platforms(window_days: int = 7) -> int:
     """Iterate active non-LinkedIn registry rows and pull fresh metrics from
@@ -35,11 +47,11 @@ def fetch_metrics_for_active_extra_platforms(window_days: int = 7) -> int:
     records = _load()
     updated = 0
     for rec in records:
-        if rec.get("status") != "active":
+        if not _is_live(rec.get("status")):
             continue
         platform = (rec.get("platform") or "linkedin").lower()
         if platform == "linkedin":
-            continue   # LinkedIn fetch lives in campaign_feedback_agent.run()
+            continue   # LinkedIn fetch lives in campaign_feedback_agent.refresh_linkedin_metrics()
 
         campaign_id = rec.get("platform_campaign_id") or ""
         if not campaign_id:
@@ -47,7 +59,7 @@ def fetch_metrics_for_active_extra_platforms(window_days: int = 7) -> int:
         try:
             if platform == "meta":
                 metrics = _fetch_meta_insights(campaign_id, window_days)
-            elif platform == "google":
+            elif platform in ("google", "google_search"):
                 metrics = _fetch_google_metrics(campaign_id, window_days)
             else:
                 log.debug("platform_metrics: unknown platform %r — skipping", platform)
@@ -111,11 +123,50 @@ def _fetch_meta_insights(campaign_id: str, window_days: int) -> dict[str, Any] |
 # ── Google Ads reporting ──────────────────────────────────────────────────────
 
 
-def _fetch_google_metrics(ad_group_resource: str, window_days: int) -> dict[str, Any] | None:
-    """Pull aggregate metrics for a Google Ads Ad Group via search_stream.
-    `ad_group_resource` is the resource name (`customers/<cid>/adGroups/<id>`)."""
+def _google_query_for_id(campaign_ref: str, since: str, until: str) -> str | None:
+    """Build the GAQL metrics query for a Google Ads id. The registry stores
+    three id shapes across Display + Search rows:
+      - adGroup resource  `customers/<cid>/adGroups/<id>`  → FROM ad_group
+      - campaign resource `customers/<cid>/campaigns/<id>` → FROM campaign
+      - bare-numeric campaign id `2390173...`              → FROM campaign (by id)
+    Returns None for an unrecognized shape (caller skips). Pure — unit-tested."""
+    ref = (campaign_ref or "").strip()
+    select = "SELECT metrics.impressions, metrics.clicks, metrics.cost_micros"
+    date = f"AND segments.date BETWEEN '{since}' AND '{until}'"
+    if "/adGroups/" in ref:
+        return f"{select} FROM ad_group WHERE ad_group.resource_name = '{ref}' {date}"
+    if "/campaigns/" in ref:
+        return f"{select} FROM campaign WHERE campaign.resource_name = '{ref}' {date}"
+    if ref.isdigit():
+        return f"{select} FROM campaign WHERE campaign.id = {ref} {date}"
+    return None
+
+
+def _customer_id_from_ref(campaign_ref: str) -> str | None:
+    """Customer id embedded in a `customers/<cid>/...` resource name, else None
+    (caller falls back to the configured customer id)."""
+    ref = (campaign_ref or "").strip()
+    if ref.startswith("customers/"):
+        parts = ref.split("/")
+        if len(parts) >= 2 and parts[1].isdigit():
+            return parts[1]
+    return None
+
+
+def _fetch_google_metrics(campaign_ref: str, window_days: int) -> dict[str, Any] | None:
+    """Pull aggregate metrics for a Google Ads campaign or ad group via
+    search_stream. `campaign_ref` may be an adGroup resource, a campaign
+    resource, or a bare-numeric campaign id (Display vs Search differ)."""
     if not (config.GOOGLE_ADS_DEVELOPER_TOKEN and config.GOOGLE_ADS_CUSTOMER_ID):
         return None
+
+    since = (datetime.now(timezone.utc) - timedelta(days=window_days)).date().isoformat()
+    until = datetime.now(timezone.utc).date().isoformat()
+    query = _google_query_for_id(campaign_ref, since, until)
+    if not query:
+        log.debug("platform_metrics[google]: unrecognized id shape %r — skipping", campaign_ref)
+        return None
+
     creds = {
         "developer_token":  config.GOOGLE_ADS_DEVELOPER_TOKEN,
         "refresh_token":    config.GOOGLE_ADS_REFRESH_TOKEN,
@@ -128,21 +179,10 @@ def _fetch_google_metrics(ad_group_resource: str, window_days: int) -> dict[str,
     from google.ads.googleads.client import GoogleAdsClient as _SDKClient
     sdk = _SDKClient.load_from_dict(creds)
     ga_service = sdk.get_service("GoogleAdsService")
-    customer_id = str(config.GOOGLE_ADS_CUSTOMER_ID).replace("-", "")
+    customer_id = (
+        _customer_id_from_ref(campaign_ref) or str(config.GOOGLE_ADS_CUSTOMER_ID)
+    ).replace("-", "")
 
-    # Pull last N days from the metrics view, scoped to this ad group.
-    since = (datetime.now(timezone.utc) - timedelta(days=window_days)).date().isoformat()
-    until = datetime.now(timezone.utc).date().isoformat()
-
-    query = f"""
-        SELECT
-          metrics.impressions,
-          metrics.clicks,
-          metrics.cost_micros
-        FROM ad_group
-        WHERE ad_group.resource_name = '{ad_group_resource}'
-          AND segments.date BETWEEN '{since}' AND '{until}'
-    """
     impressions = 0
     clicks = 0
     cost_micros = 0

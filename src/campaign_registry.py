@@ -261,6 +261,30 @@ def _save(records: list[dict]) -> None:
         _write_excel(records)
 
 
+def hydrate_from_postgres() -> int:
+    """Overwrite the local JSON registry with the authoritative campaign rows
+    from Postgres. Returns the number of rows hydrated.
+
+    _load() reads a local file that is stale in CI (the committed
+    data/campaign_registry.json lags the live pipeline). Postgres — written by
+    upsert_campaign on every log_campaign — is always current. The metrics
+    refresh calls this first so it iterates ALL current campaigns, not the
+    stale committed subset. Best-effort: on read failure OR an empty result we
+    keep the existing local registry rather than clobbering it with nothing."""
+    try:
+        from src.ui_decisions import list_all_campaign_data
+        rows = list_all_campaign_data()
+    except Exception as exc:
+        log.warning("hydrate_from_postgres: read failed (%s) — keeping local registry", exc)
+        return 0
+    if not rows:
+        log.warning("hydrate_from_postgres: Postgres returned 0 campaigns — keeping local registry")
+        return 0
+    _save(rows)
+    log.info("hydrate_from_postgres: hydrated %d campaigns into local registry", len(rows))
+    return len(rows)
+
+
 def _write_excel(records: list[dict]) -> None:
     try:
         import openpyxl

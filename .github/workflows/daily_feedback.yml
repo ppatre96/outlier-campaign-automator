@@ -1,14 +1,14 @@
 name: Daily Feedback (Phase 6)
 
-# Once per day, walk every launched ramp and produce a fresh per-campaign
-# recommendation row in `ramp_recommendations`. The console reads these out
-# of Postgres and renders Accept / Reject buttons on the ramp detail page.
+# Once per day: (1) refresh live campaign metrics for all channels into
+# Postgres, then (2) walk every launched ramp and produce a fresh per-campaign
+# recommendation row in `ramp_recommendations`. The console reads both out of
+# Postgres (dashboard rollup + per-ramp Accept / Reject).
 #
-# Pre-existing `smart_ramp_poller.yml` has its own daily 08:00 UTC cron that
-# refreshes registry metrics (impressions / spend / etc) via the legacy
-# weekly_feedback_loop path. This workflow runs 30 minutes AFTER that one
-# so it reads fresh metrics. Don't collapse them — the metric refresh path
-# pulls Redash; this path is registry-only + writes Postgres.
+# The metrics refresh (scripts/refresh_metrics.py) runs FIRST in this same job
+# so the recommendation pass reads fresh numbers. It replaces the old claim
+# that smart_ramp_poller refreshed metrics at 08:00 — it never did; the
+# weekly_feedback_loop path was unscheduled, so metrics went stale.
 
 on:
   schedule:
@@ -47,6 +47,17 @@ jobs:
 
       - name: Install Doppler CLI
         uses: dopplerhq/cli-action@v4
+
+      - name: Refresh campaign metrics (all channels)
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        # Non-fatal: a metrics hiccup on one platform must not block the
+        # recommendation pass below. Sources campaigns from Postgres, so it
+        # covers every current campaign regardless of the committed registry.
+        run: |
+          echo "Running: doppler run -- python3 scripts/refresh_metrics.py --window 7"
+          doppler run -- python3 scripts/refresh_metrics.py --window 7 \
+            || echo "metrics refresh failed (non-fatal) — continuing to recommendations"
 
       - name: Run daily feedback pass
         env:

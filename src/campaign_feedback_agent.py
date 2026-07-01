@@ -1303,6 +1303,59 @@ def _build_report(scores: list[CreativeScore],
 
 # ── Main entry point ───────────────────────────────────────────────────────────
 
+def refresh_linkedin_metrics(window: int = 7) -> int:
+    """Refresh LinkedIn campaign metrics only — no vision/scoring/deprecation.
+
+    Pulls the same Redash metrics query `run()` uses, aggregates per campaign
+    (the query is per-creative), and pushes campaign-level totals through
+    `campaign_registry.update_metrics` (which dual-writes to Postgres). This is
+    the LinkedIn half of the all-channel metrics refresh; Meta/Google are
+    handled by platform_metrics.fetch_metrics_for_active_extra_platforms.
+
+    Returns the number of campaigns pushed. Never raises — logs and returns 0.
+    """
+    from src.campaign_registry import update_metrics
+    try:
+        db = RedashClient()
+        sql = _METRICS_SQL.format(account_id=config.LINKEDIN_AD_ACCOUNT_ID, window=window)
+        df = db._run_query(sql, label="metrics-refresh-linkedin")
+    except Exception as exc:
+        log.warning("refresh_linkedin_metrics: Redash query failed (%s)", exc)
+        return 0
+    if df.empty:
+        log.info("refresh_linkedin_metrics: no Redash data for last %d days", window)
+        return 0
+
+    def _fi(v) -> int:
+        return int(v) if v is not None and v == v else 0
+    def _ff(v) -> float:
+        return float(v) if v is not None and v == v else 0.0
+
+    # Aggregate per campaign — update_metrics SETS (not adds) a campaign's
+    # totals, so sum the campaign's creative rows first.
+    agg: dict[int, dict] = {}
+    for _, r in df.iterrows():
+        cid = _fi(r.get("campaign_id"))
+        if not cid:
+            continue
+        a = agg.setdefault(cid, {"impressions": 0, "clicks": 0, "cost": 0.0, "apps": 0})
+        a["impressions"] += _fi(r.get("impressions"))
+        a["clicks"]      += _fi(r.get("lp_clicks"))
+        a["cost"]        += _ff(r.get("cost_usd"))
+        a["apps"]        += _fi(r.get("applications"))
+
+    for cid, a in agg.items():
+        update_metrics(
+            linkedin_campaign_urn=f"urn:li:sponsoredCampaign:{cid}",
+            impressions=a["impressions"],
+            clicks=a["clicks"],
+            spend_usd=a["cost"],
+            applications=a["apps"],
+        )
+    log.info("refresh_linkedin_metrics: pushed %d campaigns", len(agg))
+    return len(agg)
+
+
 def run(window: int = 60) -> str:
     """
     Run the full campaign feedback loop.
