@@ -521,6 +521,20 @@ def list_campaign_platform_ids(ramp_id: str, platform: str) -> list[str]:
         return []
 
 
+def list_all_campaign_data() -> list[dict]:
+    """Every campaign's `data` JSONB from Postgres, newest first.
+
+    Postgres is the authoritative, always-current campaign store (upsert_campaign
+    writes it on every log_campaign, including CI). The metrics-refresh path uses
+    this to hydrate the local JSON registry before fetching, so a scheduled run
+    covers ALL current campaigns rather than the stale committed JSON. Raises
+    UIDecisionsUnavailable when the DB is unreachable so the caller can decide
+    NOT to clobber the local registry with nothing."""
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT data FROM campaigns ORDER BY updated_at DESC")
+        return [r[0] for r in cur.fetchall() if isinstance(r[0], dict)]
+
+
 def campaign_exists_for_cohort_channel(
     ramp_id: str, platform: str, campaign_type: str, cohort_signature: str, geo_cluster: str,
 ) -> bool:
