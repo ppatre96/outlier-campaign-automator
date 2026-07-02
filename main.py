@@ -82,7 +82,20 @@ def run_launch(dry_run: bool = False, flow_id: str | None = None, project_id: st
     )
     claude_key    = os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY", "")
     mj_token      = sheet_cfg.get("MIDJOURNEY_API_TOKEN") or os.getenv("MIDJOURNEY_API_TOKEN", "")
-    inmail_sender = sheet_cfg.get("LINKEDIN_INMAIL_SENDER_URN") or os.getenv("LINKEDIN_INMAIL_SENDER_URN", config.LINKEDIN_INMAIL_SENDER_URN)
+    # Console per-ramp InMail sender choice (an approved sender's URN) wins over
+    # the sheet/env default. "" means the reviewer hasn't chosen one → fall
+    # through to sheet → env → config; create_inmail_ad auto-derives the org URN
+    # when everything is empty.
+    try:
+        from src.console_db import get_inmail_sender_override
+        _inmail_sender_override = get_inmail_sender_override(ramp_id or "")
+    except Exception:
+        _inmail_sender_override = ""
+    inmail_sender = (
+        _inmail_sender_override
+        or sheet_cfg.get("LINKEDIN_INMAIL_SENDER_URN")
+        or os.getenv("LINKEDIN_INMAIL_SENDER_URN", config.LINKEDIN_INMAIL_SENDER_URN)
+    )
 
     # Initialize Linear client if posting to Linear
     linear_client = None

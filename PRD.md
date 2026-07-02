@@ -80,11 +80,11 @@ individually — they run in order automatically. Listed so you know what each C
 | Channel | Status | Notes |
 |---|---|---|
 | **LinkedIn — Sponsored Content (static image)** | ✅ Live | Created as DRAFT. |
-| **LinkedIn — InMail (message ads)** | ✅ Live | **Auto-created** as DRAFT — the pipeline writes the subject + message body + CTA. The "from" sender is currently auto-set to the LinkedIn organization that owns the ad account. *(Planned: let you choose the sender — see roadmap.)* |
+| **LinkedIn — InMail (message ads)** | ✅ Live | **Auto-created** as DRAFT — the pipeline writes the subject + message body + CTA. You can now **choose the sender per ramp** in the Console ("LinkedIn InMail sender" card); it defaults to the organization that owns the ad account. |
 | **Meta (Facebook / Instagram)** | ✅ Live | Created as PAUSED. "Employment" special ad category applied. |
 | **Google — Display** | ✅ Live | Created as PAUSED. Responsive display ads. |
 | **Google — Search** | ✅ Live | Created as PAUSED. Pipeline owns keywords + Responsive Search Ads. |
-| **Reddit** | 🟢 Fully wired, gated off | Programmatic campaign creation is **fully built** (campaign → ad group → ad → budget, `RedditClient`). It's switched **off by default** (`REDDIT_API_ENABLED=false`, and `reddit` not in `ENABLED_PLATFORMS`) pending Reddit's Ads-API access approval + the pixel/conversion events from Tuan. Until it's flipped on, Reddit runs creative-only: it exports the creatives **plus a complete targeting handoff** (per-pod subreddits, interests, keywords, pixel, suggested daily budget) to Drive. Flip the flag on and it creates campaigns like the other channels. |
+| **Reddit** | ✅ Live | **Full programmatic campaign creation** (campaign → ad group → ad → budget, `RedditClient`), **enabled in production** (`REDDIT_API_ENABLED=true`, `reddit` in `ENABLED_PLATFORMS`; creatives are hosted for Reddit via GCS signed URLs). One caveat: the Reddit **conversion pixel + per-pod events aren't wired yet** (`REDDIT_PIXEL_ID` / `REDDIT_WS_EVENT_*` unset, pending Tuan), so campaigns run on the `SIGN_UP` optimization goal without custom worker-conversion events until those land. |
 | **TikTok** | 🟡 Creative-only (by design) | India ban + video-first, so no programmatic launch. The pipeline renders both **9:16 and 1:1** creatives + a `_HANDOFF.md` guide to Drive (via the "Make TikTok creatives" Console button / `make_creatives.yml`); **you create the campaigns** in TikTok Ads Manager. |
 
 ---
@@ -194,8 +194,8 @@ LinkedIn creatives on its own schedule.
 - **Feedback loop** (mostly closed 2026-07-02): weekly funnel/sentiment/drift analysis is now scheduled;
   auto-act on angle winners/losers is now enabled in production (safe actions only). Remaining: put the
   LinkedIn creative auto-replacement on its own schedule.
-- **InMail sender selection** — the InMail "from" is currently auto-set to the organization that owns the ad account (LinkedIn rejects unapproved individual senders). Planned option: let Diego/Bryan choose the sender per ramp from a dropdown in the Console — requires that person to first be added as an **approved InMail sender** on the LinkedIn ad account.
-- **Reddit programmatic launch** — blocked on two external things: (1) Reddit granting allow-list Ads-API access, and (2) a public `media_url` host for creatives (Reddit's Ads API has no media upload and our current hosts are all blocked). Runs creative-only + targeting handoff until both clear.
+- **InMail sender selection** — ✅ **Shipped.** Per-ramp InMail sender picker in the Console (a configurable approved-sender list, defaulting to the org). A named person only actually sends once they've been added as an **approved InMail sender** on the LinkedIn ad account in Campaign Manager; until then the pipeline falls back to the org sender (the InMail still ships) and logs a warning. To offer named people, set `INMAIL_SENDERS_JSON` (label + person URN) in the Console env.
+- **Reddit conversion tracking** — Reddit campaign creation is live; the remaining piece is wiring the Reddit **pixel + per-pod conversion events** (`REDDIT_PIXEL_ID` / `REDDIT_WS_EVENT_*`, pending Tuan) so delivery optimizes on worker conversions rather than the generic `SIGN_UP` goal.
 - **In-Console chat assistant** — a help chat so you can ask "how do I…" questions without pinging Pranav (now shipping).
 
 ---

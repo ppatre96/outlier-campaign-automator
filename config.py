@@ -327,12 +327,15 @@ META_CONVERSION_ACTION_TYPE  = os.getenv(
 META_ATTRIBUTION_WINDOW_DAYS = int(os.getenv("META_ATTRIBUTION_WINDOW_DAYS", "7"))
 
 # ── Reddit Ads ────────────────────────────────────────────────────────────────
-# New channel (2026-06-11). v1 is CREATIVE-ONLY: the pipeline generates image +
-# free-form ad assets + a targeting/conversion manifest to Drive for manual
-# upload in Reddit Ads Manager. Programmatic campaign creation (RedditClient
-# Phase 2) is gated behind REDDIT_API_ENABLED and stays OFF until Reddit's
-# allow-list Ads API access is granted — the Reddit Ads API is allow-list gated
-# and SEPARATE from the Ads Manager UI we already have.
+# Reddit channel. Programmatic campaign creation (RedditClient Phase 2) is
+# LIVE — Reddit's allow-list Ads-API access was granted and creatives are
+# hosted via GCS signed URLs (media upload solved). It is ENABLED IN PRODUCTION
+# (Doppler prd: REDDIT_API_ENABLED=true, reddit in ENABLED_PLATFORMS). The code
+# DEFAULT below stays "false" so local/dev runs are creative-only (they export
+# image + free-form assets + a targeting/conversion manifest to Drive) and never
+# hit the live Reddit API without an explicit opt-in. Remaining gap: the Reddit
+# conversion pixel + per-pod events (REDDIT_PIXEL_ID / REDDIT_WS_EVENT_*) are
+# still unset (pending Tuan) — until then delivery uses the SIGN_UP goal.
 REDDIT_API_ENABLED   = os.getenv("REDDIT_API_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 REDDIT_CLIENT_ID     = os.getenv("REDDIT_CLIENT_ID", "")
 REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET", "")

@@ -911,14 +911,14 @@ class LinkedInClient(AdPlatformClient):
         """
         dest = destination_url or config.LINKEDIN_DESTINATION
 
-        # Auto-correct legacy person-URN sender values. The InMail sender MUST
-        # be the org URN that owns the ad account — LinkedIn validates this on
-        # the inMailContents POST.
-        if not sender_urn or sender_urn.startswith("urn:li:person:"):
-            log.info(
-                "InMail sender %r unsuitable — substituting org URN from ad account",
-                sender_urn,
-            )
+        # Sender resolution. An EMPTY sender always falls back to the org URN
+        # that owns the ad account (the always-approved default). A non-empty
+        # sender — the org, or an explicitly chosen APPROVED person (a reviewer's
+        # pick from the console) — is tried AS-IS: LinkedIn validates approval on
+        # the inMailContents POST below, and we fall back to the org URN + retry
+        # if it rejects the sender as unapproved. (A person must first be added
+        # as an approved sender on the ad account in Campaign Manager.)
+        if not sender_urn:
             sender_urn = self.get_account_reference_urn()
 
         # Step 1 — create the InMail content object via REST API (no MDP required)
@@ -950,6 +950,25 @@ class LinkedInClient(AdPlatformClient):
 
         import requests as _req_lib
         resp = _req_lib.post("https://api.linkedin.com/rest/inMailContents", json=content_payload, headers=content_headers)
+        # If the chosen sender isn't an approved sender on the account, LinkedIn
+        # rejects with SINMAIL_SENDER_NOT_APPROVED. Fall back to the org URN
+        # (always approved) and retry once so the InMail still ships — with a
+        # loud warning so the reviewer knows their pick didn't stick.
+        if resp.status_code >= 400 and "SINMAIL_SENDER_NOT_APPROVED" in (resp.text or ""):
+            org_urn = self.get_account_reference_urn()
+            if sender_urn != org_urn:
+                log.warning(
+                    "InMail sender %s is not an approved sender on the ad account "
+                    "— falling back to org URN %s. Add it as an approved sender in "
+                    "Campaign Manager to use it.",
+                    sender_urn, org_urn,
+                )
+                content_payload["sender"] = org_urn
+                sender_urn = org_urn
+                resp = _req_lib.post(
+                    "https://api.linkedin.com/rest/inMailContents",
+                    json=content_payload, headers=content_headers,
+                )
         self._raise_for_status(resp, "createInMailContent")
         # x-restli-id sometimes contains a bare numeric id, sometimes a full URN
         # (e.g. "urn:li:adInMailContent:214000216"). Normalize to a full URN.
