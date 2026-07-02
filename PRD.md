@@ -190,7 +190,7 @@ LinkedIn creatives on its own schedule.
 
 - **LinkedIn creative attach** can be blocked by a pending LinkedIn platform entitlement (MDP) — sometimes requires a manual creative upload.
 - **Google Ads write access** on the child account is subject to an access approval.
-- **Reddit** is creative-only until the Ads API allow-list clears.
+- **Google "Employment" special ad category** can't be set via API (Google removed the field) — manual toggle required in Ads Manager.
 - **Feedback loop** (mostly closed 2026-07-02): weekly funnel/sentiment/drift analysis is now scheduled;
   auto-act on angle winners/losers is now enabled in production (safe actions only). Remaining: put the
   LinkedIn creative auto-replacement on its own schedule.
