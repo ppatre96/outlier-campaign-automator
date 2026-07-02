@@ -62,6 +62,15 @@ jobs:
       - name: Run daily feedback pass
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+          # Close the angle-loop: let the daily pass EXECUTE the safe, high-
+          # confidence angle actions (pause losing-angle Meta ads → Meta
+          # reallocates to the winner; increase-only budget bumps on the winner,
+          # capped at ANGLE_SCALE_MAX_CENTS; creative "refresh" drafts). Losing
+          # angles are still surfaced as console recommendations too. Prod-only
+          # override — config.py default stays "false" so local runs / tests
+          # never touch live campaigns. To revert to recommend-only, delete this
+          # line (or set it in Doppler prd, which wins over this env).
+          ANGLE_AUTO_ACT_ENABLED: "true"
         run: |
           ARGS=""
           if [ -n "${{ github.event.inputs.ramp_id }}" ]; then

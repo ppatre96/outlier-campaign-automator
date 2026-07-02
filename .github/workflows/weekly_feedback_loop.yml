@@ -1,0 +1,86 @@
+name: Weekly Feedback Loop (Phase 2.5)
+
+# Once per week: the deeper, cross-ramp analysis the daily pass doesn't do.
+# scripts/weekly_feedback_loop.py runs four step-isolated stages and posts ONE
+# consolidated Slack message:
+#   A — v1 creative/cohort alerts   (scripts.post_weekly_reports)
+#   B — full-funnel analysis        (feedback_agent.analyze_funnel_by_cohort)
+#   C — sentiment mining            (sentiment_miner.run — Reddit/Trustpilot)
+#   D — ICP drift check             (icp_drift_monitor.check_and_trigger)
+#
+# This was previously only wired to a local launchd job (Mon 09:00 IST), so on
+# CI it never ran and its metrics/analysis went stale. This workflow puts it on
+# the same cron cadence. It analyzes + notifies (Step D may trigger a
+# reanalysis job) — it does NOT mutate live ad campaigns. The script is
+# idempotent (filelock + 6-day skip); on an ephemeral runner the skip window is
+# a no-op, which is fine for a weekly cron.
+
+on:
+  schedule:
+    - cron: "30 3 * * 1"  # 03:30 UTC Monday = 09:00 IST — the cadence it was designed for
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run all steps but skip the Slack post + reanalysis trigger"
+        type: boolean
+        required: false
+        default: false
+      force:
+        description: "Bypass the 6-day idempotency skip (manual reruns)"
+        type: boolean
+        required: false
+        default: false
+      only:
+        description: "Run only one step (debugging)"
+        type: choice
+        required: false
+        default: ""
+        options: ["", "v1", "funnel", "sentiment", "drift"]
+
+jobs:
+  weekly:
+    name: Weekly feedback loop
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v4
+
+      - name: Run weekly feedback loop
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
+          if [ -n "${{ github.event.inputs.only }}" ]; then ARGS="$ARGS --only ${{ github.event.inputs.only }}"; fi
+          echo "Running: doppler run -- python3 scripts/weekly_feedback_loop.py $ARGS"
+          doppler run -- python3 scripts/weekly_feedback_loop.py $ARGS
+
+      - name: Upload run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-feedback-log-${{ github.run_id }}
+          path: logs/
+          retention-days: 14
+          if-no-files-found: ignore
