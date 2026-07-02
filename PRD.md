@@ -211,4 +211,44 @@ LinkedIn creatives on its own schedule.
 
 ---
 
+## 12. Console reference — every screen & card
+
+### Top-level pages (left sidebar)
+
+| Screen | What it's for |
+|---|---|
+| **Ramps** (home) | The master list of every Smart Ramp with its status (prep_running → awaiting_approval → approved/yolo → launching → completed / failed). Your starting point — click a ramp to open it. |
+| **Ramp detail** | The hub for one ramp — all the cards below. Where you review, approve, launch, and monitor. |
+| **Dashboard** | Aggregate stats across all ramps: counts by status + a per-channel rollup of impressions / clicks / spend / applications. Read-only. |
+| **Audit Log** | A chronological event stream across every ramp (approve, reopen, launch, dispatch_failed, pause, etc.). Click a row to jump to that ramp. |
+| **Chat** | In-Console help assistant. Ask "how do I…" questions; a step-by-step walkthrough panel appears beside each answer. Set a ramp ID for ramp-specific answers. |
+| **Help** | Quick reference: what each tab does + links to the repos and Campaign Registry sheet. |
+| **Settings** | Build info (commit SHA, branch, env) + your session info (email, allowlist). A sanity check before acting. |
+
+### Cards on the ramp detail page (top → bottom)
+
+| Card | What it shows / what you do |
+|---|---|
+| **ETA banner** | When a ramp is still prepping, shows the expected ready time; turns into the status/decision banner once ready. |
+| **ICP** | The Ideal Candidate Profile the pipeline derived — the person we're targeting. Sanity-check it matches who you want. |
+| **Cohorts / Reach per channel** | Each audience segment and its estimated size per channel. Green ≥100k, amber 50–100k, red <50k; "not gated" = no number available (fine for niche/keyword targeting). |
+| **Angles we'd test** | The A/B/C copy directions (Expertise / Earnings / Flexibility) per cohort × channel. Sanity-check the messaging. |
+| **Targeting** | The skills / titles / interests / keywords being targeted per channel. |
+| **Competitor landscape** | Differentiators + competitor signals (context only) — plus example competitor ads pulled from the Meta Ad Library. |
+| **Brief review** | Read each cohort's creative brief; leave a comment (captured against the ramp) or confirm the briefs to unblock generation. |
+| **Approve channels & budgets** | The gate. Pick channels + set daily budgets, click **Approve** (records your decision — does NOT launch). YOLO = approve + bypass the budget gate. |
+| **Launch by channel** | Launch each approved channel — the pipeline builds the draft campaigns + creatives there. **Relaunch (replace)** rebuilds a channel from scratch (archives the old set first). |
+| **New cohort panel** | Appears when cohorts were added after the first prep — lets you prep + launch just those, without touching existing ones. |
+| **Campaign browser** | Browse everything created for the ramp, drilling cohort → channel → angle, with inline creative thumbnails and links into each ad platform. |
+| **Live performance & recommendations** | Once campaigns spend: per-campaign metrics + the daily keep / pause / replace recommendations with **Accept / Reject** buttons (and the A/B/C angle winner/loser calls). |
+| **Keywords** | Edit the Google Search keyword set per cohort × geo; the pipeline uses it on the next launch/relaunch. |
+| **Negative keywords** | Approve debatable Google Search exclusions (confident negatives are auto-added by the pipeline). |
+| **Landing-page URLs** | The LP each platform's UTM builder appends to; set a per-platform override that wins over the Smart Ramp URL. |
+| **Make creatives** | Generate TikTok / FB / IG creatives (9:16 + 1:1 + a handoff guide) to Drive for manual upload. |
+| **Budget (per campaign)** | Edit a live campaign's daily budget from the browser/performance cell. |
+| **⚠️ Needs review — couldn't create / partial** | Only appears when something didn't fully build. Shows the real reason per row: "couldn't create — auto-archived" (fix the source, then Relaunch) or "live with keywords dropped" (usually safe to leave). |
+| **Ramp audit log** | The event history for this specific ramp (who approved/launched/reopened and when). |
+
+---
+
 *Questions? Use the in-Console **Chat** (ask it anything about using the tool), comment on a ramp card, or ping Pranav in Slack.*
