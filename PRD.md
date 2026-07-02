@@ -80,7 +80,7 @@ individually — they run in order automatically. Listed so you know what each C
 | Channel | Status | Notes |
 |---|---|---|
 | **LinkedIn — Sponsored Content (static image)** | ✅ Live | Created as DRAFT. |
-| **LinkedIn — InMail (message ads)** | ✅ Live | **Auto-created** as DRAFT — the pipeline writes the subject + message body + CTA. You can now **choose the sender per ramp** in the Console ("LinkedIn InMail sender" card); it defaults to the organization that owns the ad account. |
+| **LinkedIn — InMail (message ads)** | ✅ Live | **Auto-created** as DRAFT — the pipeline writes the subject + message body + CTA. Sent from the **Outlier organization** page (the org that owns the ad account) — this is fixed, not per-user. |
 | **Meta (Facebook / Instagram)** | ✅ Live | Created as PAUSED. "Employment" special ad category applied. |
 | **Google — Display** | ✅ Live | Created as PAUSED. Responsive display ads. |
 | **Google — Search** | ✅ Live | Created as PAUSED. Pipeline owns keywords + Responsive Search Ads. |
@@ -194,7 +194,6 @@ LinkedIn creatives on its own schedule.
 - **Feedback loop** (mostly closed 2026-07-02): weekly funnel/sentiment/drift analysis is now scheduled;
   auto-act on angle winners/losers is now enabled in production (safe actions only). Remaining: put the
   LinkedIn creative auto-replacement on its own schedule.
-- **InMail sender selection** — ✅ **Shipped.** Per-ramp InMail sender picker in the Console (a configurable approved-sender list, defaulting to the org). A named person only actually sends once they've been added as an **approved InMail sender** on the LinkedIn ad account in Campaign Manager; until then the pipeline falls back to the org sender (the InMail still ships) and logs a warning. To offer named people, set `INMAIL_SENDERS_JSON` (label + person URN) in the Console env.
 - **Reddit conversion tracking** — Reddit campaign creation is live; the remaining piece is wiring the Reddit **pixel + per-pod conversion events** (`REDDIT_PIXEL_ID` / `REDDIT_WS_EVENT_*`, pending Tuan) so delivery optimizes on worker conversions rather than the generic `SIGN_UP` goal.
 - **In-Console chat assistant** — a help chat so you can ask "how do I…" questions without pinging Pranav (now shipping).
 
