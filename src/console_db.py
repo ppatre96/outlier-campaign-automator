@@ -157,38 +157,6 @@ def get_lp_url_override(ramp_id: str, platform: str) -> str:
         return ""
 
 
-def get_inmail_sender_override(ramp_id: str) -> str:
-    """Return the reviewer-chosen InMail sender URN for this ramp, or "" when
-    none is set. The console writes a per-ramp choice (an approved sender's
-    person/org URN) into `inmail_sender_overrides`; the pipeline reads it when
-    resolving the InMail sender so the reviewer's pick wins over the env/sheet
-    default. Empty string means "use the default" (org URN auto-derived
-    downstream). Never raises — connection errors / missing table return "".
-    """
-    db_url = os.environ.get("DATABASE_URL", "")
-    if not db_url or not ramp_id:
-        return ""
-    try:
-        import psycopg
-    except ImportError:
-        return ""
-    try:
-        with psycopg.connect(db_url, connect_timeout=10) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT sender_urn FROM inmail_sender_overrides WHERE ramp_id = %s",
-                    (ramp_id,),
-                )
-                row = cur.fetchone()
-                if row and row[0]:
-                    log.info("Using InMail sender override for ramp=%s", ramp_id)
-                    return str(row[0])
-                return ""
-    except Exception as exc:
-        log.debug("inmail_sender_overrides read failed (ramp=%s): %s", ramp_id, exc)
-        return ""
-
-
 def filter_violations_by_overrides(
     violations: Iterable[str], skip_rules: set[str]
 ) -> list[str]:
