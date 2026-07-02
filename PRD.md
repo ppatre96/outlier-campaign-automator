@@ -80,7 +80,7 @@ individually — they run in order automatically. Listed so you know what each C
 | Channel | Status | Notes |
 |---|---|---|
 | **LinkedIn — Sponsored Content (static image)** | ✅ Live | Created as DRAFT. |
-| **LinkedIn — InMail (message ads)** | ✅ Live | Created as DRAFT. |
+| **LinkedIn — InMail (message ads)** | ✅ Live | **Auto-created** as DRAFT — the pipeline writes the subject + message body + CTA. The "from" sender is currently auto-set to the LinkedIn organization that owns the ad account. *(Planned: let you choose the sender — see roadmap.)* |
 | **Meta (Facebook / Instagram)** | ✅ Live | Created as PAUSED. "Employment" special ad category applied. |
 | **Google — Display** | ✅ Live | Created as PAUSED. Responsive display ads. |
 | **Google — Search** | ✅ Live | Created as PAUSED. Pipeline owns keywords + Responsive Search Ads. |
@@ -194,7 +194,9 @@ LinkedIn creatives on its own schedule.
 - **Feedback loop** (mostly closed 2026-07-02): weekly funnel/sentiment/drift analysis is now scheduled;
   auto-act on angle winners/losers is now enabled in production (safe actions only). Remaining: put the
   LinkedIn creative auto-replacement on its own schedule.
-- **In-Console chat assistant** — a help chat so you can ask "how do I…" questions without pinging Pranav (shipping alongside this doc).
+- **InMail sender selection** — the InMail "from" is currently auto-set to the organization that owns the ad account (LinkedIn rejects unapproved individual senders). Planned option: let Diego/Bryan choose the sender per ramp from a dropdown in the Console — requires that person to first be added as an **approved InMail sender** on the LinkedIn ad account.
+- **Reddit programmatic launch** — blocked on two external things: (1) Reddit granting allow-list Ads-API access, and (2) a public `media_url` host for creatives (Reddit's Ads API has no media upload and our current hosts are all blocked). Runs creative-only + targeting handoff until both clear.
+- **In-Console chat assistant** — a help chat so you can ask "how do I…" questions without pinging Pranav (now shipping).
 
 ---
 
