@@ -84,8 +84,8 @@ individually — they run in order automatically. Listed so you know what each C
 | **Meta (Facebook / Instagram)** | ✅ Live | Created as PAUSED. "Employment" special ad category applied. |
 | **Google — Display** | ✅ Live | Created as PAUSED. Responsive display ads. |
 | **Google — Search** | ✅ Live | Created as PAUSED. Pipeline owns keywords + Responsive Search Ads. |
-| **TikTok** | 🟡 Creative-only | Generates the images/video frames to Drive; upload is manual. |
-| **Reddit** | 🟡 Creative-only | Generates creatives + targeting notes to Drive; programmatic launch pending API access. |
+| **Reddit** | 🟢 Fully wired, gated off | Programmatic campaign creation is **fully built** (campaign → ad group → ad → budget, `RedditClient`). It's switched **off by default** (`REDDIT_API_ENABLED=false`, and `reddit` not in `ENABLED_PLATFORMS`) pending Reddit's Ads-API access approval + the pixel/conversion events from Tuan. Until it's flipped on, Reddit runs creative-only: it exports the creatives **plus a complete targeting handoff** (per-pod subreddits, interests, keywords, pixel, suggested daily budget) to Drive. Flip the flag on and it creates campaigns like the other channels. |
+| **TikTok** | 🟡 Creative-only (by design) | India ban + video-first, so no programmatic launch. The pipeline renders both **9:16 and 1:1** creatives + a `_HANDOFF.md` guide to Drive (via the "Make TikTok creatives" Console button / `make_creatives.yml`); **you create the campaigns** in TikTok Ads Manager. |
 
 ---
 
@@ -129,7 +129,10 @@ Each row shows the real reason from the ad platform. Two kinds:
 
 1. **Which channels to run** and **the daily budget** for each (the Approve step).
 2. **The Google "Employment" special ad category toggle** — must be set manually in Google Ads Manager
-   (the API can't set it) before un-pausing Google campaigns.
+   before un-pausing Google campaigns. Google *removed* this field from their Ads API (it's gone in the
+   current SDK versions), so no tool can set it programmatically anymore — the pipeline used to set it
+   automatically on older API versions but Google closed that door. This is a Google limitation, not a
+   pipeline gap.
 3. **Landing page + budget confirmation** per channel.
 4. **The final un-pause** in each ad platform — nothing serves until you do this.
 5. **Accept/Reject the daily performance recommendations** (see below).
