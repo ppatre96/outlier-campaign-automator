@@ -60,3 +60,36 @@ def test_exists_false(monkeypatch):
     _set(monkeypatch, replace=False, flag=True)
     monkeypatch.setattr("src.ui_decisions.campaign_exists_for_cohort_channel", lambda *a: False)
     assert M._cohort_channel_already_live("GMR-0024", "meta", "static", _C(), _G()) is False
+
+
+# ── Duplicate-risk warning: skip_existing=false + replace=false + already-live ──
+# Reproduces the GMR-0023 2026-07-03 failure mode (a scoped re-run of the same
+# locales dispatched with skip_existing=false silently duplicated live cohorts).
+
+def test_flag_off_warns_when_already_live(monkeypatch, caplog):
+    _set(monkeypatch, replace=False, flag=False)
+    monkeypatch.setattr("src.ui_decisions.campaign_exists_for_cohort_channel", lambda *a: True)
+    with caplog.at_level("WARNING"):
+        result = M._cohort_channel_already_live("GMR-0024", "linkedin", "static", _C(), _G())
+    assert result is False               # still creates — warning does not block
+    assert "DUPLICATE RISK" in caplog.text
+
+
+def test_flag_off_no_warn_when_not_live(monkeypatch, caplog):
+    _set(monkeypatch, replace=False, flag=False)
+    monkeypatch.setattr("src.ui_decisions.campaign_exists_for_cohort_channel", lambda *a: False)
+    with caplog.at_level("WARNING"):
+        assert M._cohort_channel_already_live("GMR-0024", "linkedin", "static", _C(), _G()) is False
+    assert "DUPLICATE RISK" not in caplog.text
+
+
+def test_replace_never_warns(monkeypatch, caplog):
+    # REPLACE_EXISTING archives + recreates on purpose — never a duplicate risk,
+    # and existence must not even be queried on the replace path.
+    _set(monkeypatch, replace=True, flag=False)
+    def _boom(*a):
+        raise AssertionError("existence check must not run on the replace path")
+    monkeypatch.setattr("src.ui_decisions.campaign_exists_for_cohort_channel", _boom)
+    with caplog.at_level("WARNING"):
+        assert M._cohort_channel_already_live("GMR-0024", "meta", "static", _C(), _G()) is False
+    assert "DUPLICATE RISK" not in caplog.text
