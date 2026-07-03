@@ -211,13 +211,29 @@ class SmartRampClient:
 
     def _parse_cohort(self, raw: dict) -> CohortSpec:
         """Parse raw cohort row into CohortSpec."""
+        included_geos = raw.get("included_geos", []) or []
+        matched_locales = raw.get("matched_locales")
+        # Geo backfill: some cohorts ship with no included_geos (e.g. GMR-0023
+        # ko-KR / vi-VN). Fill from config.LOCALE_GEO_OVERRIDES keyed on locale
+        # ONLY when the cohort has no geos of its own, so we never override an
+        # intentional geo set. (Smart Ramp cohort-geo write-back isn't wired yet.)
+        if not included_geos and matched_locales:
+            try:
+                import config as _cfg
+                for _loc in matched_locales:
+                    _ov = _cfg.LOCALE_GEO_OVERRIDES.get(str(_loc).lower())
+                    if _ov:
+                        included_geos = list(_ov)
+                        break
+            except Exception:
+                pass
         return CohortSpec(
             id=raw.get("id", ""),
             cohort_description=raw.get("cohort_description", ""),
             signup_flow_id=raw.get("signup_flow_id"),
             selected_lp_url=raw.get("selected_lp_url"),
-            included_geos=raw.get("included_geos", []),
-            matched_locales=raw.get("matched_locales"),
+            included_geos=included_geos,
+            matched_locales=matched_locales,
             target_activations=raw.get("target_activations"),
             job_post_id=raw.get("job_post_id"),
             job_post_pod=raw.get("job_post_pod"),

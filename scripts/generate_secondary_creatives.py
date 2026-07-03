@@ -353,6 +353,12 @@ def main(argv: list[str] | None = None) -> int:
              "collapse to one shared creative set (e.g. GMR-0019).",
     )
     parser.add_argument(
+        "--only-locales", default="",
+        help="Restrict to specific BCP-47 locales, comma-separated (e.g. "
+             "ko-KR,bn-IN,th-TH). Matches a cohort's matched_locales "
+             "case-insensitively. Blank = all cohorts.",
+    )
+    parser.add_argument(
         "--max-clusters", type=int, default=0,
         help="Process at most N largest geo clusters per cohort (0 = no limit). "
              "Use --max-clusters 1 for a single-cluster smoke test.",
@@ -432,6 +438,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         if not cohorts:
             log.error("--only-cohort %r matched no cohort; nothing to do", args.only_cohort)
+            return 1
+    if args.only_locales:
+        want = {l.strip().lower() for l in args.only_locales.split(",") if l.strip()}
+        before = len(cohorts)
+        cohorts = [
+            c for c in cohorts
+            if want & {str(l).lower() for l in (c.matched_locales or [])}
+        ]
+        log.info("--only-locales %s → %d of %d cohorts matched", sorted(want), len(cohorts), before)
+        if not cohorts:
+            log.error("--only-locales %r matched no cohort; nothing to do", args.only_locales)
             return 1
     for cohort_spec in cohorts:
         log.info(

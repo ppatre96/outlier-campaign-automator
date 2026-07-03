@@ -56,6 +56,14 @@ on:
         description: "New-cohort scope (feature 010): restrict this run to a single Smart Ramp cohort id. Blank + a channel = scoped LAUNCH of that cohort; set + no channel = scoped additive PREP of that cohort (no ramp-wide wipe, ramp status untouched). Requires ramp_id."
         required: false
         default: ""
+      only_locales:
+        description: "Restrict this run to specific BCP-47 locales, comma-separated (e.g. ko-KR,bn-IN,th-TH). Blank = all cohorts. Sets ONLY_LOCALES (main.py cohort filter)."
+        required: false
+        default: ""
+      channels:
+        description: "Comma-separated channel subset, e.g. linkedin,meta. Blank = all enabled platforms. Sets OUTLIER_CHANNELS. NOTE: the Meta arm is coupled to LinkedIn static — include linkedin when running meta."
+        required: false
+        default: ""
       replace:
         description: "Relaunch (replace): archive only_channel's existing campaigns for this ramp BEFORE creating fresh ones (no duplicates). Requires only_channel + ramp_id."
         required: false
@@ -186,6 +194,12 @@ jobs:
           # (config.ONLY_COHORT); restricts the run to one Smart Ramp cohort id
           # (scoped additive prep when no channel, scoped launch with a channel).
           ONLY_COHORT: ${{ github.event.inputs.only_cohort }}
+          # Locale scope (manual reruns): comma-separated BCP-47 locales; main.py
+          # filters cohorts to these (config-import-time read). Blank = all.
+          ONLY_LOCALES: ${{ github.event.inputs.only_locales }}
+          # Channel subset (2026-05-20): comma-separated platforms; main.py
+          # OUTLIER_CHANNELS override. Blank = all enabled. Meta needs linkedin.
+          OUTLIER_CHANNELS: ${{ github.event.inputs.channels }}
           # Relaunch (replace): archive only_channel's existing campaigns before
           # creating fresh ones. Read at config import time (config.REPLACE_EXISTING).
           REPLACE_EXISTING: ${{ github.event.inputs.replace }}
