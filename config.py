@@ -591,6 +591,26 @@ COHORT_SPEC_OVERRIDES: dict[str, list[dict]] = {
     ],
 }
 
+# Per-locale geo backfill (2026-07-03). Some Smart Ramp cohorts were set up with
+# a job post + landing page + LinkedIn facet but NO included_geos (e.g. GMR-0023
+# ko-KR / vi-VN — every geo field empty), so they can't be targeted. Rather than
+# block on cohort-geo write-back (not wired to Smart Ramp yet), fill the geos
+# here: SmartRampClient._parse_cohort applies these ONLY when a cohort's
+# included_geos is empty AND one of its matched_locales matches (case-insensitive).
+# Home country + diaspora, mirroring how th-TH / zh-CN were geo'd. Override the
+# whole map via env LOCALE_GEO_OVERRIDES_JSON ({"ko-kr": ["KR", ...], ...}).
+import json as _json_cfg
+LOCALE_GEO_OVERRIDES: dict[str, list[str]] = {
+    "ko-kr": ["KR", "US", "CA", "GB", "AU"],   # Korean: home + diaspora
+    "vi-vn": ["VN", "US", "CA", "AU"],         # Vietnamese: home + diaspora
+}
+_lgo_env = (os.getenv("LOCALE_GEO_OVERRIDES_JSON", "") or "").strip()
+if _lgo_env:
+    try:
+        LOCALE_GEO_OVERRIDES = {str(k).lower(): list(v) for k, v in _json_cfg.loads(_lgo_env).items()}
+    except Exception:
+        pass  # keep the defaults on malformed env
+
 # Per-cohort launch idempotency (2026-06-11). When True (default), a launch
 # skips any (cohort × geo × channel) that already has a live campaign recorded
 # in the Postgres campaigns table — so a forced re-launch creates campaigns ONLY

@@ -31,6 +31,10 @@ on:
         description: "Filename suffix (e.g. 'bordered') so a re-run writes a NEW set alongside existing creatives without overwriting them. Blank = no suffix."
         required: false
         default: ""
+      only_locales:
+        description: "Restrict to specific BCP-47 locales, comma-separated (e.g. ko-KR,bn-IN,th-TH). Matches cohort matched_locales. Blank = all cohorts."
+        required: false
+        default: ""
       dry_run:
         description: "Print the upload plan; skip Gemini + Drive uploads"
         required: false
@@ -112,6 +116,9 @@ jobs:
           ARGS="$ARGS --platforms ${{ github.event.inputs.platforms }}"
           ARGS="$ARGS --angles ${{ github.event.inputs.angles }}"
           ARGS="$ARGS --max-clusters ${{ github.event.inputs.max_clusters }}"
+          if [ -n "${{ github.event.inputs.only_locales }}" ]; then
+            ARGS="$ARGS --only-locales ${{ github.event.inputs.only_locales }}"
+          fi
 
           if [ -n "${{ github.event.inputs.variant_tag }}" ]; then
             ARGS="$ARGS --variant-tag ${{ github.event.inputs.variant_tag }}"
