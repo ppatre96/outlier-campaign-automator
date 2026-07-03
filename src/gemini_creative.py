@@ -141,22 +141,34 @@ _COMPOSE_CANVAS_DIMS: dict[tuple[int, int], tuple[int, int]] = {
 }
 
 
-def derive_bottom_text(subheadline: str) -> str:
+_RATE_FIGURE_RE = re.compile(
+    r'\$[\d,]+(?:\.\d+)?(?:\s*USD)?(?:\s*(?:/hr|per hour|weekly|hourly))?'
+)
+
+
+def derive_bottom_text(subheadline: str, fallback_rate: str = "") -> str:
     """Build the bottom-band descriptive line from a subheadline. Reused by the
     LinkedIn arm and the secondary-channel compositor so the bottom line is
     consistent. Pulls the earnings figure out of the subheadline when present;
-    falls back to a generic rate line otherwise. (Copy refined later.)"""
+    else uses the cohort's resolved `fallback_rate` (e.g. geo_group.advertised_rate);
+    else rate-free phrasing.
+
+    NEVER emits a hardcoded dollar range. A prior "$25-$50 USD per hour" default
+    fired whenever an angle's subheadline led with a non-rate hook (flexibility /
+    identity), advertising a false rate for low-rate cohorts — e.g. Bengali
+    ($5.50/hr) creatives on LinkedIn + Meta showed $25-$50. Wrong rate in ads is
+    critical-risk, so we fall back to the actual rate or to no rate at all."""
     if config.SUPPRESS_PAY_RATE:
         # Rate-suppressed ramps (e.g. GMR-0019): no dollar figure on the band.
         # Reuse the brand-approved rate-free phrasing from the copy-gen path.
         return "Fully remote. Paid hourly in USD."
-    earnings_match = re.search(
-        r'\$[\d,]+(?:\.\d+)?(?:\s*USD)?(?:\s*(?:/hr|per hour|weekly|hourly))?',
-        subheadline or "",
-    )
+    earnings_match = _RATE_FIGURE_RE.search(subheadline or "")
     if earnings_match:
         return f"Earn {earnings_match.group()} or more. Fully remote."
-    return "Earn $25–$50 USD per hour. Fully remote."
+    fallback_match = _RATE_FIGURE_RE.search(fallback_rate or "")
+    if fallback_match:
+        return f"Earn {fallback_match.group()} or more. Fully remote."
+    return "Fully remote. Paid hourly in USD."
 
 # ── Outlier brand colors ───────────────────────────────────────────────────────
 OUTLIER_BROWN   = (61, 26, 0)
@@ -1139,7 +1151,7 @@ def generate_imagen_creative(
     )
     log.info("Imagen photo received (%dx%d)", bg_image.width, bg_image.height)
 
-    bottom_text = derive_bottom_text(subheadline)
+    bottom_text = derive_bottom_text(subheadline, variant.get("advertised_rate", ""))
 
     ad_image = compose_ad(
         bg_image=bg_image,

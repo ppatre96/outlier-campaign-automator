@@ -3682,6 +3682,10 @@ def _process_static_campaigns(
             if png_path is None and selected_variant:
                 try:
                     from src.figma_creative import rewrite_variant_copy
+                    # Carry the resolved rate so the creative's bottom band shows
+                    # the real figure (not a hardcoded range) on angles whose
+                    # subheadline leads with a non-rate hook.
+                    selected_variant["advertised_rate"] = geo_group.advertised_rate
                     png_path, qc_report = generate_imagen_creative_with_qc(
                         variant=selected_variant,
                         copy_rewriter=rewrite_variant_copy,
@@ -4357,6 +4361,11 @@ def _process_extra_platform_arm(
                 platform, copy_locale_e.display_language,
                 getattr(cohort_e, "name", "")[:40], cluster_suffix, angle_label_e,
             )
+
+        # Carry the resolved rate so the Meta/Google/Reddit compositor's bottom
+        # band shows the real figure, never a hardcoded range (see derive_bottom_text).
+        if isinstance(variant_e, dict):
+            variant_e["advertised_rate"] = getattr(geo_group_e, "advertised_rate", "") or ""
 
         # 2026-05-20: Meta arm regenerates a fresh 4:5 (1080×1350) photo
         # instead of reusing the LinkedIn 1:1 composite. Per Meta Help Center

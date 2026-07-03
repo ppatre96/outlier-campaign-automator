@@ -147,7 +147,7 @@ def build_figma_layered_frame_js(
     subheadline: str,
     angle: str,
     photo_base64: str,
-    earnings: str = "Earn $25–$50 USD per hour.",
+    earnings: str = "Fully remote. Paid hourly in USD.",
 ) -> str:
     """
     Build JavaScript to create a fully deconstructed Figma frame with separate editable layers.
@@ -285,7 +285,7 @@ def build_figma_clone_js(
     frame_name: str,
     headline: str,
     subheadline: str,
-    earnings: str = "Earn $25–$50 USD per hour.",
+    earnings: str = "Fully remote. Paid hourly in USD.",
 ) -> str:
     """
     Build JavaScript to clone the base Figma frame (20:2) and update text nodes.
