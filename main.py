@@ -6236,8 +6236,14 @@ def _launch_ramp(ramp_id: str, decision=None) -> dict:
     if only_channel and getattr(config, "REPLACE_EXISTING", False):
         try:
             from src.relaunch import archive_channel_campaigns
-            summary = archive_channel_campaigns(ramp_id, only_channel)
-            log.info("_launch_ramp: relaunch-replace archived %s", summary)
+            # Honor ONLY_LOCALES: a locale-scoped relaunch must archive ONLY the
+            # targeted locales, else replace wipes the ramp's other-language
+            # campaigns (which the scoped launch never recreates).
+            _ol = (os.environ.get("ONLY_LOCALES") or "").strip()
+            _replace_locales = [l for l in _ol.split(",") if l.strip()] if _ol else None
+            summary = archive_channel_campaigns(ramp_id, only_channel, _replace_locales)
+            log.info("_launch_ramp: relaunch-replace archived %s (locales=%s)",
+                     summary, _replace_locales or "all")
             try:
                 from src.ui_decisions import log_event
                 log_event(ramp_id, "relaunch_replace_archived", summary, None)

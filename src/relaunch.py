@@ -146,24 +146,31 @@ def _archive_google(ids: list[str]) -> list[str]:
 _ARCHIVERS = {"meta": _archive_meta, "linkedin": _archive_linkedin, "google": _archive_google}
 
 
-def archive_channel_campaigns(ramp_id: str, channel: str) -> dict:
+def archive_channel_campaigns(
+    ramp_id: str, channel: str, locales: list[str] | None = None
+) -> dict:
     """Archive every existing campaign for (ramp_id × channel) recorded in the
     campaigns table, then drop the archived rows. Best-effort. Returns a small
-    summary dict {channel, found, archived}."""
+    summary dict {channel, found, archived}.
+
+    When `locales` is given (a REPLACE run scoped with ONLY_LOCALES), archive
+    ONLY campaigns for those locales — never the rest of the ramp's other-
+    language campaigns, which the scoped launch would not recreate."""
     channel = (channel or "").strip().lower()
     archiver = _ARCHIVERS.get(channel)
     if archiver is None:
         log.warning("relaunch: no archiver for channel=%r — skipping", channel)
         return {"channel": channel, "found": 0, "archived": 0}
 
-    ids = list_campaign_platform_ids(ramp_id, channel)
+    scope = f"locales={locales}" if locales else "whole ramp"
+    ids = list_campaign_platform_ids(ramp_id, channel, locales)
     if not ids:
-        log.info("relaunch: no existing %s campaigns recorded for ramp=%s — nothing to archive",
-                 channel, ramp_id)
+        log.info("relaunch: no existing %s campaigns recorded for ramp=%s (%s) — nothing to archive",
+                 channel, ramp_id, scope)
         return {"channel": channel, "found": 0, "archived": 0}
 
-    log.info("relaunch: archiving %d existing %s campaign(s) for ramp=%s before relaunch",
-             len(ids), channel, ramp_id)
+    log.info("relaunch: archiving %d existing %s campaign(s) for ramp=%s before relaunch (%s)",
+             len(ids), channel, ramp_id, scope)
     try:
         archived = archiver(ids)
     except Exception as exc:

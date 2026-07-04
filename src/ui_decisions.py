@@ -504,17 +504,36 @@ def upsert_campaign(entry: dict) -> None:
         log.debug("upsert_campaign skipped (%s): %s", ramp_id, exc)
 
 
-def list_campaign_platform_ids(ramp_id: str, platform: str) -> list[str]:
-    """Distinct platform_campaign_id for a (ramp × platform), newest first.
-    Used by the relaunch-replace path to know which campaigns to archive."""
+def list_campaign_platform_ids(
+    ramp_id: str, platform: str, locales: list[str] | None = None
+) -> list[str]:
+    """Distinct platform_campaign_id for a (ramp × platform). Used by the
+    relaunch-replace path to know which campaigns to archive.
+
+    When `locales` (BCP-47, any case) is given, restrict to campaigns whose
+    stored `campaign_name` carries one of those locale tokens (e.g. "| ko-KR |").
+    A relaunch-replace scoped with ONLY_LOCALES MUST pass this — otherwise it
+    archives the whole ramp's other-language campaigns, which the locale-scoped
+    launch then never recreates (they're outside its filter), silently wiping
+    them. campaign_name is the only reliable per-row locale signal: there is no
+    BCP-47 column, geo_cluster is shared across locales, and the token's position
+    in the pipe-delimited name varies, so we substring-match the delimited token
+    rather than split-and-index."""
     try:
         with _connect() as conn, conn.cursor() as cur:
-            cur.execute(
+            sql = (
                 "SELECT DISTINCT platform_campaign_id FROM campaigns "
                 "WHERE ramp_id = %s AND platform = %s "
-                "AND coalesce(platform_campaign_id, '') <> ''",
-                (ramp_id, platform),
+                "AND coalesce(platform_campaign_id, '') <> ''"
             )
+            params: list = [ramp_id, platform]
+            wants = [l.strip().lower().replace("_", "-")
+                     for l in (locales or []) if l and l.strip()]
+            if wants:
+                ors = " OR ".join(["data->>'campaign_name' ILIKE %s"] * len(wants))
+                sql += f" AND ({ors})"
+                params += [f"%| {loc} |%" for loc in wants]
+            cur.execute(sql, params)
             return [r[0] for r in cur.fetchall()]
     except Exception as exc:  # missing table / no DATABASE_URL → nothing to archive
         log.debug("list_campaign_platform_ids unavailable (%s/%s): %s", ramp_id, platform, exc)
