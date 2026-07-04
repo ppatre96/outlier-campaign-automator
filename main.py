@@ -2090,9 +2090,30 @@ def _cohort_channel_already_live(ramp_id, platform: str, campaign_type: str, coh
 
     Off when SKIP_EXISTING_COHORT_CAMPAIGNS is false, on a REPLACE_EXISTING run
     (replace archives + recreates on purpose), or when there's no ramp_id."""
-    if config.REPLACE_EXISTING or not config.SKIP_EXISTING_COHORT_CAMPAIGNS or not ramp_id:
+    if not ramp_id:
         return False
     from src.ui_decisions import campaign_exists_for_cohort_channel
+    if config.REPLACE_EXISTING or not config.SKIP_EXISTING_COHORT_CAMPAIGNS:
+        # Guard disabled. REPLACE_EXISTING archives + recreates on purpose, so it's
+        # safe. But SKIP_EXISTING=false with REPLACE=false silently creates a NEW
+        # campaign ALONGSIDE any existing one with no archival — the failure mode
+        # behind GMR-0023's 2026-07-03 ko-KR/vi-VN duplicates (a scoped re-run of
+        # the same locales dispatched with skip_existing=false). Warn loudly, once
+        # per duplicate we're about to create, so an accidental re-run is visible.
+        if not config.REPLACE_EXISTING and campaign_exists_for_cohort_channel(
+            ramp_id, platform, campaign_type,
+            getattr(cohort, "name", ""), getattr(geo_group, "cluster", ""),
+        ):
+            log.warning(
+                "DUPLICATE RISK: %s/%s cohort=%r geo=%r already has a live campaign, "
+                "but SKIP_EXISTING_COHORT_CAMPAIGNS=false and REPLACE_EXISTING=false — "
+                "creating a NEW campaign ALONGSIDE it (no archival). If this is an "
+                "accidental re-run of the same locales, cancel and re-dispatch with "
+                "skip_existing=true.",
+                platform, campaign_type, getattr(cohort, "name", ""),
+                getattr(geo_group, "cluster", ""),
+            )
+        return False
     return campaign_exists_for_cohort_channel(
         ramp_id, platform, campaign_type,
         getattr(cohort, "name", ""), getattr(geo_group, "cluster", ""),
@@ -3661,6 +3682,10 @@ def _process_static_campaigns(
             if png_path is None and selected_variant:
                 try:
                     from src.figma_creative import rewrite_variant_copy
+                    # Carry the resolved rate so the creative's bottom band shows
+                    # the real figure (not a hardcoded range) on angles whose
+                    # subheadline leads with a non-rate hook.
+                    selected_variant["advertised_rate"] = geo_group.advertised_rate
                     png_path, qc_report = generate_imagen_creative_with_qc(
                         variant=selected_variant,
                         copy_rewriter=rewrite_variant_copy,
@@ -4336,6 +4361,11 @@ def _process_extra_platform_arm(
                 platform, copy_locale_e.display_language,
                 getattr(cohort_e, "name", "")[:40], cluster_suffix, angle_label_e,
             )
+
+        # Carry the resolved rate so the Meta/Google/Reddit compositor's bottom
+        # band shows the real figure, never a hardcoded range (see derive_bottom_text).
+        if isinstance(variant_e, dict):
+            variant_e["advertised_rate"] = getattr(geo_group_e, "advertised_rate", "") or ""
 
         # 2026-05-20: Meta arm regenerates a fresh 4:5 (1080×1350) photo
         # instead of reusing the LinkedIn 1:1 composite. Per Meta Help Center
@@ -6206,8 +6236,14 @@ def _launch_ramp(ramp_id: str, decision=None) -> dict:
     if only_channel and getattr(config, "REPLACE_EXISTING", False):
         try:
             from src.relaunch import archive_channel_campaigns
-            summary = archive_channel_campaigns(ramp_id, only_channel)
-            log.info("_launch_ramp: relaunch-replace archived %s", summary)
+            # Honor ONLY_LOCALES: a locale-scoped relaunch must archive ONLY the
+            # targeted locales, else replace wipes the ramp's other-language
+            # campaigns (which the scoped launch never recreates).
+            _ol = (os.environ.get("ONLY_LOCALES") or "").strip()
+            _replace_locales = [l for l in _ol.split(",") if l.strip()] if _ol else None
+            summary = archive_channel_campaigns(ramp_id, only_channel, _replace_locales)
+            log.info("_launch_ramp: relaunch-replace archived %s (locales=%s)",
+                     summary, _replace_locales or "all")
             try:
                 from src.ui_decisions import log_event
                 log_event(ramp_id, "relaunch_replace_archived", summary, None)

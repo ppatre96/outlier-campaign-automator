@@ -174,7 +174,7 @@ def compose_ad_for_platform(
     # line is derived the same way the LinkedIn arm derives it.
     headline = _platform_headline(copy_variant, platform)
     subheadline = _platform_subheadline(copy_variant, platform)
-    bt = bottom_text or _derive_bottom_text(subheadline)
+    bt = bottom_text or _derive_bottom_text(subheadline, copy_variant.get("advertised_rate", ""))
     out = _compose_linkedin_ad(
         bg_image=bg_image,
         headline=headline,
