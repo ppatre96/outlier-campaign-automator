@@ -272,39 +272,46 @@ def _step_experiment(dry_run: bool) -> dict:
 
 
 def _step_activations(dry_run: bool) -> dict:
-    """Step F — write the FEED-15 funnel outcomes (sign-ups / skill passes /
-    activations) back onto each LinkedIn campaign row so the registry + console
-    show them, not just impressions/clicks. The numbers are already computed by
-    analyze_funnel_by_cohort (per creative); this step is the missing writeback."""
-    log.info("Step F: activation writeback")
+    """Step F — summarize per-channel funnel outcomes (sign-ups / skill passes /
+    activations) attributed to our campaigns. Read-only: the actual writeback
+    runs daily in scripts/refresh_metrics.py; this just rolls up the campaign
+    rows for the Slack section. Reddit/TikTok have no joinable attribution."""
+    log.info("Step F: activation summary (per channel)")
     try:
-        from src.feedback_agent import FeedbackAgent
-        from src.redash_db import RedashClient
-        from src.campaign_registry import update_funnel_metrics
+        # Postgres is the authoritative campaign store (fresh in CI); fall back
+        # to the local registry if the DB is unreachable.
+        try:
+            from src.ui_decisions import list_all_campaign_data
+            recs = list_all_campaign_data()
+        except Exception:
+            from src.campaign_registry import _load
+            recs = _load()
 
-        rows = FeedbackAgent(RedashClient()).analyze_funnel_by_cohort(days_back=7)
-        written = 0
-        totals: dict[str, dict] = {}
-        for r in rows:
-            cid = r.get("creative_id")
-            if cid in (None, "", "None"):
-                continue
-            apps = int(r.get("applications") or 0)
-            passes = int(r.get("screening_passes") or 0)
-            acts = int(r.get("activations") or 0)
-            if not dry_run:
-                written += update_funnel_metrics(
-                    str(cid), applications=apps, skill_passes=passes, activations=acts,
-                )
-            t = totals.setdefault(str(r.get("cohort_name") or "?"),
-                                  {"applications": 0, "skill_passes": 0, "activations": 0})
-            t["applications"] += apps
-            t["skill_passes"] += passes
-            t["activations"] += acts
-        return {"ok": True, "n_rows": len(rows), "rows_written": written, "totals": totals}
+        by_channel: dict[str, dict] = {}
+        for r in recs:
+            chan = (r.get("platform") or "linkedin").lower()
+            if chan == "google_search":
+                chan = "google"
+            s = by_channel.setdefault(
+                chan, {"applications": 0, "skill_passes": 0, "activations": 0, "campaigns": 0})
+            a = int(r.get("applications") or 0)
+            p = int(r.get("skill_passes") or 0)
+            ac = int(r.get("activations") or 0)
+            s["applications"] += a
+            s["skill_passes"] += p
+            s["activations"] += ac
+            if a or p or ac:
+                s["campaigns"] += 1
+
+        # Creative-only channels carry no joinable attribution — say so.
+        for chan in ("reddit", "tiktok"):
+            by_channel.setdefault(
+                chan, {"applications": 0, "skill_passes": 0, "activations": 0,
+                       "campaigns": 0, "note": "no attribution available (creative-only)"})
+        return {"ok": True, "by_channel": by_channel}
     except Exception as e:
         log.exception("Step F failed")
-        return {"ok": False, "error": f"{type(e).__name__}: {e}", "totals": {}}
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "by_channel": {}}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -440,22 +447,30 @@ def _format_experiment_section(experiment: dict) -> list[str]:
 
 def _format_activations_section(activations: dict) -> list[str]:
     """Build the Activations section — sign-ups / skill passes / activations per
-    cohort (LinkedIn paid), now written back to each campaign."""
-    lines = ["📥 Activations (LinkedIn paid, per campaign)"]
+    channel, written back to campaigns. LinkedIn per-creative; Meta/Google
+    campaign-level; Reddit/TikTok have no joinable attribution."""
+    lines = ["📥 Activations (funnel — sign-ups → skill passes → activations)"]
     if not activations or not activations.get("ok"):
         lines.append("  • [activation writeback failed]")
         return lines
-    totals = activations.get("totals") or {}
-    if not totals:
+    by_channel = activations.get("by_channel") or {}
+    if not by_channel:
         lines.append("  • No attributed sign-ups in the window yet.")
         return lines
-    for cohort in sorted(totals, key=lambda c: -totals[c].get("activations", 0))[:10]:
-        t = totals[cohort]
-        lines.append(
-            f"  • {cohort}: {t['applications']:,} sign-ups · "
-            f"{t['skill_passes']:,} skill passes · {t['activations']:,} activations"
-        )
-    lines.append(f"  Written to {activations.get('rows_written', 0)} campaign row(s).")
+    order = ["linkedin", "meta", "google", "reddit", "tiktok"]
+    label = {"linkedin": "LinkedIn", "meta": "Meta", "google": "Google",
+             "reddit": "Reddit", "tiktok": "TikTok"}
+    for chan in sorted(by_channel, key=lambda c: (order.index(c) if c in order else 99)):
+        s = by_channel[chan]
+        note = s.get("note")
+        if note:
+            lines.append(f"  • {label.get(chan, chan)}: — ({note})")
+        else:
+            lines.append(
+                f"  • {label.get(chan, chan)}: {s.get('applications', 0):,} sign-ups · "
+                f"{s.get('skill_passes', 0):,} skill passes · {s.get('activations', 0):,} activations "
+                f"({s.get('campaigns', 0)} campaign(s))"
+            )
     return lines
 
 

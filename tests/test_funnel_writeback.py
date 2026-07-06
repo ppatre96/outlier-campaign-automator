@@ -45,3 +45,29 @@ def test_empty_creative_id_is_noop(monkeypatch):
     saved = _stub_registry(monkeypatch, [{"platform_creative_id": "111"}])
     assert reg.update_funnel_metrics("", applications=1) == 0
     assert "rows" not in saved
+
+
+def test_match_by_campaign_name_case_insensitive_first_only(monkeypatch):
+    """Meta/Google attribution joins on campaign_name (=UTM_CAMPAIGN); it's
+    campaign-level so only the first matching row is written (no double-count)."""
+    rows = [
+        {"campaign_name": "Scale-GMR-0019 | Meta | Clinical Medicine", "angle": "A"},
+        {"campaign_name": "Scale-GMR-0019 | Meta | Clinical Medicine", "angle": "B"},
+    ]
+    saved = _stub_registry(monkeypatch, rows)
+    n = reg.update_funnel_metrics(
+        "scale-gmr-0019 | meta | clinical medicine",  # lowercased, as UTM_CAMPAIGN arrives
+        by="name", applications=14, skill_passes=6, activations=2,
+    )
+    assert n == 1                                   # first-only: campaign-level
+    assert saved["rows"][0]["activations"] == 2
+    assert "activations" not in saved["rows"][1]    # second row untouched
+
+
+def test_match_by_campaign_id_google_resource_name(monkeypatch):
+    """Google registry stores resource names; match by the numeric tail."""
+    rows = [{"platform_campaign_id": "customers/8840244968/campaigns/23851984233", "angle": "A"}]
+    saved = _stub_registry(monkeypatch, rows)
+    n = reg.update_funnel_metrics("23851984233", by="campaign", applications=9, activations=1)
+    assert n == 1
+    assert saved["rows"][0]["applications"] == 9

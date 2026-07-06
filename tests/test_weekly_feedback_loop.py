@@ -104,7 +104,7 @@ def test_dry_run(tmp_path, monkeypatch):
         wfl, "_step_experiment", lambda dr: {"ok": True, "results": {"directive": None, "cohorts": []}}
     )
     monkeypatch.setattr(
-        wfl, "_step_activations", lambda dr: {"ok": True, "totals": {}, "rows_written": 0}
+        wfl, "_step_activations", lambda dr: {"ok": True, "by_channel": {}}
     )
     monkeypatch.setattr(wfl, "_active_projects", lambda: [])
 
@@ -163,7 +163,7 @@ def test_step_isolation(tmp_path, monkeypatch):
         wfl, "_step_experiment", lambda dr: {"ok": True, "results": {"directive": None, "cohorts": []}}
     )
     monkeypatch.setattr(
-        wfl, "_step_activations", lambda dr: {"ok": True, "totals": {}, "rows_written": 0}
+        wfl, "_step_activations", lambda dr: {"ok": True, "by_channel": {}}
     )
     monkeypatch.setattr(wfl, "_active_projects", lambda: [])
 
