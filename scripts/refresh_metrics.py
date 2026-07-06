@@ -9,10 +9,12 @@ Order:
      the local JSON registry is stale in CI. Hydrating first means the refresh
      covers ALL current campaigns, not just the committed subset.
   2. refresh_linkedin_metrics()  — LinkedIn via Redash.
-  3. fetch_metrics_for_active_extra_platforms() — Meta, Google Display, and
-     Google Search via their reporting APIs.
+  3. fetch_metrics_for_active_extra_platforms() — Meta, Google Display,
+     Google Search, and Reddit via their reporting APIs.
+  4. backfill_funnel_metrics_all_channels() — sign-ups / skill passes /
+     activations from the Outlier funnel (LinkedIn/Meta/Google/Reddit).
 
-Reddit and TikTok are creative-only (no platform campaigns) — nothing to fetch.
+TikTok is creative-only (no platform campaigns) — nothing to fetch.
 
 Invoked by .github/workflows/daily_feedback.yml before the recommendation pass
 so recommendations read fresh metrics. Safe to run standalone:

@@ -6,9 +6,9 @@ registry rows, filling the columns that ad reporting APIs never provide
 
 Attribution source is SCALE_PROD.VIEW.APPLICATION_CONVERSION:
   - LinkedIn: per-creative via AD_ID (FEED-15, analyze_funnel_by_cohort).
-  - Meta / Google: campaign-level via UTM_CAMPAIGN = our campaign_name.
-  - Reddit / TikTok: creative-only channels whose conversions carry no joinable
-    ad id in the view — nothing to write (reported, not silently skipped).
+  - Meta / Google / Reddit: campaign-level via UTM_CAMPAIGN = our campaign_name.
+  - TikTok: creative-only — conversions carry no joinable id — nothing to write
+    (reported, not silently skipped).
 
 Called daily by scripts/refresh_metrics.py alongside the platform metric fetch,
 and by the weekly feedback loop for its Slack "Activations" section.
@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 
 # Channels with no joinable conversion attribution in APPLICATION_CONVERSION
 # (verified 2026-07-07): creative-only, no programmatic campaigns / no ad id.
-_NO_ATTRIBUTION_CHANNELS = ("reddit", "tiktok")
+_NO_ATTRIBUTION_CHANNELS = ("tiktok",)
 
 
 def backfill_funnel_metrics_all_channels(window_days: int = 7) -> dict:
@@ -58,8 +58,8 @@ def backfill_funnel_metrics_all_channels(window_days: int = 7) -> dict:
         log.exception("funnel writeback: linkedin failed")
         out["linkedin"] = {**_blank(), "note": f"error: {type(exc).__name__}"}
 
-    # Meta / Google — campaign-level (UTM_CAMPAIGN = campaign_name).
-    for chan in ("meta", "google"):
+    # Meta / Google / Reddit — campaign-level (UTM_CAMPAIGN = campaign_name).
+    for chan in ("meta", "google", "reddit"):
         try:
             from src.redash_db import RedashClient
 

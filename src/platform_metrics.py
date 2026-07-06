@@ -6,7 +6,7 @@ campaign_feedback_agent.py) has been extended to also iterate non-LinkedIn
 registry rows; this module provides the per-platform fetchers it calls.
 
 `fetch_metrics_for_active_extra_platforms()` is the single entry point.
-For each active Meta or Google registry row it calls the platform-specific
+For each active Meta / Google / Reddit registry row it calls the platform-specific
 Insights / reporting API and pushes the result to
 `campaign_registry.update_metrics`. Failures are non-fatal.
 
@@ -61,6 +61,8 @@ def fetch_metrics_for_active_extra_platforms(window_days: int = 7) -> int:
                 metrics = _fetch_meta_insights(campaign_id, window_days)
             elif platform in ("google", "google_search"):
                 metrics = _fetch_google_metrics(campaign_id, window_days)
+            elif platform == "reddit":
+                metrics = _fetch_reddit_metrics(campaign_id, window_days)
             else:
                 log.debug("platform_metrics: unknown platform %r — skipping", platform)
                 continue
@@ -217,4 +219,33 @@ def _fetch_google_metrics(campaign_ref: str, window_days: int) -> dict[str, Any]
         "clicks":      clicks,
         "spend_usd":   cost_micros / 1_000_000.0,
         "applications": int(round(conversions)),
+    }
+
+
+# Reddit's reporting API returns every campaign in one call, so fetch once per
+# refresh window and serve rows from the cache rather than calling per row.
+_reddit_metrics_cache: dict[int, dict] = {}
+
+
+def _fetch_reddit_metrics(campaign_id: str, window_days: int) -> dict[str, Any] | None:
+    """Impressions / clicks / spend for a Reddit campaign from the Ads reporting
+    API. sign-ups / activations come from the funnel (funnel_writeback), so
+    applications is left at 0 here."""
+    if not config.REDDIT_API_ENABLED:
+        return None
+    if window_days not in _reddit_metrics_cache:
+        try:
+            from src.reddit_api import RedditClient
+            _reddit_metrics_cache[window_days] = RedditClient().fetch_campaign_metrics(window_days)
+        except Exception as exc:  # noqa: BLE001 — best-effort, non-fatal
+            log.warning("platform_metrics[reddit]: reporting fetch failed — %s", exc)
+            _reddit_metrics_cache[window_days] = {}
+    m = _reddit_metrics_cache[window_days].get(str(campaign_id))
+    if not m:
+        return None
+    return {
+        "impressions":  m["impressions"],
+        "clicks":       m["clicks"],
+        "spend_usd":    m["spend_usd"],
+        "applications": 0,
     }
