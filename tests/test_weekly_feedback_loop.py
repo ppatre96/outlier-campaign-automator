@@ -103,13 +103,17 @@ def test_dry_run(tmp_path, monkeypatch):
     monkeypatch.setattr(
         wfl, "_step_experiment", lambda dr: {"ok": True, "results": {"directive": None, "cohorts": []}}
     )
+    monkeypatch.setattr(
+        wfl, "_step_activations", lambda dr: {"ok": True, "totals": {}, "rows_written": 0}
+    )
     monkeypatch.setattr(wfl, "_active_projects", lambda: [])
 
     outcome = wfl.run_once(dry_run=True, only=None)
 
-    # All five steps succeeded
+    # All six steps succeeded
     assert outcome["failures"] == {}
-    assert set(outcome["results"].keys()) == {"v1", "funnel", "sentiment", "drift", "experiment"}
+    assert set(outcome["results"].keys()) == {
+        "v1", "funnel", "sentiment", "drift", "experiment", "activations"}
     # NO Slack post issued in dry-run mode
     assert (
         slack_calls == []
@@ -158,6 +162,9 @@ def test_step_isolation(tmp_path, monkeypatch):
     monkeypatch.setattr(
         wfl, "_step_experiment", lambda dr: {"ok": True, "results": {"directive": None, "cohorts": []}}
     )
+    monkeypatch.setattr(
+        wfl, "_step_activations", lambda dr: {"ok": True, "totals": {}, "rows_written": 0}
+    )
     monkeypatch.setattr(wfl, "_active_projects", lambda: [])
 
     posts: list[str] = []
@@ -170,7 +177,8 @@ def test_step_isolation(tmp_path, monkeypatch):
     outcome = wfl.run_once(dry_run=False, only=None)
 
     # Every step was attempted and present in results
-    assert set(outcome["results"].keys()) == {"v1", "funnel", "sentiment", "drift", "experiment"}
+    assert set(outcome["results"].keys()) == {
+        "v1", "funnel", "sentiment", "drift", "experiment", "activations"}
 
     # Only funnel is in failures
     assert "funnel" in outcome["failures"]

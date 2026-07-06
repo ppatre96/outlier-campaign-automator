@@ -16,7 +16,7 @@ Loud failure: on any step error, still posts a minimal failure message to Slack.
 CLI:
   --dry-run   All steps run except Slack post + reanalysis trigger
   --force     Bypass 6-day idempotency skip
-  --only      Run only one of: v1 | funnel | sentiment | drift | experiment  (debugging)
+  --only      Run only one of: v1 | funnel | sentiment | drift | experiment | activations  (debugging)
 
 Vocabulary rules (CLAUDE.md): every Slack-facing string in this file uses approved
 Outlier vocabulary. NEVER emit any banned token from the substitution table below.
@@ -271,6 +271,42 @@ def _step_experiment(dry_run: bool) -> dict:
         return {"ok": False, "error": f"{type(e).__name__}: {e}", "results": {}}
 
 
+def _step_activations(dry_run: bool) -> dict:
+    """Step F — write the FEED-15 funnel outcomes (sign-ups / skill passes /
+    activations) back onto each LinkedIn campaign row so the registry + console
+    show them, not just impressions/clicks. The numbers are already computed by
+    analyze_funnel_by_cohort (per creative); this step is the missing writeback."""
+    log.info("Step F: activation writeback")
+    try:
+        from src.feedback_agent import FeedbackAgent
+        from src.redash_db import RedashClient
+        from src.campaign_registry import update_funnel_metrics
+
+        rows = FeedbackAgent(RedashClient()).analyze_funnel_by_cohort(days_back=7)
+        written = 0
+        totals: dict[str, dict] = {}
+        for r in rows:
+            cid = r.get("creative_id")
+            if cid in (None, "", "None"):
+                continue
+            apps = int(r.get("applications") or 0)
+            passes = int(r.get("screening_passes") or 0)
+            acts = int(r.get("activations") or 0)
+            if not dry_run:
+                written += update_funnel_metrics(
+                    str(cid), applications=apps, skill_passes=passes, activations=acts,
+                )
+            t = totals.setdefault(str(r.get("cohort_name") or "?"),
+                                  {"applications": 0, "skill_passes": 0, "activations": 0})
+            t["applications"] += apps
+            t["skill_passes"] += passes
+            t["activations"] += acts
+        return {"ok": True, "n_rows": len(rows), "rows_written": written, "totals": totals}
+    except Exception as e:
+        log.exception("Step F failed")
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "totals": {}}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Slack message builders (vocabulary-clean per CLAUDE.md)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -402,8 +438,30 @@ def _format_experiment_section(experiment: dict) -> list[str]:
     return format_slack_section((experiment or {}).get("results") or {})
 
 
+def _format_activations_section(activations: dict) -> list[str]:
+    """Build the Activations section — sign-ups / skill passes / activations per
+    cohort (LinkedIn paid), now written back to each campaign."""
+    lines = ["📥 Activations (LinkedIn paid, per campaign)"]
+    if not activations or not activations.get("ok"):
+        lines.append("  • [activation writeback failed]")
+        return lines
+    totals = activations.get("totals") or {}
+    if not totals:
+        lines.append("  • No attributed sign-ups in the window yet.")
+        return lines
+    for cohort in sorted(totals, key=lambda c: -totals[c].get("activations", 0))[:10]:
+        t = totals[cohort]
+        lines.append(
+            f"  • {cohort}: {t['applications']:,} sign-ups · "
+            f"{t['skill_passes']:,} skill passes · {t['activations']:,} activations"
+        )
+    lines.append(f"  Written to {activations.get('rows_written', 0)} campaign row(s).")
+    return lines
+
+
 def _build_consolidated_message(
-    v1_status: dict, funnel: dict, sentiment: dict, drift: dict, experiment: dict | None = None
+    v1_status: dict, funnel: dict, sentiment: dict, drift: dict,
+    experiment: dict | None = None, activations: dict | None = None,
 ) -> str:
     """Build the single multi-section Slack message.
 
@@ -413,6 +471,7 @@ def _build_consolidated_message(
       3. Sentiment Themes
       4. ICP Drift
       5. Experiment Results
+      6. Activations
 
     All copy uses approved Outlier vocabulary (CLAUDE.md). NEVER emit banned
     tokens from the substitution table — see module docstring for the full list.
@@ -428,6 +487,8 @@ def _build_consolidated_message(
     lines.extend(_format_drift_section(drift))
     lines.append("")
     lines.extend(_format_experiment_section(experiment or {}))
+    lines.append("")
+    lines.extend(_format_activations_section(activations or {}))
     return "\n".join(lines)
 
 
@@ -445,7 +506,7 @@ def _build_failure_message(failures: dict) -> str:
 
 
 def run_once(dry_run: bool = False, only: str | None = None) -> dict:
-    """Run the five steps sequentially (or one, if --only).
+    """Run the six steps sequentially (or one, if --only).
 
     Returns:
         {
@@ -462,6 +523,7 @@ def run_once(dry_run: bool = False, only: str | None = None) -> dict:
         "sentiment": lambda: _step_sentiment(dry_run),
         "drift": lambda: _step_drift(dry_run, projects),
         "experiment": lambda: _step_experiment(dry_run),
+        "activations": lambda: _step_activations(dry_run),
     }
     steps_to_run = [only] if only else list(step_map.keys())
     for name in steps_to_run:
@@ -487,6 +549,7 @@ def run_once(dry_run: bool = False, only: str | None = None) -> dict:
                 results.get("sentiment", {}),
                 results.get("drift", {}),
                 results.get("experiment", {}),
+                results.get("activations", {}),
             )
         if dry_run:
             log.info("[DRY-RUN] would post to Slack:\n%s", msg)
@@ -514,7 +577,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--only",
-        choices=["v1", "funnel", "sentiment", "drift", "experiment"],
+        choices=["v1", "funnel", "sentiment", "drift", "experiment", "activations"],
         help="Run only one step (debugging)",
     )
     args = parser.parse_args()

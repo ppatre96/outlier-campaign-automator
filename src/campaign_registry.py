@@ -615,6 +615,64 @@ def update_metrics(
             log.warning("Registry Postgres metrics write failed (non-fatal): %s", exc)
 
 
+def update_funnel_metrics(
+    creative_id: str,
+    *,
+    applications: int = 0,
+    skill_passes: int = 0,
+    activations: int = 0,
+) -> int:
+    """Write funnel outcomes (sign-ups / skill passes / activations) onto the
+    registry row(s) for a LinkedIn creative, matched by platform creative id.
+
+    These come from the FEED-15 funnel query (analyze_funnel_by_cohort), which
+    attributes Outlier sign-ups → screening → activation to the individual
+    creative via APPLICATION_CONVERSION.AD_ID + a linkedin/paid UTM filter. Ad
+    reporting APIs only ever gave us impressions/clicks/spend; this is the leg
+    that finally fills the previously-always-empty activation columns.
+
+    `creative_id` accepts either a bare numeric id or a
+    "urn:li:sponsoredCreative:<id>" URN. Recomputes cpa_usd from spend_usd when
+    both are known. Dual-writes each matched row to Postgres so the console
+    reflects it. Returns the number of rows updated."""
+    cid = str(creative_id or "").rsplit(":", 1)[-1].strip()
+    if not cid:
+        return 0
+
+    matched_rows: list[dict] = []
+    with _registry_lock:
+        records = _load()
+        for rec in records:
+            rec_cid = str(rec.get("platform_creative_id") or "").rsplit(":", 1)[-1].strip()
+            if rec_cid and rec_cid == cid:
+                rec["applications"] = applications
+                rec["skill_passes"] = skill_passes
+                rec["activations"] = activations
+                spend = rec.get("spend_usd")
+                if spend and applications:
+                    rec["cpa_usd"] = round(float(spend) / applications, 2)
+                rec["last_metrics_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                matched_rows.append(rec)
+        if matched_rows:
+            _save(records)
+
+    if not matched_rows:
+        log.debug("Registry: no row for funnel creative_id=%s", cid)
+        return 0
+
+    # Mirror to Postgres (best-effort) so the console dashboard renders it.
+    try:
+        from src.ui_decisions import upsert_campaign
+        for rec in matched_rows:
+            upsert_campaign(rec)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Registry Postgres funnel write failed (non-fatal): %s", exc)
+
+    log.info("Registry: funnel metrics on %d row(s) for creative_id=%s (apps=%d passes=%d act=%d)",
+             len(matched_rows), cid, applications, skill_passes, activations)
+    return len(matched_rows)
+
+
 def reconcile_creative_paths(
     smart_ramp_id: str,
     platform: str = "linkedin",
