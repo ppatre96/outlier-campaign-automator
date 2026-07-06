@@ -16,7 +16,7 @@ Loud failure: on any step error, still posts a minimal failure message to Slack.
 CLI:
   --dry-run   All steps run except Slack post + reanalysis trigger
   --force     Bypass 6-day idempotency skip
-  --only      Run only one of: v1 | funnel | sentiment | drift  (debugging)
+  --only      Run only one of: v1 | funnel | sentiment | drift | experiment  (debugging)
 
 Vocabulary rules (CLAUDE.md): every Slack-facing string in this file uses approved
 Outlier vocabulary. NEVER emit any banned token from the substitution table below.
@@ -255,6 +255,22 @@ def _step_drift(dry_run: bool, projects: list[str]) -> dict:
         return {"ok": False, "error": f"{type(e).__name__}: {e}", "projects": {}}
 
 
+def _step_experiment(dry_run: bool) -> dict:
+    """Step E — competitor-insight experiment: refresh the backlog from the latest
+    competitor intel (pins the top insight to the challenger arm) and read back
+    challenger-vs-baseline LinkedIn CTR for any active experiment."""
+    log.info("Step E: competitor experiment")
+    try:
+        from src import competitor_experiment as ce
+
+        refresh = ce.refresh_backlog()
+        results = ce.read_results(days_back=7)
+        return {"ok": True, "refresh": refresh, "results": results}
+    except Exception as e:
+        log.exception("Step E failed")
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "results": {}}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Slack message builders (vocabulary-clean per CLAUDE.md)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -379,8 +395,15 @@ def _format_v1_section(v1_status: dict) -> list[str]:
     return ["Creative Progress Alerts (v1)", "  • v1 alerts posted to Slack."]
 
 
+def _format_experiment_section(experiment: dict) -> list[str]:
+    """Build the Experiment Results section lines (challenger vs baseline)."""
+    from src.competitor_experiment import format_slack_section
+
+    return format_slack_section((experiment or {}).get("results") or {})
+
+
 def _build_consolidated_message(
-    v1_status: dict, funnel: dict, sentiment: dict, drift: dict
+    v1_status: dict, funnel: dict, sentiment: dict, drift: dict, experiment: dict | None = None
 ) -> str:
     """Build the single multi-section Slack message.
 
@@ -389,6 +412,7 @@ def _build_consolidated_message(
       2. Funnel Drop Diagnosis
       3. Sentiment Themes
       4. ICP Drift
+      5. Experiment Results
 
     All copy uses approved Outlier vocabulary (CLAUDE.md). NEVER emit banned
     tokens from the substitution table — see module docstring for the full list.
@@ -402,6 +426,8 @@ def _build_consolidated_message(
     lines.extend(_format_sentiment_section(sentiment))
     lines.append("")
     lines.extend(_format_drift_section(drift))
+    lines.append("")
+    lines.extend(_format_experiment_section(experiment or {}))
     return "\n".join(lines)
 
 
@@ -419,7 +445,7 @@ def _build_failure_message(failures: dict) -> str:
 
 
 def run_once(dry_run: bool = False, only: str | None = None) -> dict:
-    """Run the four steps sequentially (or one, if --only).
+    """Run the five steps sequentially (or one, if --only).
 
     Returns:
         {
@@ -435,6 +461,7 @@ def run_once(dry_run: bool = False, only: str | None = None) -> dict:
         "funnel": lambda: _step_funnel(dry_run),
         "sentiment": lambda: _step_sentiment(dry_run),
         "drift": lambda: _step_drift(dry_run, projects),
+        "experiment": lambda: _step_experiment(dry_run),
     }
     steps_to_run = [only] if only else list(step_map.keys())
     for name in steps_to_run:
@@ -459,6 +486,7 @@ def run_once(dry_run: bool = False, only: str | None = None) -> dict:
                 results.get("funnel", {}),
                 results.get("sentiment", {}),
                 results.get("drift", {}),
+                results.get("experiment", {}),
             )
         if dry_run:
             log.info("[DRY-RUN] would post to Slack:\n%s", msg)
@@ -486,7 +514,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--only",
-        choices=["v1", "funnel", "sentiment", "drift"],
+        choices=["v1", "funnel", "sentiment", "drift", "experiment"],
         help="Run only one step (debugging)",
     )
     args = parser.parse_args()

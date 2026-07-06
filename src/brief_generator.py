@@ -424,11 +424,14 @@ def _load_competitor_context(path: str | pathlib.Path | None) -> str:
             elif isinstance(it, dict):
                 clean.append(it.get("idea") or "")
         clean = [c for c in clean if c]
-        if not clean:
-            return ""
-        return "\n\nCompetitor experiment ideas to consider (one signal max per angle):\n" + "\n".join(
-            f"- {c}" for c in clean
-        )
+        block = ""
+        if clean:
+            block = "\n\nCompetitor experiment ideas to consider (one signal max per angle):\n" + "\n".join(
+                f"- {c}" for c in clean
+            )
+        # Pin the challenger arm to the active competitor-insight experiment.
+        from src.competitor_experiment import directive_prompt_block
+        return block + directive_prompt_block()
     except Exception as exc:
         log.warning("competitor intel load failed: %s", exc)
         return ""

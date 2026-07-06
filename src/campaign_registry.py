@@ -146,6 +146,13 @@ COLUMNS = [
     # the console writes back to this column on save. Pipeline override-read on
     # next run is Phase 2 (TODO).
     "google_keywords",
+    # ── 2026-07-06 addition (APPEND ONLY) ─────────────────────────────────────
+    # Competitor-insight experiment id (e.g. "EXP-cardiologists-C") stamped on
+    # the challenger-arm creative when a directive is pinned at creation time.
+    # Lets the weekly readback attribute angle-C performance to the SPECIFIC
+    # insight under test rather than to angle C in general. Empty on all
+    # baseline (A/B) and non-experiment rows.
+    "experiment_id",
 ]
 
 
@@ -199,6 +206,7 @@ class CampaignEntry:
     applications:           int | None = None
     cpa_usd:                float | None = None
     last_metrics_at:        str = ""
+    experiment_id:          str = ""           # competitor-insight experiment id on challenger-arm rows
 
 
 # Internal lower-case platform key → user-facing channel label shown in Sheet.
@@ -373,6 +381,7 @@ def log_campaign(
     google_audience_size: int | None = None,
     audience_check_status: str = "",
     google_keywords: list[str] | str | None = None,
+    experiment_id: str = "",
 ) -> None:
     """Append one campaign row to the registry. Safe to call from any platform arm.
 
@@ -417,6 +426,20 @@ def log_campaign(
     pcid = platform_campaign_id or linkedin_campaign_urn
     pcrid = platform_creative_id or creative_urn
 
+    # Central auto-stamp: challenger-arm creatives (angle C) carry the id of the
+    # competitor insight that was pinned when they were generated. Stamping here
+    # (the one choke point every platform arm calls) avoids threading the id
+    # through dozens of call sites. Callers may still pass experiment_id
+    # explicitly to override.
+    if not experiment_id and (angle or "").upper() == "C":
+        try:
+            from src.competitor_experiment import active_directive
+            _d = active_directive()
+            if _d:
+                experiment_id = _d.get("experiment_id", "") or ""
+        except Exception:  # noqa: BLE001 — never block a registry write on this
+            pass
+
     entry = CampaignEntry(
         smart_ramp_id=smart_ramp_id,
         cohort_id=cohort_id,
@@ -460,6 +483,7 @@ def log_campaign(
         qc_violations=json.dumps(qc_violations) if qc_violations else "",
         created_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         status="active",
+        experiment_id=experiment_id,
     )
     # Hold the registry lock across the load-mutate-save window. _load and
     # _save also acquire the (re-entrant) lock internally; this ensures the

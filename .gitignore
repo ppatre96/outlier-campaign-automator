@@ -36,6 +36,8 @@ Thumbs.db
 
 # Per-process data caches — regenerated each run
 data/*_cache.json
+data/experiment_backlog.json
+data/experiment_directive.json
 
 # Raw daily snapshots — the post-processed sentiment_callouts.json is the
 # committed artifact; the per-day raw fetches under sentiment_raw/ are not.

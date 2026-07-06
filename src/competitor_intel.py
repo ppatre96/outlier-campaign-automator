@@ -66,6 +66,10 @@ def save_intel_json(intel: "CompetitorIntel", tg_label: str = "") -> None:
     """
     from datetime import datetime
 
+    # Defense-in-depth: callers (main.py Phase 5) pass the ramp's verbatim
+    # summary — clean it so the persisted tg_label is never the raw ask.
+    tg_label = _clean_tg_label(tg_label)
+
     _INTEL_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     # Rich competitor_ads — one row per scraped AdCreative. The CompetitorCard
@@ -1129,6 +1133,53 @@ def fetch_reddit_signals(search_term: str, platform_name: str) -> list[ReviewSig
     return signals
 
 
+# ── TG label sanitization ─────────────────────────────────────────────────────
+
+# Filler tokens from the requester's verbatim ask ("I need 50 of each of the
+# following user cohorts: … control … treatment …") that must never end up in
+# a search term or an experiment idea.
+_TG_FILLER = {
+    "i", "we", "need", "want", "of", "each", "the", "following", "a", "an",
+    "and", "or", "for", "to", "user", "users", "cohort", "cohorts", "control",
+    "treatment", "group", "groups", "please", "hi", "hey", "team", "seeking",
+    "looking", "recruit", "recruiting", "batch", "profiles", "profile",
+}
+
+
+def _clean_tg_label(raw: str, max_words: int = 6) -> str:
+    """Extract a short, clean role/domain keyword from a (possibly messy)
+    requester ask.
+
+    The Phase-5 seed is the ramp's verbatim `summary`, which can be a
+    multi-line cohort table with pay rates and campaign ids, e.g.:
+
+        "I need 50 of each of the following user cohorts:
+         - Cardiologists ($150) control - 4685750005
+         - Cardiologists ($200) treatment - 4692313005"
+
+    Feeding that raw into search-term / copy templates produced garbage
+    "experiment ideas". This collapses it to the core role ("Cardiologists")
+    by stripping parentheticals, $-amounts, numeric ids, bullets, and filler
+    words, then de-duplicating. Returns "general" if nothing sensible remains.
+    """
+    if not raw or not str(raw).strip():
+        return "general"
+    text = " ".join(str(raw).split())            # collapse newlines/whitespace
+    text = re.sub(r"\([^)]*\)", " ", text)        # ($150) …
+    text = re.sub(r"\$\s*\d[\d,]*", " ", text)    # $150
+    text = re.sub(r"\b\d{4,}\b", " ", text)       # 4685750005 campaign ids
+    text = re.sub(r"[^A-Za-z0-9 ]", " ", text)    # bullets / colons / dashes
+    seen: set[str] = set()
+    words: list[str] = []
+    for w in text.split():
+        lw = w.lower()
+        if lw in _TG_FILLER or w.isdigit() or lw in seen:
+            continue
+        seen.add(lw)
+        words.append(w)
+    return " ".join(words[:max_words]).strip() or "general"
+
+
 # ── SEO search terms ──────────────────────────────────────────────────────────
 
 def fetch_search_intent_terms(tg_label: str) -> list[str]:
@@ -1312,6 +1363,14 @@ def run_competitor_intel(
     Returns:
         CompetitorIntel — structured output ready to pass to brief generator
     """
+    # The seed is often the ramp's verbatim requester ask (multi-line cohort
+    # table with pay rates + campaign ids). Sanitize to a clean role keyword so
+    # it never leaks into search terms / experiment ideas.
+    raw_tg_label = tg_label
+    tg_label = _clean_tg_label(tg_label)
+    if tg_label != (raw_tg_label or "").strip():
+        log.info("run_competitor_intel: cleaned tg_label %r -> %r", (raw_tg_label or "")[:80], tg_label)
+
     competitors = target_competitors or ["dataannotation", "mercor", "alignerr", "micro1"]
     intel = CompetitorIntel()
 
@@ -1457,11 +1516,24 @@ def _generate_copy_recommendations(intel: CompetitorIntel, tg_label: str) -> lis
         )
 
     if intel.search_terms:
-        recs.append(
-            f"Embed high-intent SEO terms: {', '.join(intel.search_terms[:3])}"
-        )
+        clean_terms = [t for t in intel.search_terms if _is_clean_term(t)]
+        if clean_terms:
+            recs.append(
+                f"Embed high-intent SEO terms: {', '.join(clean_terms[:3])}"
+            )
 
     return recs
+
+
+def _is_clean_term(term: str) -> bool:
+    """Reject search terms that carry leaked requester-ask junk (pay rates,
+    campaign ids, multi-line cohort tables) from becoming an experiment idea."""
+    if not term or len(term) > 60:
+        return False
+    low = term.lower()
+    if "$" in term or re.search(r"\d{4,}", term):
+        return False
+    return not any(bad in low for bad in ("i need", "cohort", "control", "treatment", "\n"))
 
 
 def _generate_design_recommendations(intel: CompetitorIntel) -> list[str]:
