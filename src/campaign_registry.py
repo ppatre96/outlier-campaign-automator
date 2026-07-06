@@ -626,6 +626,30 @@ def _id_tail(value: str) -> str:
     return re.split(r"[:/]", str(value or "").strip())[-1].strip()
 
 
+def _normalize_campaign_name(name: str) -> str:
+    """Normalize a campaign name for the funnel join so relaunches + naming
+    drift still match APPLICATION_CONVERSION.UTM_CAMPAIGN.
+
+    A ramp relaunched with a new platform id keeps the same name TEMPLATE, but
+    the date token drifts (registry "…| message ad | 06/13/2026" vs the ad's
+    UTM_CAMPAIGN "…| 06/03/2026") and format spelling varies ("message ads" vs
+    "message ad"). Strategy (validated safe 2026-07-07 — only same-locale
+    relaunches collapse, never distinct locales/formats):
+      - lowercase, drop a leading "agent_"/"agent " prefix
+      - normalize "message ads" → "message ad"
+      - remove any date token (dd/dd/dddd) wherever it appears
+      - drop empty pipe segments (incl. the former date segment) + collapse ws
+    """
+    s = str(name or "").strip().lower()
+    for p in ("agent_", "agent "):
+        if s.startswith(p):
+            s = s[len(p):]
+    s = s.replace("message ads", "message ad")
+    s = re.sub(r"\d{1,2}/\d{1,2}/\d{2,4}", "", s)      # date token anywhere
+    parts = [seg.strip() for seg in s.split("|")]
+    return " | ".join(seg for seg in parts if seg)
+
+
 def update_funnel_metrics(
     id_value: str,
     *,
@@ -647,15 +671,19 @@ def update_funnel_metrics(
       "creative" — match `platform_creative_id` (LinkedIn: per-creative, unique;
                    writes ALL matches). Default.
       "campaign" — match `platform_campaign_id` by id tail.
-      "name"     — match `campaign_name` case-insensitively (Meta/Google: their
-                   sign-ups join via APPLICATION_CONVERSION.UTM_CAMPAIGN, which
-                   holds our campaign_name, not a platform id).
-    For "campaign"/"name" the attribution is campaign-level, so the total is
-    written to a single representative row (first match) to avoid double-counting
+      "name"      — match `campaign_name` case-insensitively (exact).
+      "name_norm" — match on the normalized campaign name (relaunch/date-drift
+                    tolerant). Meta/LinkedIn/Reddit join via UTM_CAMPAIGN.
+      "campaign"  — match `platform_campaign_id` by id tail, EXCLUDING adGroup
+                    resources (those go through "adgroup").
+      "adgroup"   — match `platform_campaign_id` rows that are ".../adGroups/<id>"
+                    by the adgroup id tail (Google relaunch rows).
+    For everything but "creative" the attribution is campaign-level, so the total
+    is written to a single representative row (first match) to avoid double-counting
     when a campaign spans multiple angle rows — mirrors update_metrics.
     `id_value` accepts a URN, a Google resource name, a bare numeric id, or a
-    campaign name (for by="name"). Recomputes cpa_usd from spend_usd when both
-    are known. Dual-writes matched rows to Postgres. Returns rows updated."""
+    campaign name. Recomputes cpa_usd from spend_usd when both are known.
+    Dual-writes matched rows to Postgres. Returns rows updated."""
     if first_only is None:
         first_only = (by != "creative")
 
@@ -663,11 +691,25 @@ def update_funnel_metrics(
         key = str(id_value or "").strip().lower()
         def _matches(rec):
             return bool(key) and (str(rec.get("campaign_name") or "").strip().lower() == key)
-    else:
+    elif by == "name_norm":
+        key = _normalize_campaign_name(id_value)
+        def _matches(rec):
+            return bool(key) and _normalize_campaign_name(rec.get("campaign_name")) == key
+    elif by == "adgroup":
+        key = _id_tail(id_value)
+        def _matches(rec):
+            pcid = str(rec.get("platform_campaign_id") or "")
+            return bool(key) and "/adgroups/" in pcid.lower() and _id_tail(pcid) == key
+    else:  # "campaign" or "creative"
         key = _id_tail(id_value)
         col = "platform_campaign_id" if by == "campaign" else "platform_creative_id"
         def _matches(rec):
-            return bool(key) and _id_tail(rec.get(col)) == key
+            if not key:
+                return False
+            pcid = str(rec.get(col) or "")
+            if by == "campaign" and "/adgroups/" in pcid.lower():
+                return False  # adGroup rows are handled by by="adgroup"
+            return _id_tail(pcid) == key
     if not key:
         return 0
 
