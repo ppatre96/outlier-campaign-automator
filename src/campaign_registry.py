@@ -154,6 +154,12 @@ COLUMNS = [
     # insight under test rather than to angle C in general. Empty on all
     # baseline (A/B) and non-experiment rows.
     "experiment_id",
+    # ── 2026-07-07 addition (APPEND ONLY) ─────────────────────────────────────
+    # LinkedIn InMail (Message Ad) delivery metrics. InMail has no impressions/
+    # clicks — it reports sends (delivered) + opens. Empty for Sponsored Content
+    # and non-LinkedIn rows.
+    "sends",
+    "opens",
 ]
 
 
@@ -208,6 +214,8 @@ class CampaignEntry:
     cpa_usd:                float | None = None
     last_metrics_at:        str = ""
     experiment_id:          str = ""           # competitor-insight experiment id on challenger-arm rows
+    sends:                  int | None = None  # LinkedIn InMail: messages delivered (no impressions for InMail)
+    opens:                  int | None = None  # LinkedIn InMail: messages opened
 
 
 # Internal lower-case platform key → user-facing channel label shown in Sheet.
@@ -577,19 +585,39 @@ def update_metrics(
     clicks: int,
     spend_usd: float,
     applications: int = 0,
+    *,
+    sends: int = 0,
+    opens: int = 0,
+    by: str = "id",
 ) -> None:
-    """Update performance metrics for a campaign. Called by the feedback agent.
+    """Update delivery metrics for a campaign. Called by the metrics refresh.
 
-    The first kwarg name is preserved for back-compat — it accepts any
-    platform's campaign id (LinkedIn URN, Meta numeric, Google resource).
+    The first arg accepts any platform's campaign id (LinkedIn URN, Meta numeric,
+    Google resource) when `by="id"`, or a campaign NAME when `by="name_norm"`
+    (matched via _normalize_campaign_name — relaunch/date-drift tolerant, needed
+    because relaunched campaigns' reporting ids aren't in the registry).
+
+    `sends`/`opens` are LinkedIn InMail (Message Ad) delivery metrics — InMail has
+    no impressions/clicks, so those stay 0 and sends/opens carry the reach signal.
+    Campaign-level: writes a single representative row (first match) so the
+    console's per-channel SUM doesn't double-count when a campaign spans multiple
+    angle rows — mirrors the funnel writeback.
     """
+    if by == "name_norm":
+        _key = _normalize_campaign_name(linkedin_campaign_urn)
+        _matches = lambda rec: bool(_key) and _normalize_campaign_name(rec.get("campaign_name")) == _key
+    else:
+        _matches = lambda rec: _id_match(rec, linkedin_campaign_urn)
+
     with _registry_lock:
         records = _load()
-        matched = None
+        matched_rows = []
         for rec in records:
-            if _id_match(rec, linkedin_campaign_urn):
+            if _matches(rec):
                 rec["impressions"] = impressions
                 rec["clicks"] = clicks
+                rec["sends"] = sends
+                rec["opens"] = opens
                 rec["spend_usd"] = round(spend_usd, 2)
                 rec["cpm_usd"] = round(spend_usd / impressions * 1000, 2) if impressions else None
                 rec["ctr_pct"] = round(clicks / impressions * 100, 3) if impressions else None
@@ -597,21 +625,24 @@ def update_metrics(
                 rec["applications"] = applications
                 rec["cpa_usd"] = round(spend_usd / applications, 2) if applications else None
                 rec["last_metrics_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-                matched = rec
-                break
-        if matched is not None:
+                matched_rows.append(rec)
+                break  # campaign-level: one representative row
+        matched = matched_rows[0] if matched_rows else None
+        if matched_rows:
             _save(records)
-            log.info("Registry: metrics updated for %s", linkedin_campaign_urn)
+            log.info("Registry: metrics updated for %s (%d row(s), by=%s)",
+                     linkedin_campaign_urn, len(matched_rows), by)
         else:
             log.warning("Registry: campaign not found for metrics update: %s", linkedin_campaign_urn)
     # Also persist the updated metrics to Postgres so the console dashboard can
     # roll up impressions/spend/conversions without the Sheet (log_campaign
     # already dual-writes structure this way). Outside the registry lock —
     # mirrors log_campaign. Best-effort.
-    if matched is not None:
+    if matched_rows:
         try:
             from src.ui_decisions import upsert_campaign
-            upsert_campaign(matched)
+            for rec in matched_rows:
+                upsert_campaign(rec)
         except Exception as exc:
             log.warning("Registry Postgres metrics write failed (non-fatal): %s", exc)
 

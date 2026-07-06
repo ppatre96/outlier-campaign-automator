@@ -127,6 +127,41 @@ LEFT JOIN apps a ON m.creative_id = a.creative_id
 ORDER BY m.impressions DESC
 """
 
+# Delivery-metrics refresh query (separate from _METRICS_SQL, which run()'s
+# scoring path uses). Differences: includes InMail/Message-Ad formats (which
+# report SENDS/OPENS, not impressions/clicks — the generic CLICKS column is 0
+# for InMail, so LANDING_PAGE_CLICKS is the click metric for both), returns
+# campaign NAME for the relaunch-tolerant name join, and uses a low floor
+# (impressions+sends) instead of the 50k impressions floor that dropped every
+# per-cohort campaign and 100% of InMail.
+_METRICS_REFRESH_SQL = """
+WITH ch AS (
+    -- Dedup CREATIVE_HISTORY *and* carry the campaign name/format here, so the
+    -- metrics query never re-joins CAMPAIGN_HISTORY (which has many versions per
+    -- campaign and would fan out the SUMs). One row per creative after rn=1.
+    SELECT cr.ID AS creative_id, camp.NAME AS campaign_name, camp.FORMAT AS ad_format,
+           ROW_NUMBER() OVER (PARTITION BY cr.ID ORDER BY cr.LAST_MODIFIED_AT DESC) AS rn
+    FROM PC_FIVETRAN_DB.LINKEDIN_ADS.CREATIVE_HISTORY cr
+    JOIN PC_FIVETRAN_DB.LINKEDIN_ADS.CAMPAIGN_HISTORY camp ON cr.CAMPAIGN_ID = camp.ID
+    WHERE cr.ACCOUNT_ID = {account_id}
+      AND camp.FORMAT IN ('STANDARD_UPDATE', 'SINGLE_VIDEO', 'CAROUSEL', 'TEXT_AD',
+                          'SPONSORED_INMAIL', 'SPONSORED_MESSAGE')
+),
+creatives AS (SELECT creative_id, campaign_name FROM ch WHERE rn = 1)
+SELECT
+    c.campaign_name              AS campaign_name,
+    SUM(aa.IMPRESSIONS)          AS impressions,
+    SUM(aa.LANDING_PAGE_CLICKS)  AS lp_clicks,
+    SUM(aa.SENDS)                AS sends,
+    SUM(aa.OPENS)                AS opens,
+    SUM(aa.COST_IN_USD)          AS cost_usd
+FROM creatives c
+JOIN PC_FIVETRAN_DB.LINKEDIN_ADS.AD_ANALYTICS_BY_CREATIVE aa ON c.creative_id = aa.CREATIVE_ID
+WHERE aa.DAY >= CURRENT_DATE - INTERVAL '{window} days'
+GROUP BY 1
+HAVING SUM(aa.IMPRESSIONS) + SUM(aa.SENDS) >= 100
+"""
+
 # ── Data classes ───────────────────────────────────────────────────────────────
 
 @dataclass
@@ -1306,18 +1341,18 @@ def _build_report(scores: list[CreativeScore],
 def refresh_linkedin_metrics(window: int = 7) -> int:
     """Refresh LinkedIn campaign metrics only — no vision/scoring/deprecation.
 
-    Pulls the same Redash metrics query `run()` uses, aggregates per campaign
-    (the query is per-creative), and pushes campaign-level totals through
-    `campaign_registry.update_metrics` (which dual-writes to Postgres). This is
-    the LinkedIn half of the all-channel metrics refresh; Meta/Google are
-    handled by platform_metrics.fetch_metrics_for_active_extra_platforms.
+    Uses _METRICS_REFRESH_SQL (includes InMail, which reports SENDS/OPENS not
+    impressions/clicks), aggregates per NORMALIZED campaign name, and pushes
+    totals through `campaign_registry.update_metrics` with by="name_norm" — the
+    relaunch-tolerant match, since a relaunched campaign's reporting id isn't in
+    the registry. Meta/Google are handled by platform_metrics.
 
     Returns the number of campaigns pushed. Never raises — logs and returns 0.
     """
-    from src.campaign_registry import update_metrics
+    from src.campaign_registry import update_metrics, _normalize_campaign_name
     try:
         db = RedashClient()
-        sql = _METRICS_SQL.format(account_id=config.LINKEDIN_AD_ACCOUNT_ID, window=window)
+        sql = _METRICS_REFRESH_SQL.format(account_id=config.LINKEDIN_AD_ACCOUNT_ID, window=window)
         df = db._run_query(sql, label="metrics-refresh-linkedin")
     except Exception as exc:
         log.warning("refresh_linkedin_metrics: Redash query failed (%s)", exc)
@@ -1331,28 +1366,33 @@ def refresh_linkedin_metrics(window: int = 7) -> int:
     def _ff(v) -> float:
         return float(v) if v is not None and v == v else 0.0
 
-    # Aggregate per campaign — update_metrics SETS (not adds) a campaign's
-    # totals, so sum the campaign's creative rows first.
-    agg: dict[int, dict] = {}
+    # Aggregate per normalized campaign name — update_metrics SETS (not adds), and
+    # relaunch date-variants of the same campaign must sum, not overwrite.
+    agg: dict[str, dict] = {}
     for _, r in df.iterrows():
-        cid = _fi(r.get("campaign_id"))
-        if not cid:
+        name = r.get("campaign_name")
+        key = _normalize_campaign_name(name)
+        if not key:
             continue
-        a = agg.setdefault(cid, {"impressions": 0, "clicks": 0, "cost": 0.0, "apps": 0})
+        a = agg.setdefault(key, {"name": name, "impressions": 0, "clicks": 0,
+                                 "sends": 0, "opens": 0, "cost": 0.0})
         a["impressions"] += _fi(r.get("impressions"))
         a["clicks"]      += _fi(r.get("lp_clicks"))
+        a["sends"]       += _fi(r.get("sends"))
+        a["opens"]       += _fi(r.get("opens"))
         a["cost"]        += _ff(r.get("cost_usd"))
-        a["apps"]        += _fi(r.get("applications"))
 
-    for cid, a in agg.items():
+    for a in agg.values():
         update_metrics(
-            linkedin_campaign_urn=f"urn:li:sponsoredCampaign:{cid}",
+            a["name"],
             impressions=a["impressions"],
             clicks=a["clicks"],
             spend_usd=a["cost"],
-            applications=a["apps"],
+            sends=a["sends"],
+            opens=a["opens"],
+            by="name_norm",
         )
-    log.info("refresh_linkedin_metrics: pushed %d campaigns", len(agg))
+    log.info("refresh_linkedin_metrics: pushed %d campaigns (InMail sends/opens incl.)", len(agg))
     return len(agg)
 
 
