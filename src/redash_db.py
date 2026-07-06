@@ -580,13 +580,23 @@ GROUP BY 1
 """
 
 # Per-channel funnel config. `by` is the registry match mode consumed by
-# campaign_registry.update_funnel_metrics (name → campaign_name; campaign →
-# platform_campaign_id tail). LinkedIn intentionally omitted — per-creative path.
+# campaign_registry.update_funnel_metrics. Join keys validated live 2026-07-07
+# against GMR-0023 (a relaunched ramp):
+#   LinkedIn / Meta / Reddit → normalized UTM_CAMPAIGN=campaign_name ("name_norm";
+#     tolerant of relaunch date-drift + format variants). LinkedIn's AD_ID never
+#     matched the registry (static rows are DRAFT, InMail creative ids differ), so
+#     it uses the name join too — angle granularity is unrecoverable regardless.
+#   Google → CAMPAIGN_ID for campaign/bare rows; ADGROUP_ID for relaunch rows that
+#     store a ".../adGroups/<id>" resource (the old _id_tail-vs-CAMPAIGN_ID bug).
 _META_SOURCE = "ac.UTM_SOURCE ILIKE '%meta%' OR ac.UTM_SOURCE ILIKE '%facebook%' OR ac.UTM_SOURCE ILIKE '%instagram%'"
+_GOOGLE_SOURCE = "ac.UTM_SOURCE ILIKE '%google%'"
+_UTM_KEY, _UTM_NN = "LOWER(ac.UTM_CAMPAIGN)", "ac.UTM_CAMPAIGN IS NOT NULL"
 _CHANNEL_FUNNEL = {
-    "meta":   {"source": _META_SOURCE,                    "key_expr": "LOWER(ac.UTM_CAMPAIGN)", "notnull": "ac.UTM_CAMPAIGN IS NOT NULL", "by": "name"},
-    "reddit": {"source": "ac.UTM_SOURCE ILIKE '%reddit%'", "key_expr": "LOWER(ac.UTM_CAMPAIGN)", "notnull": "ac.UTM_CAMPAIGN IS NOT NULL", "by": "name"},
-    "google": {"source": "ac.UTM_SOURCE ILIKE '%google%'", "key_expr": "ac.CAMPAIGN_ID",         "notnull": "ac.CAMPAIGN_ID IS NOT NULL",  "by": "campaign"},
+    "linkedin":       {"source": "ac.UTM_SOURCE ILIKE '%linkedin%'", "key_expr": _UTM_KEY,        "notnull": _UTM_NN,                      "by": "name_norm"},
+    "meta":           {"source": _META_SOURCE,                       "key_expr": _UTM_KEY,        "notnull": _UTM_NN,                      "by": "name_norm"},
+    "reddit":         {"source": "ac.UTM_SOURCE ILIKE '%reddit%'",   "key_expr": _UTM_KEY,        "notnull": _UTM_NN,                      "by": "name_norm"},
+    "google":         {"source": _GOOGLE_SOURCE,                     "key_expr": "ac.CAMPAIGN_ID", "notnull": "ac.CAMPAIGN_ID IS NOT NULL", "by": "campaign"},
+    "google_adgroup": {"source": _GOOGLE_SOURCE,                     "key_expr": "ac.ADGROUP_ID",  "notnull": "ac.ADGROUP_ID IS NOT NULL",  "by": "adgroup"},
 }
 
 # channel → registry match mode, consumed by funnel_writeback.

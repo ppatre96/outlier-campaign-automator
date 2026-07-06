@@ -71,3 +71,38 @@ def test_match_by_campaign_id_google_resource_name(monkeypatch):
     n = reg.update_funnel_metrics("23851984233", by="campaign", applications=9, activations=1)
     assert n == 1
     assert saved["rows"][0]["applications"] == 9
+
+
+def test_normalize_campaign_name_relaunch_drift_and_collisions():
+    N = reg._normalize_campaign_name
+    a = "Scale-GMR-0023 | LinkedIn | language | ar-EG | ALL | Message ad | 06/13/2026"
+    b = "agent_scale-gmr-0023 | linkedin | language | ar-eg | all | message ads | 06/03/2026"
+    assert N(a) == N(b)                       # date drift + format variant + prefix collapse
+    # distinct locales must NOT collide
+    assert N("x | meta | ko-kr | 06/01/2026") != N("x | meta | id-id | 06/01/2026")
+
+
+def test_match_by_name_norm(monkeypatch):
+    """Meta/LinkedIn/Reddit relaunch rows join on the normalized name."""
+    rows = [{"campaign_name": "Scale-GMR-0023 | Meta | id-ID | all | 06/13/2026", "angle": "A"},
+            {"campaign_name": "Scale-GMR-0023 | Meta | id-ID | all | 06/13/2026", "angle": "B"}]
+    saved = _stub_registry(monkeypatch, rows)
+    # funnel key carries a different (genesis) date — must still match, first row only
+    n = reg.update_funnel_metrics(
+        "scale-gmr-0023 | meta | id-id | all | 06/09/2026", by="name_norm",
+        applications=1489, skill_passes=5, activations=3)
+    assert n == 1
+    assert saved["rows"][0]["activations"] == 3 and "activations" not in saved["rows"][1]
+
+
+def test_adgroup_vs_campaign_shape_branching(monkeypatch):
+    """adGroup-resource rows match by='adgroup' (ADGROUP_ID); by='campaign' must
+    NOT match them (that was the _id_tail-vs-CAMPAIGN_ID bug)."""
+    rows = [{"platform_campaign_id": "customers/88/adGroups/197762789672", "angle": "A"}]
+    saved = _stub_registry(monkeypatch, rows)
+    # campaign join must skip an adGroup row even if the tail equals the id
+    assert reg.update_funnel_metrics("197762789672", by="campaign", applications=5) == 0
+    assert "rows" not in saved
+    # adgroup join matches it
+    n = reg.update_funnel_metrics("197762789672", by="adgroup", applications=5, activations=2)
+    assert n == 1 and saved["rows"][0]["activations"] == 2
