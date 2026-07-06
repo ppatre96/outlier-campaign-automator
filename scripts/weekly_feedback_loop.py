@@ -303,10 +303,9 @@ def _step_activations(dry_run: bool) -> dict:
             if a or p or ac:
                 s["campaigns"] += 1
 
-        # Creative-only channels carry no joinable attribution — say so.
-        for chan in ("reddit", "tiktok"):
-            by_channel.setdefault(
-                chan, {"applications": 0, "skill_passes": 0, "activations": 0,
+        # TikTok is still creative-only — no joinable attribution.
+        by_channel.setdefault(
+            "tiktok", {"applications": 0, "skill_passes": 0, "activations": 0,
                        "campaigns": 0, "note": "no attribution available (creative-only)"})
         return {"ok": True, "by_channel": by_channel}
     except Exception as e:

@@ -576,11 +576,13 @@ GROUP BY 1
 """
 
 # utm_source filters per channel. LinkedIn intentionally omitted — it uses the
-# per-creative FUNNEL_METRICS_SQL path. Reddit omitted — its conversions carry no
-# joinable ad id in APPLICATION_CONVERSION (verified 2026-07-07).
+# per-creative FUNNEL_METRICS_SQL path. All three join on UTM_CAMPAIGN=campaign_name
+# (verified 2026-07-07: Reddit conversions carry our campaign_name in UTM_CAMPAIGN,
+# same as Meta/Google — e.g. "scale-gmr-0011 | reddit | coder | ...").
 _CHANNEL_SOURCE_FILTERS = {
     "meta":   "ac.UTM_SOURCE ILIKE '%meta%' OR ac.UTM_SOURCE ILIKE '%facebook%' OR ac.UTM_SOURCE ILIKE '%instagram%'",
     "google": "ac.UTM_SOURCE ILIKE '%google%'",
+    "reddit": "ac.UTM_SOURCE ILIKE '%reddit%'",
 }
 
 
