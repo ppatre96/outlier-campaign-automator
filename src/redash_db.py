@@ -370,29 +370,58 @@ WHERE r.USER_ID IN ({user_ids_csv})
 """
 
 # -- Creative performance analysis for feedback loop (FEED-01)
+#
+# NOTE on schema (fixed 2026-07-06 — was querying invented columns that don't
+# exist): SCALE_PROD.VIEW.LINKEDIN_CREATIVE_COSTS has no CREATIVE_URN,
+# SPEND_USD, DATE, CONVERSIONS, ANGLE, or PHOTO_SUBJECT column. Its real
+# columns are CREATIVE_ID (numeric string), CAMPAIGN_NAME, IMPRESSIONS,
+# CLICKS, COST, DAY. Conversions live separately on
+# PC_FIVETRAN_DB.LINKEDIN_ADS.AD_ANALYTICS_BY_CREATIVE (EXTERNAL_WEBSITE_
+# CONVERSIONS), which is SCD-like and must be deduped on (DAY, CREATIVE_ID)
+# via _FIVETRAN_SYNCED per the standard LinkedIn dedup pattern.
+#
+# angle / photo_subject / creative_urn do NOT exist anywhere in Snowflake
+# (confirmed via INFORMATION_SCHEMA search across SCALE_PROD, GENAI_DATA_
+# ENGINE, SCALE_DBT) — they are pipeline-internal fields written only to
+# data/campaign_registry.json, keyed by platform_creative_id
+# ("urn:li:sponsoredCreative:<CREATIVE_ID>"). query_creative_performance()
+# below joins them onto this query's numeric creative_id in Python via
+# _enrich_creative_angles() since SQL can't reach a local JSON file.
 CREATIVE_PERFORMANCE_SQL = """
+WITH conv AS (
+  SELECT
+    DAY::DATE                    AS day,
+    CREATIVE_ID::STRING          AS creative_id,
+    EXTERNAL_WEBSITE_CONVERSIONS AS conversions,
+    ROW_NUMBER() OVER (
+      PARTITION BY DAY, CREATIVE_ID ORDER BY _FIVETRAN_SYNCED DESC
+    ) AS rn
+  FROM PC_FIVETRAN_DB.LINKEDIN_ADS.AD_ANALYTICS_BY_CREATIVE
+  WHERE DAY >= CURRENT_DATE - INTERVAL '{days_back} days'
+)
 SELECT
-  c.CREATIVE_ID            AS creative_id,
-  c.CREATIVE_URN           AS creative_urn,
-  c.CAMPAIGN_NAME          AS cohort_name,
-  COALESCE(c.ANGLE, 'unknown')         AS angle,
-  COALESCE(c.PHOTO_SUBJECT, 'unknown') AS photo_subject,
-  SUM(c.IMPRESSIONS)       AS impressions,
-  SUM(c.CLICKS)            AS clicks,
+  c.CREATIVE_ID::STRING     AS creative_id,
+  c.CAMPAIGN_NAME           AS cohort_name,
+  SUM(c.IMPRESSIONS)        AS impressions,
+  SUM(c.CLICKS)             AS clicks,
   CASE WHEN SUM(c.IMPRESSIONS) > 0
     THEN ROUND(SUM(c.CLICKS)::FLOAT / SUM(c.IMPRESSIONS) * 100, 4)
     ELSE 0
-  END                      AS ctr,
-  SUM(c.SPEND_USD)         AS spend,
-  SUM(c.CONVERSIONS)       AS conversions,
-  CASE WHEN SUM(c.CONVERSIONS) > 0
-    THEN ROUND(SUM(c.SPEND_USD) / SUM(c.CONVERSIONS), 2)
+  END                       AS ctr,
+  SUM(c.COST)               AS spend,
+  SUM(COALESCE(cv.conversions, 0)) AS conversions,
+  CASE WHEN SUM(COALESCE(cv.conversions, 0)) > 0
+    THEN ROUND(SUM(c.COST) / SUM(cv.conversions), 2)
     ELSE NULL
-  END                      AS cpa,
-  MIN(c.DATE)              AS created_date
-FROM VIEW.LINKEDIN_CREATIVE_COSTS c
-WHERE c.DATE >= CURRENT_DATE - INTERVAL '{days_back} days'
-GROUP BY 1, 2, 3, 4, 5
+  END                       AS cpa,
+  MIN(c.DAY::DATE)          AS created_date
+FROM SCALE_PROD.VIEW.LINKEDIN_CREATIVE_COSTS c
+LEFT JOIN conv cv
+  ON cv.creative_id = c.CREATIVE_ID::STRING
+  AND cv.day = c.DAY::DATE
+  AND cv.rn = 1
+WHERE c.DAY::DATE >= CURRENT_DATE - INTERVAL '{days_back} days'
+GROUP BY 1, 2
 HAVING SUM(c.IMPRESSIONS) > 100
 ORDER BY cohort_name, cpa DESC NULLS LAST
 """
@@ -806,7 +835,15 @@ class RedashClient:
                  impressions, clicks, ctr, spend, conversions, cpa, created_date
 
         Filters to last `days_back` days and campaigns with > 100 impressions.
-        Source: VIEW.LINKEDIN_CREATIVE_COSTS (FEED-01)
+        Source: SCALE_PROD.VIEW.LINKEDIN_CREATIVE_COSTS joined to
+        PC_FIVETRAN_DB.LINKEDIN_ADS.AD_ANALYTICS_BY_CREATIVE for conversions
+        (FEED-01). angle/photo_subject/creative_urn are not Snowflake columns
+        (verified absent platform-wide) — they're attached in Python from
+        the local campaign registry via _enrich_creative_angles(), keyed on
+        the numeric CREATIVE_ID embedded in the registry's platform_creative_id
+        URN. Rows with no registry match (e.g. UGC/influencer creatives that
+        never went through this pipeline) get angle="unknown", matching the
+        prior fallback behavior.
         """
         # end_date parameter reserved for future date-range filtering; SQL uses CURRENT_DATE
         sql = CREATIVE_PERFORMANCE_SQL.format(
@@ -823,6 +860,7 @@ class RedashClient:
             log.warning("query_creative_performance returned no rows")
             return pd.DataFrame(columns=_expected_cols)
         log.info("Fetched %d rows from creative performance query", len(df))
+        df = _enrich_creative_angles(df)
         return df
 
     def query_cohort_metrics(
@@ -985,3 +1023,53 @@ class RedashClient:
 def _esc(val: str) -> str:
     """Minimal SQL string escaping — replace single quotes."""
     return str(val).replace("'", "''")
+
+
+def _enrich_creative_angles(df: pd.DataFrame) -> pd.DataFrame:
+    """Attach angle / photo_subject / creative_urn from the local campaign
+    registry onto a creative-performance DataFrame keyed by numeric
+    `creative_id`.
+
+    Snowflake has no concept of our internal A/B/C "angle" or "photo_subject"
+    — those only exist in data/campaign_registry.json, written at campaign
+    creation time and keyed by `platform_creative_id`
+    ("urn:li:sponsoredCreative:<numeric id>"). This strips that URN prefix
+    to build a numeric-id -> {angle, photo_subject, creative_urn} lookup and
+    left-joins it onto the Redash result in Python.
+
+    Rows with no registry match (e.g. UGC/influencer creatives that never
+    went through this pipeline) fall back to angle="unknown",
+    photo_subject="unknown", creative_urn="" — the same fallback the old
+    (broken) SQL used to produce for every row.
+    """
+    lookup: dict[str, dict[str, str]] = {}
+    try:
+        from src import campaign_registry
+
+        for rec in campaign_registry._load():  # noqa: SLF001 — read-only registry access
+            platform_creative_id = rec.get("platform_creative_id") or ""
+            numeric_id = platform_creative_id.rsplit(":", 1)[-1] if platform_creative_id else ""
+            if not numeric_id:
+                continue
+            lookup[numeric_id] = {
+                "angle":          rec.get("angle") or "unknown",
+                "photo_subject":  rec.get("photo_subject") or "unknown",
+                "creative_urn":   platform_creative_id,
+                "experiment_id":  rec.get("experiment_id") or "",
+            }
+    except Exception as exc:  # noqa: BLE001 — enrichment is best-effort
+        log.warning("_enrich_creative_angles: could not load campaign registry: %s", exc)
+
+    df = df.copy()
+    creative_ids = df["creative_id"].astype(str) if "creative_id" in df.columns else pd.Series([], dtype=str)
+    df["angle"]         = creative_ids.map(lambda cid: lookup.get(cid, {}).get("angle", "unknown"))
+    df["photo_subject"] = creative_ids.map(lambda cid: lookup.get(cid, {}).get("photo_subject", "unknown"))
+    df["creative_urn"]  = creative_ids.map(lambda cid: lookup.get(cid, {}).get("creative_urn", ""))
+    df["experiment_id"] = creative_ids.map(lambda cid: lookup.get(cid, {}).get("experiment_id", ""))
+
+    n_matched = sum(1 for cid in creative_ids if cid in lookup)
+    log.info(
+        "Enriched %d/%d creative rows with registry angle/photo_subject",
+        n_matched, len(df),
+    )
+    return df

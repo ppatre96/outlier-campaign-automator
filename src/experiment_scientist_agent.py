@@ -37,14 +37,11 @@ class ExperimentScientistAgent:
             hypotheses: List of {cohort, angle, photo_subject, reason, expected_impact, ...}
             competitor_intel: {experiment_ideas: [...], competitor_hooks: [...], avoid: [...]}
         """
-        if not hypotheses:
-            log.info("No hypotheses to ingest")
-            return
-
         added_count = 0
 
-        # Process feedback_agent hypotheses
-        for hyp in hypotheses:
+        # Process feedback_agent hypotheses (may be empty — competitor ideas
+        # below must still be ingested when there is no feedback yet).
+        for hyp in hypotheses or []:
             score = self._compute_priority_score(hyp)
             hyp['priority_score'] = score
             self.backlog.add_hypothesis(hyp)

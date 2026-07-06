@@ -368,6 +368,12 @@ def build_copy_variants(
                 log.info("Loaded %d competitor experiment ideas for copy gen", len(ideas))
         except Exception as exc:
             log.warning("Failed to load competitor intel: %s", exc)
+    # Pin the challenger arm (angle C) to the active competitor-insight experiment.
+    try:
+        from src.competitor_experiment import directive_prompt_block
+        competitor_context += directive_prompt_block()
+    except Exception as exc:
+        log.warning("Failed to load experiment directive: %s", exc)
 
     prompt = _build_copy_prompt(cohort.name, signals, layer_map)
     geo_hint = _format_geo_hint(geos)
