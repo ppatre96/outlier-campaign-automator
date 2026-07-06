@@ -16,7 +16,7 @@ Loud failure: on any step error, still posts a minimal failure message to Slack.
 CLI:
   --dry-run   All steps run except Slack post + reanalysis trigger
   --force     Bypass 6-day idempotency skip
-  --only      Run only one of: v1 | funnel | sentiment | drift | experiment  (debugging)
+  --only      Run only one of: v1 | funnel | sentiment | drift | experiment | activations  (debugging)
 
 Vocabulary rules (CLAUDE.md): every Slack-facing string in this file uses approved
 Outlier vocabulary. NEVER emit any banned token from the substitution table below.
@@ -271,6 +271,49 @@ def _step_experiment(dry_run: bool) -> dict:
         return {"ok": False, "error": f"{type(e).__name__}: {e}", "results": {}}
 
 
+def _step_activations(dry_run: bool) -> dict:
+    """Step F — summarize per-channel funnel outcomes (sign-ups / skill passes /
+    activations) attributed to our campaigns. Read-only: the actual writeback
+    runs daily in scripts/refresh_metrics.py; this just rolls up the campaign
+    rows for the Slack section. Reddit/TikTok have no joinable attribution."""
+    log.info("Step F: activation summary (per channel)")
+    try:
+        # Postgres is the authoritative campaign store (fresh in CI); fall back
+        # to the local registry if the DB is unreachable.
+        try:
+            from src.ui_decisions import list_all_campaign_data
+            recs = list_all_campaign_data()
+        except Exception:
+            from src.campaign_registry import _load
+            recs = _load()
+
+        by_channel: dict[str, dict] = {}
+        for r in recs:
+            chan = (r.get("platform") or "linkedin").lower()
+            if chan == "google_search":
+                chan = "google"
+            s = by_channel.setdefault(
+                chan, {"applications": 0, "skill_passes": 0, "activations": 0, "campaigns": 0})
+            a = int(r.get("applications") or 0)
+            p = int(r.get("skill_passes") or 0)
+            ac = int(r.get("activations") or 0)
+            s["applications"] += a
+            s["skill_passes"] += p
+            s["activations"] += ac
+            if a or p or ac:
+                s["campaigns"] += 1
+
+        # Creative-only channels carry no joinable attribution — say so.
+        for chan in ("reddit", "tiktok"):
+            by_channel.setdefault(
+                chan, {"applications": 0, "skill_passes": 0, "activations": 0,
+                       "campaigns": 0, "note": "no attribution available (creative-only)"})
+        return {"ok": True, "by_channel": by_channel}
+    except Exception as e:
+        log.exception("Step F failed")
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "by_channel": {}}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Slack message builders (vocabulary-clean per CLAUDE.md)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -402,8 +445,38 @@ def _format_experiment_section(experiment: dict) -> list[str]:
     return format_slack_section((experiment or {}).get("results") or {})
 
 
+def _format_activations_section(activations: dict) -> list[str]:
+    """Build the Activations section — sign-ups / skill passes / activations per
+    channel, written back to campaigns. LinkedIn per-creative; Meta/Google
+    campaign-level; Reddit/TikTok have no joinable attribution."""
+    lines = ["📥 Activations (funnel — sign-ups → skill passes → activations)"]
+    if not activations or not activations.get("ok"):
+        lines.append("  • [activation writeback failed]")
+        return lines
+    by_channel = activations.get("by_channel") or {}
+    if not by_channel:
+        lines.append("  • No attributed sign-ups in the window yet.")
+        return lines
+    order = ["linkedin", "meta", "google", "reddit", "tiktok"]
+    label = {"linkedin": "LinkedIn", "meta": "Meta", "google": "Google",
+             "reddit": "Reddit", "tiktok": "TikTok"}
+    for chan in sorted(by_channel, key=lambda c: (order.index(c) if c in order else 99)):
+        s = by_channel[chan]
+        note = s.get("note")
+        if note:
+            lines.append(f"  • {label.get(chan, chan)}: — ({note})")
+        else:
+            lines.append(
+                f"  • {label.get(chan, chan)}: {s.get('applications', 0):,} sign-ups · "
+                f"{s.get('skill_passes', 0):,} skill passes · {s.get('activations', 0):,} activations "
+                f"({s.get('campaigns', 0)} campaign(s))"
+            )
+    return lines
+
+
 def _build_consolidated_message(
-    v1_status: dict, funnel: dict, sentiment: dict, drift: dict, experiment: dict | None = None
+    v1_status: dict, funnel: dict, sentiment: dict, drift: dict,
+    experiment: dict | None = None, activations: dict | None = None,
 ) -> str:
     """Build the single multi-section Slack message.
 
@@ -413,6 +486,7 @@ def _build_consolidated_message(
       3. Sentiment Themes
       4. ICP Drift
       5. Experiment Results
+      6. Activations
 
     All copy uses approved Outlier vocabulary (CLAUDE.md). NEVER emit banned
     tokens from the substitution table — see module docstring for the full list.
@@ -428,6 +502,8 @@ def _build_consolidated_message(
     lines.extend(_format_drift_section(drift))
     lines.append("")
     lines.extend(_format_experiment_section(experiment or {}))
+    lines.append("")
+    lines.extend(_format_activations_section(activations or {}))
     return "\n".join(lines)
 
 
@@ -445,7 +521,7 @@ def _build_failure_message(failures: dict) -> str:
 
 
 def run_once(dry_run: bool = False, only: str | None = None) -> dict:
-    """Run the five steps sequentially (or one, if --only).
+    """Run the six steps sequentially (or one, if --only).
 
     Returns:
         {
@@ -462,6 +538,7 @@ def run_once(dry_run: bool = False, only: str | None = None) -> dict:
         "sentiment": lambda: _step_sentiment(dry_run),
         "drift": lambda: _step_drift(dry_run, projects),
         "experiment": lambda: _step_experiment(dry_run),
+        "activations": lambda: _step_activations(dry_run),
     }
     steps_to_run = [only] if only else list(step_map.keys())
     for name in steps_to_run:
@@ -487,6 +564,7 @@ def run_once(dry_run: bool = False, only: str | None = None) -> dict:
                 results.get("sentiment", {}),
                 results.get("drift", {}),
                 results.get("experiment", {}),
+                results.get("activations", {}),
             )
         if dry_run:
             log.info("[DRY-RUN] would post to Slack:\n%s", msg)
@@ -514,7 +592,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--only",
-        choices=["v1", "funnel", "sentiment", "drift", "experiment"],
+        choices=["v1", "funnel", "sentiment", "drift", "experiment", "activations"],
         help="Run only one step (debugging)",
     )
     args = parser.parse_args()

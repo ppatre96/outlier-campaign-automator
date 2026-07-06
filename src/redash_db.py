@@ -553,6 +553,37 @@ ORDER BY m.cohort_name, m.impressions DESC
 """
 
 
+# Cross-channel campaign-level funnel (Meta / Google). Attributes sign-ups →
+# screening → activation to our campaign_name via APPLICATION_CONVERSION.UTM_CAMPAIGN
+# (which carries the campaign_name we stamp on ad URLs — verified 2026-07-07: Meta
+# CAMPAIGN_ID is null, and Google's numeric CAMPAIGN_ID doesn't cover UTM-less
+# GCLID traffic, so UTM_CAMPAIGN=campaign_name is the uniform key). LinkedIn keeps
+# per-creative attribution via FUNNEL_METRICS_SQL (AD_ID). COUNT(DISTINCT EMAIL)
+# makes this immune to the GROWTHRESUMESCREENINGRESULTS row fan-out.
+CHANNEL_FUNNEL_SQL = """
+SELECT
+    LOWER(ac.UTM_CAMPAIGN)                                              AS campaign_name,
+    COUNT(DISTINCT ac.EMAIL)                                           AS applications,
+    COUNT(DISTINCT CASE WHEN UPPER(g.RESULT) = 'PASS' THEN ac.EMAIL END) AS screening_passes,
+    COUNT(DISTINCT CASE WHEN ac.ACTIVATION_DAY IS NOT NULL THEN ac.EMAIL END) AS activations
+FROM SCALE_PROD.VIEW.APPLICATION_CONVERSION ac
+LEFT JOIN PUBLIC.GROWTHRESUMESCREENINGRESULTS g ON ac.EMAIL = g.CANDIDATE_EMAIL
+WHERE ({source_filter})
+  AND ac.UTM_MEDIUM IN ('paid', 'cpc')
+  AND ac.UTM_CAMPAIGN IS NOT NULL
+  AND ac.APPLICATION_DAY >= CURRENT_DATE - INTERVAL '{days} days'
+GROUP BY 1
+"""
+
+# utm_source filters per channel. LinkedIn intentionally omitted — it uses the
+# per-creative FUNNEL_METRICS_SQL path. Reddit omitted — its conversions carry no
+# joinable ad id in APPLICATION_CONVERSION (verified 2026-07-07).
+_CHANNEL_SOURCE_FILTERS = {
+    "meta":   "ac.UTM_SOURCE ILIKE '%meta%' OR ac.UTM_SOURCE ILIKE '%facebook%' OR ac.UTM_SOURCE ILIKE '%instagram%'",
+    "google": "ac.UTM_SOURCE ILIKE '%google%'",
+}
+
+
 class RedashClient:
     """
     Executes Snowflake SQL via Redash's REST API.
@@ -937,6 +968,25 @@ class RedashClient:
             )
             return pd.DataFrame(columns=_expected_cols)
         log.info("Fetched %d funnel rows for window=%d days", len(df), days_back)
+        return df
+
+    def query_campaign_funnel(self, channel: str, days_back: int = 7) -> pd.DataFrame:
+        """Campaign-level funnel (sign-ups / screening_passes / activations) for a
+        non-LinkedIn channel, keyed by campaign_name (= UTM_CAMPAIGN).
+
+        Columns: campaign_name, applications, screening_passes, activations.
+        Returns empty for unknown channels (e.g. reddit — no joinable ad id)."""
+        _expected = ["campaign_name", "applications", "screening_passes", "activations"]
+        filt = _CHANNEL_SOURCE_FILTERS.get((channel or "").lower())
+        if not filt:
+            log.info("query_campaign_funnel: no funnel source for channel=%r — skipping", channel)
+            return pd.DataFrame(columns=_expected)
+        sql = CHANNEL_FUNNEL_SQL.format(source_filter=filt, days=int(days_back))
+        df = self._run_query(sql, label=f"funnel-{channel}-{days_back}d")
+        if df is None or df.empty:
+            log.warning("query_campaign_funnel(%s) returned no rows (window=%dd)", channel, days_back)
+            return pd.DataFrame(columns=_expected)
+        log.info("Fetched %d funnel rows for channel=%s (window=%dd)", len(df), channel, days_back)
         return df
 
     def close(self) -> None:

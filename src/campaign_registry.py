@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -613,6 +614,96 @@ def update_metrics(
             upsert_campaign(matched)
         except Exception as exc:
             log.warning("Registry Postgres metrics write failed (non-fatal): %s", exc)
+
+
+def _id_tail(value: str) -> str:
+    """Last id segment of a URN / resource name / bare id.
+
+    LinkedIn: "urn:li:sponsoredCreative:12345" → "12345"
+    Google:   "customers/88.../campaigns/23851984233" → "23851984233"
+    Meta:     "120246109896950257" → itself
+    """
+    return re.split(r"[:/]", str(value or "").strip())[-1].strip()
+
+
+def update_funnel_metrics(
+    id_value: str,
+    *,
+    by: str = "creative",
+    applications: int = 0,
+    skill_passes: int = 0,
+    activations: int = 0,
+    first_only: bool | None = None,
+) -> int:
+    """Write funnel outcomes (sign-ups / skill passes / activations) onto the
+    registry row(s) matched by ad id.
+
+    These come from the FEED-15-style funnel queries (APPLICATION_CONVERSION),
+    which attribute Outlier sign-ups → screening → activation back to the ad.
+    Reporting APIs only ever gave us impressions/clicks/spend; this is the leg
+    that fills the previously-always-empty activation columns.
+
+    `by`:
+      "creative" — match `platform_creative_id` (LinkedIn: per-creative, unique;
+                   writes ALL matches). Default.
+      "campaign" — match `platform_campaign_id` by id tail.
+      "name"     — match `campaign_name` case-insensitively (Meta/Google: their
+                   sign-ups join via APPLICATION_CONVERSION.UTM_CAMPAIGN, which
+                   holds our campaign_name, not a platform id).
+    For "campaign"/"name" the attribution is campaign-level, so the total is
+    written to a single representative row (first match) to avoid double-counting
+    when a campaign spans multiple angle rows — mirrors update_metrics.
+    `id_value` accepts a URN, a Google resource name, a bare numeric id, or a
+    campaign name (for by="name"). Recomputes cpa_usd from spend_usd when both
+    are known. Dual-writes matched rows to Postgres. Returns rows updated."""
+    if first_only is None:
+        first_only = (by != "creative")
+
+    if by == "name":
+        key = str(id_value or "").strip().lower()
+        def _matches(rec):
+            return bool(key) and (str(rec.get("campaign_name") or "").strip().lower() == key)
+    else:
+        key = _id_tail(id_value)
+        col = "platform_campaign_id" if by == "campaign" else "platform_creative_id"
+        def _matches(rec):
+            return bool(key) and _id_tail(rec.get(col)) == key
+    if not key:
+        return 0
+
+    matched_rows: list[dict] = []
+    with _registry_lock:
+        records = _load()
+        for rec in records:
+            if _matches(rec):
+                rec["applications"] = applications
+                rec["skill_passes"] = skill_passes
+                rec["activations"] = activations
+                spend = rec.get("spend_usd")
+                if spend and applications:
+                    rec["cpa_usd"] = round(float(spend) / applications, 2)
+                rec["last_metrics_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                matched_rows.append(rec)
+                if first_only:
+                    break
+        if matched_rows:
+            _save(records)
+
+    if not matched_rows:
+        log.debug("Registry: no row for funnel %s id=%s", by, key)
+        return 0
+
+    # Mirror to Postgres (best-effort) so the console dashboard renders it.
+    try:
+        from src.ui_decisions import upsert_campaign
+        for rec in matched_rows:
+            upsert_campaign(rec)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Registry Postgres funnel write failed (non-fatal): %s", exc)
+
+    log.info("Registry: funnel metrics on %d row(s) via %s=%s (apps=%d passes=%d act=%d)",
+             len(matched_rows), by, key, applications, skill_passes, activations)
+    return len(matched_rows)
 
 
 def reconcile_creative_paths(

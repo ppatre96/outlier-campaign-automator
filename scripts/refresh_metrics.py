@@ -44,15 +44,26 @@ def main() -> int:
     from src.campaign_registry import hydrate_from_postgres
     from src.campaign_feedback_agent import refresh_linkedin_metrics
     from src.platform_metrics import fetch_metrics_for_active_extra_platforms
+    from src.funnel_writeback import backfill_funnel_metrics_all_channels
 
     hydrated = hydrate_from_postgres()
     linkedin = refresh_linkedin_metrics(window=args.window)
     extra = fetch_metrics_for_active_extra_platforms(window_days=args.window)
 
+    # Sign-ups / skill passes / activations — the funnel leg that ad reporting
+    # APIs don't provide. LinkedIn per-creative; Meta/Google campaign-level.
+    funnel = backfill_funnel_metrics_all_channels(window_days=args.window)
+    funnel_written = sum(v.get("rows_written", 0) for v in funnel.values())
+
     log.info(
-        "refresh_metrics done: hydrated=%d linkedin=%d meta+google=%d (window=%dd)",
-        hydrated, linkedin, extra, args.window,
+        "refresh_metrics done: hydrated=%d linkedin=%d meta+google=%d funnel_rows=%d (window=%dd)",
+        hydrated, linkedin, extra, funnel_written, args.window,
     )
+    for chan, s in funnel.items():
+        log.info("  funnel[%s]: rows=%d sign-ups=%d skill_passes=%d activations=%d%s",
+                 chan, s.get("rows_written", 0), s.get("applications", 0),
+                 s.get("skill_passes", 0), s.get("activations", 0),
+                 f" ({s['note']})" if s.get("note") else "")
     return 0
 
 
