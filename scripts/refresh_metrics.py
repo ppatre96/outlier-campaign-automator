@@ -40,7 +40,12 @@ log = logging.getLogger("refresh_metrics")
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Refresh live campaign metrics for all channels.")
-    ap.add_argument("--window", type=int, default=7, help="Look-back window in days (default 7).")
+    ap.add_argument("--window", type=int, default=7,
+                    help="Look-back window in days for platform delivery metrics (impressions/clicks/spend). Default 7.")
+    ap.add_argument("--funnel-window", type=int, default=30,
+                    help="Look-back window in days for funnel outcomes (sign-ups/skill-passes/activations). "
+                         "Wider than --window because activations are cumulative conversion outcomes, not rolling "
+                         "delivery — a 7-day window undercounts ramps older than a week. Default 30.")
     args = ap.parse_args()
 
     from src.campaign_registry import hydrate_from_postgres
@@ -54,12 +59,15 @@ def main() -> int:
 
     # Sign-ups / skill passes / activations — the funnel leg that ad reporting
     # APIs don't provide. LinkedIn per-creative; Meta/Google campaign-level.
-    funnel = backfill_funnel_metrics_all_channels(window_days=args.window)
+    # Uses the wider funnel window so cumulative activations for older ramps
+    # don't fall out of view.
+    funnel = backfill_funnel_metrics_all_channels(window_days=args.funnel_window)
     funnel_written = sum(v.get("rows_written", 0) for v in funnel.values())
 
     log.info(
-        "refresh_metrics done: hydrated=%d linkedin=%d meta+google=%d funnel_rows=%d (window=%dd)",
-        hydrated, linkedin, extra, funnel_written, args.window,
+        "refresh_metrics done: hydrated=%d linkedin=%d meta+google=%d funnel_rows=%d "
+        "(delivery_window=%dd funnel_window=%dd)",
+        hydrated, linkedin, extra, funnel_written, args.window, args.funnel_window,
     )
     for chan, s in funnel.items():
         log.info("  funnel[%s]: rows=%d sign-ups=%d skill_passes=%d activations=%d%s",
