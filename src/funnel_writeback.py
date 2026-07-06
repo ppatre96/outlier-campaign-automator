@@ -58,20 +58,23 @@ def backfill_funnel_metrics_all_channels(window_days: int = 7) -> dict:
         log.exception("funnel writeback: linkedin failed")
         out["linkedin"] = {**_blank(), "note": f"error: {type(exc).__name__}"}
 
-    # Meta / Google / Reddit — campaign-level (UTM_CAMPAIGN = campaign_name).
+    # Meta / Reddit → matched by campaign_name (UTM_CAMPAIGN); Google → matched
+    # by CAMPAIGN_ID (full-coverage id join). The per-channel key + match mode
+    # come from redash_db so the SQL and the registry match stay in lockstep.
     for chan in ("meta", "google", "reddit"):
         try:
-            from src.redash_db import RedashClient
+            from src.redash_db import RedashClient, CHANNEL_JOIN_MODE
 
+            by = CHANNEL_JOIN_MODE.get(chan, "name")
             df = RedashClient().query_campaign_funnel(chan, days_back=window_days)
             summary = _blank()
             for _, row in df.iterrows():
-                name = row.get("campaign_name")
-                if not name:
+                key = row.get("ad_key")
+                if key in (None, "", "None"):
                     continue
                 apps, passes, acts = _triple(row)
                 w = update_funnel_metrics(
-                    str(name), by="name", applications=apps, skill_passes=passes, activations=acts,
+                    str(key), by=by, applications=apps, skill_passes=passes, activations=acts,
                 )
                 summary["rows_written"] += w
                 if w:  # only count campaigns that matched a registry row
