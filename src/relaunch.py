@@ -11,10 +11,12 @@ Archive semantics (reversible, per platform):
   - google   → campaign status PAUSED (REMOVED is forbidden via the API)
 
 Campaign IDs come from the Postgres `campaigns` table (exact IDs — no
-name-guessing). After a successful archive the rows are dropped so the
-console's per-channel "created" count reflects only live campaigns. Entirely
-best-effort: any platform failure is logged, never raised, so the subsequent
-fresh launch still proceeds.
+name-guessing). After a successful archive the rows are marked
+status="superseded" (issue #75) — retained, not deleted — so the prior
+generation keeps its exact utm_campaign for per-generation funnel attribution.
+Superseded rows are excluded from live rollups + the next relaunch's archive
+list. Entirely best-effort: any platform failure is logged, never raised, so
+the subsequent fresh launch still proceeds.
 """
 from __future__ import annotations
 
@@ -22,7 +24,7 @@ import logging
 import time
 
 import config
-from src.ui_decisions import list_campaign_platform_ids, delete_campaign_rows
+from src.ui_decisions import list_campaign_platform_ids, supersede_campaign_rows
 
 log = logging.getLogger(__name__)
 
@@ -178,7 +180,12 @@ def archive_channel_campaigns(
         archived = []
 
     if archived:
-        delete_campaign_rows(ramp_id, channel, archived)
-    log.info("relaunch: archived %d/%d %s campaign(s) for ramp=%s",
+        # Retain the prior generation's rows (status="superseded") instead of
+        # deleting them (issue #75) — keeps each generation's exact utm_campaign
+        # so its historical conversions attribute to it, not fuzzily onto the
+        # relaunch row.
+        supersede_campaign_rows(ramp_id, channel, archived,
+                                reason=f"relaunch-replace {channel}")
+    log.info("relaunch: archived + superseded %d/%d %s campaign(s) for ramp=%s",
              len(archived), len(ids), channel, ramp_id)
     return {"channel": channel, "found": len(ids), "archived": len(archived)}

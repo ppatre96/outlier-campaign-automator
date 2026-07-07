@@ -1342,14 +1342,16 @@ def refresh_linkedin_metrics(window: int = 7) -> int:
     """Refresh LinkedIn campaign metrics only — no vision/scoring/deprecation.
 
     Uses _METRICS_REFRESH_SQL (includes InMail, which reports SENDS/OPENS not
-    impressions/clicks), aggregates per NORMALIZED campaign name, and pushes
-    totals through `campaign_registry.update_metrics` with by="name_norm" — the
-    relaunch-tolerant match, since a relaunched campaign's reporting id isn't in
-    the registry. Meta/Google are handled by platform_metrics.
+    impressions/clicks), aggregates per CANONICAL campaign name, and pushes
+    totals through `campaign_registry.update_metrics` with by="utm" — matching
+    the funnel side (issue #75). Canonicalization fixes encoding/whitespace drift
+    but keeps the date token, so each launch generation attributes to its own
+    (possibly superseded) row instead of merging. Meta/Google are handled by
+    platform_metrics (matched by platform_campaign_id).
 
     Returns the number of campaigns pushed. Never raises — logs and returns 0.
     """
-    from src.campaign_registry import update_metrics, _normalize_campaign_name
+    from src.campaign_registry import update_metrics, _canonical_utm
     try:
         db = RedashClient()
         sql = _METRICS_REFRESH_SQL.format(account_id=config.LINKEDIN_AD_ACCOUNT_ID, window=window)
@@ -1366,12 +1368,14 @@ def refresh_linkedin_metrics(window: int = 7) -> int:
     def _ff(v) -> float:
         return float(v) if v is not None and v == v else 0.0
 
-    # Aggregate per normalized campaign name — update_metrics SETS (not adds), and
-    # relaunch date-variants of the same campaign must sum, not overwrite.
+    # Aggregate per CANONICAL campaign name (encoding/whitespace-normalized, date
+    # token kept) — update_metrics SETS (not adds), so LinkedIn reporting rows
+    # for the SAME generation (e.g. static + InMail sub-rows) must sum here;
+    # distinct generations keep distinct keys and land on their own rows.
     agg: dict[str, dict] = {}
     for _, r in df.iterrows():
         name = r.get("campaign_name")
-        key = _normalize_campaign_name(name)
+        key = _canonical_utm(name)
         if not key:
             continue
         a = agg.setdefault(key, {"name": name, "impressions": 0, "clicks": 0,
@@ -1390,7 +1394,7 @@ def refresh_linkedin_metrics(window: int = 7) -> int:
             spend_usd=a["cost"],
             sends=a["sends"],
             opens=a["opens"],
-            by="name_norm",
+            by="utm",
         )
     log.info("refresh_linkedin_metrics: pushed %d campaigns (InMail sends/opens incl.)", len(agg))
     return len(agg)

@@ -29,6 +29,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote_plus
 
 log = logging.getLogger(__name__)
 
@@ -160,6 +161,17 @@ COLUMNS = [
     # and non-LinkedIn rows.
     "sends",
     "opens",
+    # ── 2026-07-07 addition — issue #75 (APPEND ONLY) ─────────────────────────
+    # The EXACT utm_campaign string stamped on this row's ad destination URL at
+    # creation time. Snowflake's APPLICATION_CONVERSION.UTM_CAMPAIGN carries this
+    # verbatim, so the funnel/delivery join keys on this stored value (by="utm")
+    # instead of reconstructing/date-stripping campaign_name (the #74 workaround).
+    # On relaunch the prior generation is retained (status="superseded"), so each
+    # generation keeps its own utm_campaign and its own exact attribution — no
+    # fuzzy cross-generation merge. Empty on parent (campaign-group) rows and on
+    # rows created before this column existed (the matcher falls back to
+    # campaign_name, which equals the stamped value for non-relaunched rows).
+    "utm_campaign",
 ]
 
 
@@ -216,6 +228,7 @@ class CampaignEntry:
     experiment_id:          str = ""           # competitor-insight experiment id on challenger-arm rows
     sends:                  int | None = None  # LinkedIn InMail: messages delivered (no impressions for InMail)
     opens:                  int | None = None  # LinkedIn InMail: messages opened
+    utm_campaign:           str = ""           # exact utm_campaign stamped on the ad URL — the funnel join key (issue #75)
 
 
 # Internal lower-case platform key → user-facing channel label shown in Sheet.
@@ -391,6 +404,7 @@ def log_campaign(
     audience_check_status: str = "",
     google_keywords: list[str] | str | None = None,
     experiment_id: str = "",
+    utm_campaign: str = "",
 ) -> None:
     """Append one campaign row to the registry. Safe to call from any platform arm.
 
@@ -493,6 +507,10 @@ def log_campaign(
         created_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         status="active",
         experiment_id=experiment_id,
+        # Exact stamped utm_campaign (issue #75). Callers pass the same string
+        # they fed to build_utm_url; falls back to campaign_name, which equals
+        # the stamped value for every non-relaunched row.
+        utm_campaign=utm_campaign or campaign_name,
     )
     # Hold the registry lock across the load-mutate-save window. _load and
     # _save also acquire the (re-entrant) lock internally; this ensures the
@@ -593,9 +611,10 @@ def update_metrics(
     """Update delivery metrics for a campaign. Called by the metrics refresh.
 
     The first arg accepts any platform's campaign id (LinkedIn URN, Meta numeric,
-    Google resource) when `by="id"`, or a campaign NAME when `by="name_norm"`
-    (matched via _normalize_campaign_name — relaunch/date-drift tolerant, needed
-    because relaunched campaigns' reporting ids aren't in the registry).
+    Google resource) when `by="id"`, or the exact stamped utm_campaign when
+    `by="utm"` (matched against the stored `utm_campaign`, falling back to
+    `campaign_name`). `by="name_norm"` is the deprecated #74 date-stripping
+    workaround, kept only for legacy backfills.
 
     `sends`/`opens` are LinkedIn InMail (Message Ad) delivery metrics — InMail has
     no impressions/clicks, so those stay 0 and sends/opens carry the reach signal.
@@ -603,7 +622,12 @@ def update_metrics(
     console's per-channel SUM doesn't double-count when a campaign spans multiple
     angle rows — mirrors the funnel writeback.
     """
-    if by == "name_norm":
+    if by == "utm":
+        _key = _canonical_utm(linkedin_campaign_urn)
+        _matches = lambda rec: bool(_key) and _canonical_utm(
+            rec.get("utm_campaign") or rec.get("campaign_name") or ""
+        ) == _key
+    elif by == "name_norm":
         _key = _normalize_campaign_name(linkedin_campaign_urn)
         _matches = lambda rec: bool(_key) and _normalize_campaign_name(rec.get("campaign_name")) == _key
     else:
@@ -657,6 +681,28 @@ def _id_tail(value: str) -> str:
     return re.split(r"[:/]", str(value or "").strip())[-1].strip()
 
 
+def _canonical_utm(name: str) -> str:
+    """Canonicalize a utm_campaign / UTM_CAMPAIGN string for the EXACT #75 join.
+
+    Snowflake stores UTM_CAMPAIGN lowercased and with low-volume encoding/
+    whitespace drift (validated live 2026-07-07): pipes as `%7c` / `+|+` /
+    `%20%7c%20`, spaces as `+` / `%20`, `/` as `%2f`, plus stray leading/trailing
+    pipes and doubled separators. This URL-decodes, lowercases, and canonicalizes
+    the pipe segmentation so both sides compare equal — WITHOUT stripping the date
+    token, locale, or format spelling (that is what the deprecated
+    _normalize_campaign_name did, and it is exactly what merged distinct launch
+    generations). Each generation therefore keeps a distinct key.
+
+    Covers >99.8% of paid conversions per ramp. It CANNOT recover genuinely
+    delimiter-corrupted strings (e.g. GMR-0023 bn-in "multimangoen" / "messagead"
+    with missing pipes) — those are an upstream campaign-name construction bug.
+    """
+    s = unquote_plus(str(name or ""))                 # %7c→|, %20/+→space, %2f→/
+    s = s.lower()
+    parts = [re.sub(r"\s+", " ", seg).strip() for seg in s.split("|")]
+    return " | ".join(seg for seg in parts if seg)    # drop empty segs (trailing/double pipe)
+
+
 def _normalize_campaign_name(name: str) -> str:
     """Normalize a campaign name for the funnel join so relaunches + naming
     drift still match APPLICATION_CONVERSION.UTM_CAMPAIGN.
@@ -701,10 +747,15 @@ def update_funnel_metrics(
     `by`:
       "creative" — match `platform_creative_id` (LinkedIn: per-creative, unique;
                    writes ALL matches). Default.
+      "utm"       — match the EXACT stored `utm_campaign` (falls back to
+                    `campaign_name`) against the warehouse's UTM_CAMPAIGN. The
+                    #75 primary path for LinkedIn/Meta/Reddit: each generation
+                    keeps its own key, so no cross-generation merge.
       "campaign" — match `platform_campaign_id` by id tail.
       "name"      — match `campaign_name` case-insensitively (exact).
-      "name_norm" — match on the normalized campaign name (relaunch/date-drift
-                    tolerant). Meta/LinkedIn/Reddit join via UTM_CAMPAIGN.
+      "name_norm" — DEPRECATED (#74 workaround) — normalized campaign name
+                    (date-stripping, lossy cross-generation merge). Retained
+                    only for legacy backfills; the funnel join uses "utm".
       "campaign"  — match `platform_campaign_id` by id tail, EXCLUDING adGroup
                     resources (those go through "adgroup").
       "adgroup"   — match `platform_campaign_id` rows that are ".../adGroups/<id>"
@@ -718,7 +769,18 @@ def update_funnel_metrics(
     if first_only is None:
         first_only = (by != "creative")
 
-    if by == "name":
+    if by == "utm":
+        # Exact stamped utm_campaign (issue #75 primary path). Canonicalized on
+        # both sides (_canonical_utm: URL-decode + lower + pipe/whitespace fix)
+        # so encoding drift matches, but WITHOUT date-stripping — each launch
+        # generation keeps a distinct key (no cross-generation merge). Falls
+        # back to campaign_name for rows created before the utm_campaign column
+        # existed (== the stamped value for non-relaunched rows).
+        key = _canonical_utm(id_value)
+        def _matches(rec):
+            row_key = (rec.get("utm_campaign") or rec.get("campaign_name") or "")
+            return bool(key) and _canonical_utm(row_key) == key
+    elif by == "name":
         key = str(id_value or "").strip().lower()
         def _matches(rec):
             return bool(key) and (str(rec.get("campaign_name") or "").strip().lower() == key)

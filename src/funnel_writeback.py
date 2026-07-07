@@ -4,12 +4,13 @@ Attributes Outlier sign-ups → screening passes → activations back onto campa
 registry rows, filling the columns that ad reporting APIs never provide
 (reporting APIs give impressions/clicks/spend only).
 
-Attribution source is SCALE_PROD.VIEW.APPLICATION_CONVERSION. Join keys were
-validated live 2026-07-07 against GMR-0023 (a relaunched ramp whose delivering
-ads carry a different date token / platform id than the registry rows):
-  - LinkedIn / Meta / Reddit: normalized UTM_CAMPAIGN = campaign_name
-    ("name_norm" — strips the drifting date token + format-spelling variants so
-    relaunches still match). Campaign-level; angle granularity is unrecoverable.
+Attribution source is SCALE_PROD.VIEW.APPLICATION_CONVERSION. Join keys
+(issue #75 root-cause fix — replaces the #74 date-stripping workaround):
+  - LinkedIn / Meta / Reddit: EXACT UTM_CAMPAIGN matched against the row's
+    stored `utm_campaign` (by="utm"). Each launch generation stamps its own
+    utm_campaign and relaunches retain the prior generation's row
+    (status="superseded"), so conversions attribute per-generation with no
+    fuzzy merge. Campaign-level; angle granularity is unrecoverable (no AD_ID).
   - Google: CAMPAIGN_ID for campaign/bare rows, ADGROUP_ID for relaunch rows
     stored as ".../adGroups/<id>".
   - TikTok: creative-only — no joinable id — reported, not silently skipped.
@@ -30,17 +31,20 @@ def backfill_funnel_metrics_all_channels(window_days: int = 7) -> dict:
     """Write funnel outcomes onto registry rows for every attributable channel.
     Returns {channel: {rows_written, applications, skill_passes, activations, note?}}.
     Best-effort per channel — one failing never blocks the others."""
-    from src.campaign_registry import update_funnel_metrics, _normalize_campaign_name
+    from src.campaign_registry import update_funnel_metrics, _canonical_utm
     from src.redash_db import RedashClient
 
     client = RedashClient()
     out: dict[str, dict] = {}
 
-    # Name-normalized channels (UTM_CAMPAIGN = campaign_name).
+    # UTM-keyed channels (issue #75): match the warehouse's UTM_CAMPAIGN against
+    # the row's stored utm_campaign, canonicalized (_canonical_utm) on both sides
+    # so encoding/whitespace variants re-aggregate + match — but NOT date-stripped,
+    # so each launch generation attributes to its own row (no cross-gen merge).
     for chan in ("linkedin", "meta", "reddit"):
         out[chan] = _write_grouped(
             client, chan, window_days, update_funnel_metrics,
-            by="name_norm", key_fn=_normalize_campaign_name,
+            by="utm", key_fn=_canonical_utm,
         )
 
     # Google: campaign-id rows + adGroup-id relaunch rows (disjoint registry rows).
