@@ -580,21 +580,23 @@ GROUP BY 1
 """
 
 # Per-channel funnel config. `by` is the registry match mode consumed by
-# campaign_registry.update_funnel_metrics. Join keys validated live 2026-07-07
-# against GMR-0023 (a relaunched ramp):
-#   LinkedIn / Meta / Reddit → normalized UTM_CAMPAIGN=campaign_name ("name_norm";
-#     tolerant of relaunch date-drift + format variants). LinkedIn's AD_ID never
-#     matched the registry (static rows are DRAFT, InMail creative ids differ), so
-#     it uses the name join too — angle granularity is unrecoverable regardless.
+# campaign_registry.update_funnel_metrics. Join keys (issue #75 root-cause fix):
+#   LinkedIn / Meta / Reddit → EXACT LOWER(UTM_CAMPAIGN) matched against the row's
+#     stored `utm_campaign` ("by=utm"). Each launch generation stamps its own
+#     utm_campaign (the date token differs), and relaunches now RETAIN the prior
+#     generation's row (status="superseded"), so exact matching attributes each
+#     generation's conversions to its own row — no date-stripping, no fuzzy
+#     cross-generation merge. Replaces the lossy "name_norm" #74 workaround.
+#     (Angle granularity is still campaign-level: LinkedIn's AD_ID never matched.)
 #   Google → CAMPAIGN_ID for campaign/bare rows; ADGROUP_ID for relaunch rows that
 #     store a ".../adGroups/<id>" resource (the old _id_tail-vs-CAMPAIGN_ID bug).
 _META_SOURCE = "ac.UTM_SOURCE ILIKE '%meta%' OR ac.UTM_SOURCE ILIKE '%facebook%' OR ac.UTM_SOURCE ILIKE '%instagram%'"
 _GOOGLE_SOURCE = "ac.UTM_SOURCE ILIKE '%google%'"
 _UTM_KEY, _UTM_NN = "LOWER(ac.UTM_CAMPAIGN)", "ac.UTM_CAMPAIGN IS NOT NULL"
 _CHANNEL_FUNNEL = {
-    "linkedin":       {"source": "ac.UTM_SOURCE ILIKE '%linkedin%'", "key_expr": _UTM_KEY,        "notnull": _UTM_NN,                      "by": "name_norm"},
-    "meta":           {"source": _META_SOURCE,                       "key_expr": _UTM_KEY,        "notnull": _UTM_NN,                      "by": "name_norm"},
-    "reddit":         {"source": "ac.UTM_SOURCE ILIKE '%reddit%'",   "key_expr": _UTM_KEY,        "notnull": _UTM_NN,                      "by": "name_norm"},
+    "linkedin":       {"source": "ac.UTM_SOURCE ILIKE '%linkedin%'", "key_expr": _UTM_KEY,        "notnull": _UTM_NN,                      "by": "utm"},
+    "meta":           {"source": _META_SOURCE,                       "key_expr": _UTM_KEY,        "notnull": _UTM_NN,                      "by": "utm"},
+    "reddit":         {"source": "ac.UTM_SOURCE ILIKE '%reddit%'",   "key_expr": _UTM_KEY,        "notnull": _UTM_NN,                      "by": "utm"},
     "google":         {"source": _GOOGLE_SOURCE,                     "key_expr": "ac.CAMPAIGN_ID", "notnull": "ac.CAMPAIGN_ID IS NOT NULL", "by": "campaign"},
     "google_adgroup": {"source": _GOOGLE_SOURCE,                     "key_expr": "ac.ADGROUP_ID",  "notnull": "ac.ADGROUP_ID IS NOT NULL",  "by": "adgroup"},
 }

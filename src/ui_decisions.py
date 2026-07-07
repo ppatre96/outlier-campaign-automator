@@ -524,7 +524,10 @@ def list_campaign_platform_ids(
             sql = (
                 "SELECT DISTINCT platform_campaign_id FROM campaigns "
                 "WHERE ramp_id = %s AND platform = %s "
-                "AND coalesce(platform_campaign_id, '') <> ''"
+                "AND coalesce(platform_campaign_id, '') <> '' "
+                # Never re-archive an already-superseded generation (issue #75:
+                # relaunches now retain prior generations instead of deleting).
+                "AND coalesce(data->>'status', '') <> 'superseded'"
             )
             params: list = [ramp_id, platform]
             wants = [l.strip().lower().replace("_", "-")
@@ -721,6 +724,41 @@ def delete_campaign_rows(ramp_id: str, platform: str, platform_campaign_ids: lis
             return n or 0
     except Exception as exc:
         log.warning("delete_campaign_rows failed (%s/%s): %s", ramp_id, platform, exc)
+        return 0
+
+
+def supersede_campaign_rows(
+    ramp_id: str, platform: str, platform_campaign_ids: list[str], *, reason: str = ""
+) -> int:
+    """Mark campaigns-table rows for (ramp × platform × ids) as superseded after
+    they were archived on-platform, instead of deleting them (issue #75).
+
+    Retaining the row keeps the prior launch generation's exact `utm_campaign`,
+    so its historical conversions still attribute to it (per-generation) rather
+    than being fuzzily merged onto the surviving relaunch row. Superseded rows
+    are excluded from live rollups + the next relaunch's archive list, but stay
+    visible in the console as a previous generation. Best-effort.
+    """
+    ids = [i for i in (platform_campaign_ids or []) if i]
+    if not ids:
+        return 0
+    reason = reason or "relaunch-replace (superseded)"
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE campaigns SET data = jsonb_set("
+                "  jsonb_set(data, '{status}', %s::jsonb, true),"
+                "  '{deprecation_reason}', %s::jsonb, true), "
+                "  updated_at = NOW() "
+                "WHERE ramp_id = %s AND platform = %s "
+                "AND platform_campaign_id = ANY(%s)",
+                (json.dumps("superseded"), json.dumps(reason), ramp_id, platform, ids),
+            )
+            n = cur.rowcount
+            conn.commit()
+            return n or 0
+    except Exception as exc:
+        log.warning("supersede_campaign_rows failed (%s/%s): %s", ramp_id, platform, exc)
         return 0
 
 

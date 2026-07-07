@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 # historical metrics worth refreshing. The registry mixes pipeline vocab
 # ("active") with platform-native vocab ("ENABLED", "PAUSED", "REMOVED"), so a
 # strict `== "active"` check silently skipped live ENABLED rows.
-_DEAD_STATUSES = {"removed", "archived", "deleted", "deprecated", "cancelled"}
+_DEAD_STATUSES = {"removed", "archived", "deleted", "deprecated", "cancelled", "superseded"}
 
 
 def _is_live(status: str | None) -> bool:
