@@ -762,6 +762,80 @@ def supersede_campaign_rows(
         return 0
 
 
+_DAILY_METRIC_COLS = ("impressions", "clicks", "spend_usd", "signups", "screening_passes", "activations")
+
+_DAILY_METRICS_DDL = """
+CREATE TABLE IF NOT EXISTS campaign_daily_metrics (
+    ramp_id          TEXT NOT NULL,
+    platform         TEXT NOT NULL,
+    campaign_key     TEXT NOT NULL,
+    metric_date      DATE NOT NULL,
+    campaign_name    TEXT NOT NULL DEFAULT '',
+    impressions      BIGINT  NOT NULL DEFAULT 0,
+    clicks           BIGINT  NOT NULL DEFAULT 0,
+    spend_usd        NUMERIC NOT NULL DEFAULT 0,
+    signups          INTEGER NOT NULL DEFAULT 0,
+    screening_passes INTEGER NOT NULL DEFAULT 0,
+    activations      INTEGER NOT NULL DEFAULT 0,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (ramp_id, platform, campaign_key, metric_date)
+)
+"""
+
+
+def upsert_daily_metrics_batch(rows: list[dict], metric_cols: list[str]) -> int:
+    """Bulk-upsert (campaign × day) rows into campaign_daily_metrics in ONE
+    connection (executemany) — the daily time-series behind the Analytics
+    dashboard. Per-row connect was ~1000× slower over thousands of rows.
+
+    `metric_cols` is the FIXED subset of _DAILY_METRIC_COLS this batch writes, so
+    the funnel-by-day pass (signups/screening/activations) and the delivery-by-day
+    pass (impressions/clicks/spend_usd) each touch only their own columns on
+    ON CONFLICT — they merge onto the same day-row without clobbering each other.
+
+    Each row dict needs: ramp_id, platform, campaign_key, metric_date,
+    campaign_name (optional), plus the metric_cols. Returns rows written.
+    Best-effort — swallows UIDecisionsUnavailable.
+    """
+    cols = [c for c in metric_cols if c in _DAILY_METRIC_COLS]
+    clean = [r for r in rows if r.get("ramp_id") and r.get("platform")
+             and r.get("campaign_key") and r.get("metric_date")]
+    if not clean or not cols:
+        return 0
+    insert_cols = ["ramp_id", "platform", "campaign_key", "metric_date", "campaign_name"] + cols
+    placeholders = ", ".join(["%s"] * len(insert_cols))
+    set_clause = ["campaign_name = coalesce(nullif(excluded.campaign_name, ''), campaign_daily_metrics.campaign_name)"]
+    set_clause += [f"{c} = excluded.{c}" for c in cols]
+    set_clause.append("updated_at = NOW()")
+    def _n(v):  # NaN/None-safe: NaN is truthy, so `nan or 0` would keep NaN
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return 0.0
+        return 0.0 if f != f else f
+    params = [
+        [r.get("ramp_id"), r.get("platform"), r.get("campaign_key"),
+         r.get("metric_date"), r.get("campaign_name", "") or ""]
+        + [_n(r.get(c)) if c == "spend_usd" else int(_n(r.get(c))) for c in cols]
+        for r in clean
+    ]
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(_DAILY_METRICS_DDL)
+            cur.executemany(
+                f"INSERT INTO campaign_daily_metrics ({', '.join(insert_cols)}) "
+                f"VALUES ({placeholders}) "
+                f"ON CONFLICT (ramp_id, platform, campaign_key, metric_date) DO UPDATE SET "
+                f"{', '.join(set_clause)}",
+                params,
+            )
+            conn.commit()
+            return len(params)
+    except UIDecisionsUnavailable as exc:
+        log.debug("upsert_daily_metrics_batch skipped: %s", exc)
+        return 0
+
+
 def upsert_cohort_brief_rationale(
     *,
     ramp_id: str,

@@ -52,6 +52,7 @@ def main() -> int:
     from src.campaign_feedback_agent import refresh_linkedin_metrics
     from src.platform_metrics import fetch_metrics_for_active_extra_platforms
     from src.funnel_writeback import backfill_funnel_metrics_all_channels
+    from src.daily_metrics import build_daily_metrics
 
     hydrated = hydrate_from_postgres()
     linkedin = refresh_linkedin_metrics(window=args.window)
@@ -64,6 +65,16 @@ def main() -> int:
     funnel = backfill_funnel_metrics_all_channels(window_days=args.funnel_window)
     funnel_written = sum(v.get("rows_written", 0) for v in funnel.values())
 
+    # Day-over-day time-series for the console Analytics dashboard. Writes the
+    # separate campaign_daily_metrics table (never touches the cumulative
+    # `campaigns` rows). Best-effort — a failure here never blocks the cumulative
+    # refresh above.
+    try:
+        daily = build_daily_metrics(window_days=args.funnel_window)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("build_daily_metrics failed (non-fatal): %s", exc)
+        daily = {}
+
     log.info(
         "refresh_metrics done: hydrated=%d linkedin=%d meta+google=%d funnel_rows=%d "
         "(delivery_window=%dd funnel_window=%dd)",
@@ -74,6 +85,9 @@ def main() -> int:
                  chan, s.get("rows_written", 0), s.get("applications", 0),
                  s.get("skill_passes", 0), s.get("activations", 0),
                  f" ({s['note']})" if s.get("note") else "")
+    if daily:
+        log.info("  daily_metrics: funnel=%d linkedin_delivery=%d meta_delivery=%d (campaign×day rows)",
+                 daily.get("funnel_rows", 0), daily.get("linkedin_rows", 0), daily.get("meta_rows", 0))
     return 0
 
 

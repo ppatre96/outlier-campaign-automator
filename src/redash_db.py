@@ -579,6 +579,28 @@ WHERE ({source_filter})
 GROUP BY 1
 """
 
+# Day-grained variant of CHANNEL_FUNNEL_SQL for the Analytics dashboard's
+# day-over-day trend charts. Same join keys, but grouped by APPLICATION_DAY so
+# each row is (ad_key × day). Signups/screening/activations are attributed to the
+# ACQUISITION day (APPLICATION_DAY) — a cohort-by-acquisition view — which keeps
+# it to one query per channel and matches how the cumulative funnel already
+# counts. Emits metric_date so the pipeline can upsert per-day rows.
+CHANNEL_FUNNEL_DAILY_SQL = """
+SELECT
+    ac.APPLICATION_DAY                                                 AS metric_date,
+    {key_expr}                                                         AS ad_key,
+    COUNT(DISTINCT ac.EMAIL)                                           AS applications,
+    COUNT(DISTINCT CASE WHEN UPPER(g.RESULT) = 'PASS' THEN ac.EMAIL END) AS screening_passes,
+    COUNT(DISTINCT CASE WHEN ac.ACTIVATION_DAY IS NOT NULL THEN ac.EMAIL END) AS activations
+FROM SCALE_PROD.VIEW.APPLICATION_CONVERSION ac
+LEFT JOIN PUBLIC.GROWTHRESUMESCREENINGRESULTS g ON ac.EMAIL = g.CANDIDATE_EMAIL
+WHERE ({source_filter})
+  AND ac.UTM_MEDIUM IN ('paid', 'cpc')
+  AND {key_notnull}
+  AND ac.APPLICATION_DAY >= CURRENT_DATE - INTERVAL '{days} days'
+GROUP BY 1, 2
+"""
+
 # Per-channel funnel config. `by` is the registry match mode consumed by
 # campaign_registry.update_funnel_metrics. Join keys (issue #75 root-cause fix):
 #   LinkedIn / Meta / Reddit → EXACT LOWER(UTM_CAMPAIGN) matched against the row's
@@ -1013,6 +1035,27 @@ class RedashClient:
             log.warning("query_campaign_funnel(%s) returned no rows (window=%dd)", channel, days_back)
             return pd.DataFrame(columns=_expected)
         log.info("Fetched %d funnel rows for channel=%s (window=%dd)", len(df), channel, days_back)
+        return df
+
+    def query_campaign_funnel_daily(self, channel: str, days_back: int = 90) -> pd.DataFrame:
+        """Day-grained funnel for a channel — one row per (ad_key × metric_date).
+        Powers the Analytics dashboard's DoD trend charts + historical backfill.
+        Columns: metric_date, ad_key, applications, screening_passes, activations.
+        Returns empty for unknown channels."""
+        _expected = ["metric_date", "ad_key", "applications", "screening_passes", "activations"]
+        cfg = _CHANNEL_FUNNEL.get((channel or "").lower())
+        if not cfg:
+            log.info("query_campaign_funnel_daily: no funnel config for channel=%r — skipping", channel)
+            return pd.DataFrame(columns=_expected)
+        sql = CHANNEL_FUNNEL_DAILY_SQL.format(
+            source_filter=cfg["source"], key_expr=cfg["key_expr"],
+            key_notnull=cfg["notnull"], days=int(days_back),
+        )
+        df = self._run_query(sql, label=f"funnel-daily-{channel}-{days_back}d")
+        if df is None or df.empty:
+            log.warning("query_campaign_funnel_daily(%s) returned no rows (window=%dd)", channel, days_back)
+            return pd.DataFrame(columns=_expected)
+        log.info("Fetched %d daily funnel rows for channel=%s (window=%dd)", len(df), channel, days_back)
         return df
 
     def close(self) -> None:
