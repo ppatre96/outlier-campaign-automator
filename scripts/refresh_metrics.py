@@ -40,16 +40,12 @@ log = logging.getLogger("refresh_metrics")
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Refresh live campaign metrics for all channels.")
-    ap.add_argument("--window", type=int, default=7,
-                    help="Look-back window in days for platform delivery metrics (impressions/clicks/spend). Default 7.")
-    ap.add_argument("--linkedin-window", type=int, default=30,
-                    help="Look-back window in days for LinkedIn delivery metrics (impressions/clicks/sends/opens). "
-                         "Wider than --window (30 vs 7) so older ramps keep meaningful cumulative reach — most "
-                         "LinkedIn spend is InMail, whose sends accrue over the whole flight, not the last week. Default 30.")
+    ap.add_argument("--window", type=int, default=30,
+                    help="Look-back window in days for platform delivery metrics (impressions/clicks/sends/spend) "
+                         "across ALL channels (LinkedIn/Meta/Google/Reddit). 30 so older ramps keep meaningful "
+                         "cumulative delivery — a 7-day window undercounts anything older than a week. Default 30.")
     ap.add_argument("--funnel-window", type=int, default=30,
-                    help="Look-back window in days for funnel outcomes (sign-ups/skill-passes/activations). "
-                         "Wider than --window because activations are cumulative conversion outcomes, not rolling "
-                         "delivery — a 7-day window undercounts ramps older than a week. Default 30.")
+                    help="Look-back window in days for funnel outcomes (sign-ups/skill-passes/activations). Default 30.")
     args = ap.parse_args()
 
     from src.campaign_registry import hydrate_from_postgres
@@ -58,7 +54,7 @@ def main() -> int:
     from src.funnel_writeback import backfill_funnel_metrics_all_channels
 
     hydrated = hydrate_from_postgres()
-    linkedin = refresh_linkedin_metrics(window=args.linkedin_window)
+    linkedin = refresh_linkedin_metrics(window=args.window)
     extra = fetch_metrics_for_active_extra_platforms(window_days=args.window)
 
     # Sign-ups / skill passes / activations — the funnel leg that ad reporting
@@ -70,8 +66,8 @@ def main() -> int:
 
     log.info(
         "refresh_metrics done: hydrated=%d linkedin=%d meta+google=%d funnel_rows=%d "
-        "(delivery_window=%dd linkedin_window=%dd funnel_window=%dd)",
-        hydrated, linkedin, extra, funnel_written, args.window, args.linkedin_window, args.funnel_window,
+        "(delivery_window=%dd funnel_window=%dd)",
+        hydrated, linkedin, extra, funnel_written, args.window, args.funnel_window,
     )
     for chan, s in funnel.items():
         log.info("  funnel[%s]: rows=%d sign-ups=%d skill_passes=%d activations=%d%s",
