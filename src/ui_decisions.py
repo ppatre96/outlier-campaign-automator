@@ -836,6 +836,25 @@ def upsert_daily_metrics_batch(rows: list[dict], metric_cols: list[str]) -> int:
         return 0
 
 
+def reddit_representative_by_spend() -> dict:
+    """Per ramp, the reddit (campaign_key, campaign_name) with the most spend in
+    campaign_daily_metrics — the row reddit funnel attributes to (reddit funnel
+    is ramp-level; landing it on the top-delivering campaign keeps spend + funnel
+    coherent on one row instead of an infinite-CPA phantom). Best-effort."""
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT ON (ramp_id) ramp_id, campaign_key, campaign_name "
+                "FROM campaign_daily_metrics WHERE platform = 'reddit' "
+                "GROUP BY ramp_id, campaign_key, campaign_name "
+                "ORDER BY ramp_id, SUM(spend_usd) DESC"
+            )
+            return {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+    except Exception as exc:  # noqa: BLE001
+        log.debug("reddit_representative_by_spend unavailable: %s", exc)
+        return {}
+
+
 def upsert_cohort_brief_rationale(
     *,
     ramp_id: str,

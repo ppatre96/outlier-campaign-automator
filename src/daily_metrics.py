@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from datetime import datetime, timedelta, timezone
 
 import config
@@ -31,6 +32,12 @@ import config
 log = logging.getLogger(__name__)
 
 _UTM_CHANNELS = ("linkedin", "meta", "reddit")
+_RAMP_RE = re.compile(r"(GMR-\d{3,4})", re.IGNORECASE)
+
+
+def _ramp_of(s) -> str:
+    m = _RAMP_RE.search(str(s or ""))
+    return m.group(1).upper() if m else ""
 
 
 def _num(v) -> float:
@@ -57,15 +64,22 @@ class _Identity:
 
 
 def _build_indexes():
-    """Two lookups over the registry so both passes resolve to the SAME
-    campaign_key: by canonical UTM (funnel li/meta/reddit) and by platform-id
-    tail (funnel google + ALL delivery). campaign_key = canonical UTM for
-    UTM channels, id-tail for Google."""
+    """Lookups over the registry so every pass resolves to the SAME campaign_key:
+      • by_utm     — canonical UTM → identity (funnel li/meta).
+      • by_id      — platform-id tail → identity (funnel google + ALL delivery).
+      • reddit_rep — ramp → the ramp's representative reddit identity (highest
+        impressions). Reddit's warehouse UTM collapses all geos to one "—|—|—"
+        string and CAMPAIGN_ID is null, so reddit funnel can only be attributed
+        at the ramp level; it lands on the ramp's main reddit campaign row (which
+        also carries that campaign's delivery, so both coexist on one row).
+    campaign_key = canonical UTM for UTM channels, id-tail for Google."""
     from src.campaign_registry import _canonical_utm, _id_tail
     from src.ui_decisions import list_all_campaign_data
 
     by_utm: dict[str, _Identity] = {}
     by_id: dict[str, _Identity] = {}
+    reddit_rep: dict[str, _Identity] = {}
+    reddit_rep_impr: dict[str, int] = {}
     for row in list_all_campaign_data():
         platform = (row.get("platform") or "").lower()
         if not platform or platform == "parent" or row.get("campaign_type") == "parent":
@@ -82,12 +96,17 @@ def _build_indexes():
             by_utm.setdefault(canon, ident)
         if idtail:
             by_id.setdefault(idtail, ident)
-    return by_utm, by_id
+        if platform == "reddit":
+            impr = int(row.get("impressions") or 0)
+            if ramp not in reddit_rep or impr > reddit_rep_impr.get(ramp, -1):
+                reddit_rep[ramp] = ident
+                reddit_rep_impr[ramp] = impr
+    return by_utm, by_id, reddit_rep
 
 
 # ── Funnel-by-day (all channels) ────────────────────────────────────────────
 
-def _backfill_funnel_daily(window_days, by_utm, by_id) -> int:
+def _backfill_funnel_daily(window_days, by_utm, by_id, reddit_rep) -> int:
     from src.campaign_registry import _canonical_utm, _id_tail
     from src.redash_db import RedashClient
     from src.ui_decisions import upsert_daily_metrics_batch
@@ -95,7 +114,7 @@ def _backfill_funnel_daily(window_days, by_utm, by_id) -> int:
     client = RedashClient()
     batch: list[dict] = []
     # ad_key resolver differs by channel family.
-    channels = [("linkedin", "utm"), ("meta", "utm"), ("reddit", "utm"),
+    channels = [("linkedin", "utm"), ("meta", "utm"), ("reddit", "reddit"),
                 ("google", "id"), ("google_adgroup", "id")]
     for chan, family in channels:
         try:
@@ -105,7 +124,14 @@ def _backfill_funnel_daily(window_days, by_utm, by_id) -> int:
             continue
         for _, r in df.iterrows():
             raw = str(r.get("ad_key") or "")
-            ident = by_utm.get(_canonical_utm(raw)) if family == "utm" else by_id.get(_id_tail(raw))
+            if family == "utm":
+                ident = by_utm.get(_canonical_utm(raw))
+            elif family == "reddit":
+                # Ramp-level: warehouse reddit UTM collapses geos + CAMPAIGN_ID
+                # is null, so attribute to the ramp's representative reddit row.
+                ident = reddit_rep.get(_ramp_of(raw))
+            else:
+                ident = by_id.get(_id_tail(raw))
             if ident is None:
                 continue   # a conversion for a campaign not in our registry
             batch.append({
@@ -239,18 +265,143 @@ def _backfill_meta_delivery_daily(window_days, by_id) -> int:
     return written
 
 
+# ── Delivery-by-day: Reddit (reports CAMPAIGN_ID × DATE) ────────────────────
+
+def _backfill_reddit_delivery_daily(window_days, by_id) -> int:
+    if not config.REDDIT_API_ENABLED:
+        return 0
+    from src.campaign_registry import _id_tail
+    from src.ui_decisions import upsert_daily_metrics_batch
+    try:
+        from src.reddit_api import RedditClient
+        rows = RedditClient().fetch_campaign_metrics_daily(window_days)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("daily Reddit delivery fetch failed: %s", exc)
+        return 0
+    batch: list[dict] = []
+    for m in rows:
+        ident = by_id.get(_id_tail(m.get("campaign_id")))
+        if ident is None:
+            continue
+        batch.append({
+            "ramp_id": ident.ramp_id, "platform": "reddit",
+            "campaign_key": ident.campaign_key, "campaign_name": ident.campaign_name,
+            "metric_date": m.get("metric_date"),
+            "impressions": int(_num(m.get("impressions"))),
+            "clicks": int(_num(m.get("clicks"))),
+            "spend_usd": _num(m.get("spend_usd")),
+        })
+    written = upsert_daily_metrics_batch(batch, ["impressions", "clicks", "spend_usd"])
+    log.info("daily Reddit delivery: wrote %d rows", written)
+    return written
+
+
+# ── Delivery-by-day: Google (GAQL segments.date) ────────────────────────────
+
+def _google_daily_query(ref: str, since: str, until: str) -> str | None:
+    """Per-day GAQL for a Google resource (adGroup / campaign resource / bare id)."""
+    ref = (ref or "").strip()
+    select = ("SELECT metrics.impressions, metrics.clicks, metrics.cost_micros, "
+              "segments.date")
+    date = f"AND segments.date BETWEEN '{since}' AND '{until}'"
+    if "/adGroups/" in ref:
+        return f"{select} FROM ad_group WHERE ad_group.resource_name = '{ref}' {date}"
+    if "/campaigns/" in ref:
+        return f"{select} FROM campaign WHERE campaign.resource_name = '{ref}' {date}"
+    if ref.isdigit():
+        return f"{select} FROM campaign WHERE campaign.id = {ref} {date}"
+    return None
+
+
+def _backfill_google_delivery_daily(window_days, by_id) -> int:
+    if not (config.GOOGLE_ADS_DEVELOPER_TOKEN and config.GOOGLE_ADS_CUSTOMER_ID):
+        return 0
+    from src.campaign_registry import _id_tail
+    from src.platform_metrics import _customer_id_from_ref
+    from src.ui_decisions import list_all_campaign_data, upsert_daily_metrics_batch
+
+    since = (datetime.now(timezone.utc) - timedelta(days=window_days)).date().isoformat()
+    until = datetime.now(timezone.utc).date().isoformat()
+    refs = {
+        str(row.get("platform_campaign_id") or "")
+        for row in list_all_campaign_data()
+        if (row.get("platform") or "").lower() in ("google", "google_search")
+        and (row.get("status") or "").lower() not in ("removed", "deleted", "archived", "superseded")
+        and row.get("platform_campaign_id")
+    }
+    if not refs:
+        return 0
+    creds = {
+        "developer_token": config.GOOGLE_ADS_DEVELOPER_TOKEN,
+        "refresh_token": config.GOOGLE_ADS_REFRESH_TOKEN,
+        "client_id": config.GOOGLE_ADS_CLIENT_ID,
+        "client_secret": config.GOOGLE_ADS_CLIENT_SECRET,
+        "use_proto_plus": True,
+    }
+    if config.GOOGLE_ADS_LOGIN_CUSTOMER_ID:
+        creds["login_customer_id"] = str(config.GOOGLE_ADS_LOGIN_CUSTOMER_ID).replace("-", "")
+    try:
+        from google.ads.googleads.client import GoogleAdsClient as _SDKClient
+        sdk = _SDKClient.load_from_dict(creds)
+        ga = sdk.get_service("GoogleAdsService")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("daily Google delivery: client init failed: %s", exc)
+        return 0
+    batch: list[dict] = []
+    for ref in refs:
+        ident = by_id.get(_id_tail(ref))
+        if ident is None:
+            continue
+        query = _google_daily_query(ref, since, until)
+        if not query:
+            continue
+        cid = (_customer_id_from_ref(ref) or str(config.GOOGLE_ADS_CUSTOMER_ID)).replace("-", "")
+        try:
+            for b in ga.search_stream(customer_id=cid, query=query):
+                for r in b.results:
+                    batch.append({
+                        "ramp_id": ident.ramp_id, "platform": ident.platform,
+                        "campaign_key": ident.campaign_key, "campaign_name": ident.campaign_name,
+                        "metric_date": r.segments.date,
+                        "impressions": int(r.metrics.impressions or 0),
+                        "clicks": int(r.metrics.clicks or 0),
+                        "spend_usd": (r.metrics.cost_micros or 0) / 1_000_000.0,
+                    })
+        except Exception as exc:  # noqa: BLE001
+            log.debug("daily Google delivery failed for %s: %s", ref, exc)
+            continue
+    written = upsert_daily_metrics_batch(batch, ["impressions", "clicks", "spend_usd"])
+    log.info("daily Google delivery: wrote %d rows", written)
+    return written
+
+
 # ── Entry point ─────────────────────────────────────────────────────────────
 
 def build_daily_metrics(window_days: int = 90) -> dict:
     """Populate campaign_daily_metrics for the last `window_days`. Funnel-by-day
-    covers all channels; delivery-by-day covers LinkedIn + Meta (v1). Each pass
-    is best-effort — one failing never blocks the others. Returns a summary."""
-    by_utm, by_id = _build_indexes()
-    log.info("daily metrics: registry index — %d utm keys, %d id keys", len(by_utm), len(by_id))
+    covers all channels (reddit at ramp level); delivery-by-day covers LinkedIn,
+    Meta, Google, and Reddit. Each pass is best-effort — one failing never blocks
+    the others. Returns a summary."""
+    from src.ui_decisions import reddit_representative_by_spend
+
+    by_utm, by_id, reddit_rep_cum = _build_indexes()
+    log.info("daily metrics: registry index — %d utm keys, %d id keys, %d reddit ramps",
+             len(by_utm), len(by_id), len(reddit_rep_cum))
+
+    # Delivery first — reddit funnel (ramp-level) then attributes to whichever
+    # reddit campaign actually delivered most in-window, so spend + funnel sit on
+    # the same row (falls back to the cumulative-impressions pick for ramps with
+    # no in-window reddit delivery).
     summary = {
-        "funnel_rows":   _backfill_funnel_daily(window_days, by_utm, by_id),
         "linkedin_rows": _backfill_linkedin_delivery_daily(window_days, by_utm),
         "meta_rows":     _backfill_meta_delivery_daily(window_days, by_id),
+        "google_rows":   _backfill_google_delivery_daily(window_days, by_id),
+        "reddit_rows":   _backfill_reddit_delivery_daily(window_days, by_id),
     }
+    reddit_rep = dict(reddit_rep_cum)
+    for ramp, (key, name) in reddit_representative_by_spend().items():
+        reddit_rep[ramp] = _Identity(ramp, "reddit", name, key)
+    summary["funnel_rows"] = _backfill_funnel_daily(window_days, by_utm, by_id, reddit_rep)
+
     log.info("build_daily_metrics done (window=%dd): %s", window_days, summary)
     return summary

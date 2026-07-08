@@ -23,7 +23,7 @@ def test_index_uses_canonical_utm_for_utm_channels_and_idtail_for_google(monkeyp
          "platform_campaign_id": "999"},  # parent must be skipped
     ]
     monkeypatch.setattr(ui, "list_all_campaign_data", lambda: rows)
-    by_utm, by_id = dm._build_indexes()
+    by_utm, by_id, _rep = dm._build_indexes()
     # meta → keyed by canonical utm; campaign_key is that canonical utm
     from src.campaign_registry import _canonical_utm
     k = _canonical_utm("scale-gmr-0023 | meta | id-id | 06/09/2026")
@@ -34,6 +34,25 @@ def test_index_uses_canonical_utm_for_utm_channels_and_idtail_for_google(monkeyp
     assert by_id["120333"].campaign_key == k
     # parent skipped
     assert "999" not in by_id
+
+
+def test_reddit_representative_is_highest_impressions(monkeypatch):
+    """Reddit funnel attributes at ramp level to the ramp's highest-impressions
+    reddit row (warehouse UTM collapses geos + CAMPAIGN_ID is null)."""
+    rows = [
+        {"smart_ramp_id": "GMR-0011", "platform": "reddit", "campaign_type": "static",
+         "campaign_name": "Scale-GMR-0011 | Reddit | US | 05/01/2026",
+         "platform_campaign_id": "111", "impressions": 150000},
+        {"smart_ramp_id": "GMR-0011", "platform": "reddit", "campaign_type": "static",
+         "campaign_name": "Scale-GMR-0011 | Reddit | Native Language + Geo",
+         "platform_campaign_id": "222", "impressions": 26895910},
+    ]
+    monkeypatch.setattr(ui, "list_all_campaign_data", lambda: rows)
+    _u, _i, rep = dm._build_indexes()
+    assert dm._ramp_of("scale-gmr-0011 | reddit | coder | — | 05/01/2026") == "GMR-0011"
+    assert rep["GMR-0011"].campaign_key.endswith("native language + geo") or "native" in rep["GMR-0011"].campaign_key
+    # the 26.9M-impression row wins over the 150k one
+    assert rep["GMR-0011"].campaign_name.endswith("Native Language + Geo")
 
 
 def test_batch_writes_only_its_metric_columns(monkeypatch):

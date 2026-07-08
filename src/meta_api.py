@@ -435,6 +435,20 @@ class MetaClient(AdPlatformClient):
             campaign_id, daily_budget_cents,
         )
 
+    def pause_ad(self, ad_id: str, status: str = "PAUSED") -> bool:
+        """Pause (or resume) a single Meta ad — the in-place creative-rotation
+        primitive. Ad-level, so the ad set + winner ads keep delivering. Returns
+        True on success. Best-effort."""
+        self._ensure_init()
+        from facebook_business.adobjects.ad import Ad
+        try:
+            Ad(str(ad_id)).api_update(params={"status": status})
+            log.info("Meta ad %s → status=%s", ad_id, status)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Meta pause_ad %s failed: %s", ad_id, str(exc)[:200])
+            return False
+
     # ── Image upload ─────────────────────────────────────────────────────────
 
     # ── Reach estimation (pre-campaign audience check) ──────────────────────

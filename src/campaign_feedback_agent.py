@@ -979,6 +979,63 @@ def _find_registry_entry_by_urn(ramp_id: str, campaign_urn: str) -> Optional[dic
     return None
 
 
+def _rotate_creative_in_place(entry, li_client, *, variant, png_path, next_label, pause_loser: bool):
+    """In-place creative rotation (FEEDBACK_INPLACE_ROTATION): attach a new
+    creative to `entry`'s EXISTING LinkedIn campaign — same campaign, same
+    utm_campaign — optionally pausing `entry`'s own (losing) creative first.
+    The campaign and any winning creatives keep delivering (zero downtime), and
+    the challenger is added DRAFT for human activation. Logs a new registry row
+    against the same campaign. Returns the campaign URN, or None on failure."""
+    from src.campaign_registry import log_campaign as _reg_log
+    campaign_urn = entry.get("linkedin_campaign_urn") or entry.get("platform_campaign_id") or ""
+    if not campaign_urn:
+        log.info("_rotate_creative_in_place: no campaign urn on entry — skip")
+        return None
+
+    if pause_loser:
+        loser_creative = entry.get("creative_urn") or entry.get("platform_creative_id") or ""
+        if loser_creative:
+            li_client.set_creative_status(loser_creative, "PAUSED")   # pause ONLY the loser
+
+    creative_urn = ""
+    if png_path and Path(str(png_path)).exists():
+        try:
+            image_urn = li_client.upload_image(png_path)
+            result = li_client.create_image_ad(
+                campaign_urn=campaign_urn, image_urn=image_urn,
+                headline=variant["headline"], description=variant.get("subheadline", ""),
+                cta_button="APPLY",
+                ad_name=f"{(entry.get('campaign_name') or '')[:40]} | {next_label}",
+            )
+            creative_urn = result.creative_urn if result.status == "ok" else ""
+        except Exception as exc:  # pragma: no cover
+            log.warning("_rotate_creative_in_place: attach failed on %s: %s", campaign_urn, exc)
+
+    try:
+        _reg_log(
+            smart_ramp_id=entry.get("smart_ramp_id", ""), cohort_id=entry.get("cohort_id", ""),
+            cohort_signature=entry.get("cohort_signature", ""), geo_cluster=entry.get("geo_cluster", ""),
+            geo_cluster_label=entry.get("geo_cluster_label", ""),
+            geos=[g.strip() for g in (entry.get("geos") or "").split(",") if g.strip()],
+            angle=next_label, campaign_type="static", advertised_rate=entry.get("advertised_rate", ""),
+            linkedin_campaign_urn=campaign_urn, creative_urn=creative_urn,
+            # SAME campaign_name + utm as the parent so the challenger attributes
+            # to the same campaign (no new generation, no utm drift).
+            campaign_name=entry.get("campaign_name", ""),
+            utm_campaign=entry.get("utm_campaign") or entry.get("campaign_name", ""),
+            headline=variant["headline"], subheadline=variant.get("subheadline", ""),
+            photo_subject=variant.get("photo_subject", ""),
+            creative_image_path=str(png_path) if png_path else "",
+            experiment_id=variant.get("experiment_id", ""),
+        )
+    except Exception as exc:  # pragma: no cover
+        log.warning("_rotate_creative_in_place: registry log failed: %s", exc)
+
+    log.info("In-place rotation: campaign %s ← new creative angle %s (pause_loser=%s)",
+             campaign_urn, next_label, pause_loser)
+    return campaign_urn
+
+
 def pause_and_replace_angle(ramp_id: str, change, li_client) -> Optional[str]:
     """Pause a losing angle (deprecate in registry + zero its live budget) and
     prepare a replacement DRAFT in a fresh direction. Reuses the proven
@@ -988,7 +1045,48 @@ def pause_and_replace_angle(ramp_id: str, change, li_client) -> Optional[str]:
     if not loser:
         log.info("pause_and_replace_angle: no registry entry for %s — skip", change.campaign_urn)
         return None
-    # Pause the live loser (best-effort), then deprecate in the registry.
+
+    # IN-PLACE (FEEDBACK_INPLACE_ROTATION): pause only the losing CREATIVE and
+    # attach the replacement to the SAME campaign — the campaign + winner keep
+    # delivering, and utm_campaign is unchanged (continuous attribution). No
+    # archive, no clone. Falls back to the legacy clone path when disabled.
+    if getattr(config, "FEEDBACK_INPLACE_ROTATION", False) and (change.platform or "").lower() == "linkedin":
+        try:
+            from src.campaign_registry import get_cohort_entries
+            from src.gemini_creative import generate_imagen_creative_with_qc
+            from src.figma_creative import rewrite_variant_copy
+            entries = get_cohort_entries(loser.get("cohort_id", ""), loser.get("geo_cluster", ""))
+            next_label = _next_angle_label([e.get("angle", "") for e in entries])
+            copy_out = _generate_replacement_copy(
+                cohort_name=loser.get("cohort_signature", ""),
+                old_headline=loser.get("headline", ""), old_subheadline=loser.get("subheadline", ""),
+                problems=[change.rationale] if change.rationale else [],
+                winner_entry=loser, rate=loser.get("advertised_rate", "$50/hr"),
+                geo_label=loser.get("geo_cluster_label", ""), target_hook="problem_solving",
+            ) or {}
+            if not copy_out.get("headline"):
+                log.warning("pause_and_replace_angle(in-place): copy gen empty — skip")
+                return None
+            variant = {"angle": next_label, "headline": copy_out["headline"],
+                       "subheadline": copy_out.get("subheadline", ""),
+                       "photo_subject": copy_out.get("photo_subject", ""),
+                       "cta": copy_out.get("cta", "Apply Now"), "tgLabel": loser.get("cohort_signature", "")}
+            png_path = None
+            try:
+                png_path, _qc = generate_imagen_creative_with_qc(variant=variant, copy_rewriter=rewrite_variant_copy)
+            except Exception as exc:  # pragma: no cover
+                log.warning("pause_and_replace_angle(in-place): image gen failed: %s", exc)
+            # Deprecate the loser ROW (its creative is paused below in the helper).
+            try:
+                deprecate_campaign(change.campaign_urn, reason=change.rationale or "angle underperformed vs winner")
+            except Exception:  # noqa: BLE001  # pragma: no cover
+                pass
+            return _rotate_creative_in_place(loser, li_client, variant=variant, png_path=png_path,
+                                             next_label=next_label, pause_loser=True)
+        except Exception as exc:  # pragma: no cover
+            log.warning("pause_and_replace_angle(in-place) failed (%s) — falling back to clone", exc)
+
+    # Legacy path: pause the whole campaign (budget→0), deprecate, clone a fresh one.
     try:
         if (change.platform or "").lower() == "linkedin":
             li_client.update_campaign_budget(change.campaign_urn, daily_budget_cents=0)
@@ -1055,6 +1153,15 @@ def create_winner_variant_draft(ramp_id: str, change, li_client) -> Optional[str
         png_path, _qc = generate_imagen_creative_with_qc(variant=variant, copy_rewriter=rewrite_variant_copy)
     except Exception as exc:  # pragma: no cover
         log.warning("create_winner_variant_draft: image gen failed for %s: %s", cohort_id, exc)
+
+    # IN-PLACE (FEEDBACK_INPLACE_ROTATION): add the challenger creative to the
+    # winner's SAME campaign (no clone) — the winner keeps running and the
+    # challenger shares its utm_campaign for continuous attribution.
+    if getattr(config, "FEEDBACK_INPLACE_ROTATION", False):
+        variant = {"angle": next_label, "headline": headline, "subheadline": subheadline,
+                   "photo_subject": photo_subject}
+        return _rotate_creative_in_place(winner, li_client, variant=variant, png_path=png_path,
+                                         next_label=next_label, pause_loser=False)
 
     try:
         new_urn = li_client.clone_campaign(winner_urn, f"{cohort_name[:30]} [{geo_label}] {next_label}")
