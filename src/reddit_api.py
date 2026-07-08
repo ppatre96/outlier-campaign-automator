@@ -339,6 +339,39 @@ class RedditClient(AdPlatformClient):
         log.info("Reddit reporting: %d campaign(s) with metrics (window=%dd)", len(out), window_days)
         return out
 
+    def fetch_campaign_metrics_daily(self, window_days: int = 90) -> list[dict]:
+        """Per-(campaign × day) delivery for the Analytics dashboard's DoD charts.
+        Adds a DATE breakdown to the reports call. Returns a list of
+        {campaign_id, metric_date ('YYYY-MM-DD'), impressions, clicks, spend_usd}.
+        `spend` is microcurrency ($1 = 1_000_000)."""
+        from datetime import datetime, timedelta, timezone
+
+        self._ensure_init()
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=int(window_days))
+        data = self._api("POST", f"/ad_accounts/{self._account_id}/reports", {
+            "breakdowns":   ["CAMPAIGN_ID", "DATE"],
+            "fields":       ["impressions", "clicks", "spend"],
+            "starts_at":    start.strftime("%Y-%m-%dT00:00:00Z"),
+            "ends_at":      end.strftime("%Y-%m-%dT00:00:00Z"),
+            "time_zone_id": "GMT",
+        })
+        out: list[dict] = []
+        for m in data.get("metrics", []) or []:
+            cid = str(m.get("campaign_id") or "")
+            day = str(m.get("date") or "")[:10]
+            if not (cid and day):
+                continue
+            out.append({
+                "campaign_id": cid,
+                "metric_date": day,
+                "impressions": int(m.get("impressions") or 0),
+                "clicks":      int(m.get("clicks") or 0),
+                "spend_usd":   round(float(m.get("spend") or 0) / 1_000_000, 2),
+            })
+        log.info("Reddit daily reporting: %d (campaign × day) rows (window=%dd)", len(out), window_days)
+        return out
+
     def upload_image(self, image_path: str | Path) -> str:
         """Host the PNG at a URL Reddit can ingest as a post's media_url.
 

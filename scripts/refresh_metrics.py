@@ -86,8 +86,9 @@ def main() -> int:
                  s.get("skill_passes", 0), s.get("activations", 0),
                  f" ({s['note']})" if s.get("note") else "")
     if daily:
-        log.info("  daily_metrics: funnel=%d linkedin_delivery=%d meta_delivery=%d (campaign×day rows)",
-                 daily.get("funnel_rows", 0), daily.get("linkedin_rows", 0), daily.get("meta_rows", 0))
+        log.info("  daily_metrics: funnel=%d delivery[li=%d meta=%d google=%d reddit=%d] (campaign×day rows)",
+                 daily.get("funnel_rows", 0), daily.get("linkedin_rows", 0), daily.get("meta_rows", 0),
+                 daily.get("google_rows", 0), daily.get("reddit_rows", 0))
     return 0
 
 
