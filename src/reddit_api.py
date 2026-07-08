@@ -309,6 +309,18 @@ class RedditClient(AdPlatformClient):
         })
         log.info("Reddit ad group %s goal_value → $%d/day", campaign_id, daily_budget_cents // 100)
 
+    def pause_ad(self, ad_id: str, status: str = "PAUSED") -> bool:
+        """Pause (or resume) a single Reddit ad — the in-place creative-rotation
+        primitive. PATCH configured_status on /ads/{id}. Returns True on success."""
+        try:
+            self._ensure_init()
+            self._api("PATCH", f"/ads/{ad_id}", {"configured_status": status})
+            log.info("Reddit ad %s → configured_status=%s", ad_id, status)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Reddit pause_ad %s failed: %s", ad_id, str(exc)[:200])
+            return False
+
     def fetch_campaign_metrics(self, window_days: int = 7) -> dict[str, dict]:
         """Pull impressions / clicks / spend per campaign from the Ads reporting
         API for the last `window_days`. Returns {campaign_id: {impressions,

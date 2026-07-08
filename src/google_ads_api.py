@@ -886,6 +886,27 @@ class GoogleAdsClient(AdPlatformClient):
             canvas.save(landscape_path, "PNG", optimize=True)
         return self.upload_image(landscape_path)
 
+    def pause_ad(self, ad_group_ad_resource: str, status: str = "PAUSED") -> bool:
+        """Pause (or resume) a single AdGroupAd — the in-place creative-rotation
+        primitive. `ad_group_ad_resource` is the full
+        `customers/{cid}/adGroupAds/{adGroupId}~{adId}` resource name. Ad-level,
+        so the ad group + winner ads keep delivering. Returns True on success."""
+        try:
+            client = self._ensure_client()
+            svc = client.get_service("AdGroupAdService")
+            op = client.get_type("AdGroupAdOperation")
+            aga = op.update
+            aga.resource_name = ad_group_ad_resource
+            aga.status = getattr(client.enums.AdGroupAdStatusEnum, status)
+            from google.api_core import protobuf_helpers
+            op.update_mask.CopyFrom(protobuf_helpers.field_mask(None, aga._pb))
+            svc.mutate_ad_group_ads(customer_id=self._customer_id_str, operations=[op])
+            log.info("Google ad %s → status=%s", ad_group_ad_resource, status)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Google pause_ad %s failed: %s", ad_group_ad_resource, str(exc)[:200])
+            return False
+
     # ── Responsive Display Ad ────────────────────────────────────────────────
 
     def create_image_ad(

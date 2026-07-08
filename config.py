@@ -728,6 +728,13 @@ ANGLES_PER_COHORT           = int(os.getenv("ANGLES_PER_COHORT", 3))
 # and a Slack summary, awaiting human Accept. Matches the draft-default contract.
 ANGLE_LOOP_ENABLED       = os.getenv("ANGLE_LOOP_ENABLED", "true").lower() in ("1", "true", "yes")
 ANGLE_AUTO_ACT_ENABLED   = os.getenv("ANGLE_AUTO_ACT_ENABLED", "false").lower() in ("1", "true", "yes")
+# When incorporating feedback, edit creatives IN PLACE on the existing campaign
+# (pause the losing creative + attach the new experiment creative to the SAME
+# campaign) instead of archiving/cloning to a fresh campaign. Keeps the campaign
+# and its utm_campaign stable → continuous attribution + zero winner downtime.
+# Opt-in until the live creative-pause / attach calls are smoke-tested on one
+# real campaign (they mutate live ads and can't be validated offline).
+FEEDBACK_INPLACE_ROTATION = os.getenv("FEEDBACK_INPLACE_ROTATION", "false").lower() in ("1", "true", "yes")
 # Significance gate — don't declare a winner/loser on thin data.
 ANGLE_MIN_IMPRESSIONS    = int(os.getenv("ANGLE_MIN_IMPRESSIONS", 2000))
 # Winner = best-in-group beyond this CTR z-score OR this CPA margin below median.

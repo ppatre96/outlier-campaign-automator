@@ -491,6 +491,50 @@ class LinkedInClient(AdPlatformClient):
             campaign_id, amount_str,
         )
 
+    def set_creative_status(self, creative_urn_or_id: str, intended_status: str = "PAUSED") -> bool:
+        """PATCH a single creative's intendedStatus (PAUSED / ACTIVE / ARCHIVED /
+        DRAFT) — the in-place creative-rotation primitive (issue: pause the losing
+        creative without touching the campaign or the winner). Creatives live at
+        /rest/adAccounts/{acct}/creatives/{urn} and are URN-keyed. Returns True on
+        2xx. Best-effort — logs + returns False on failure."""
+        raw = str(creative_urn_or_id)
+        urn = raw if raw.startswith("urn:li:") else f"urn:li:sponsoredCreative:{raw.rsplit(':', 1)[-1]}"
+        try:
+            resp = self._req(
+                "POST",
+                self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/creatives/{quote(urn, safe='')}"),
+                json={"patch": {"$set": {"intendedStatus": intended_status}}},
+                headers={"X-RestLi-Method": "PARTIAL_UPDATE", "Content-Type": "application/json"},
+            )
+            if resp.status_code in (200, 204):
+                log.info("LinkedIn creative %s → intendedStatus=%s", urn, intended_status)
+                return True
+            log.warning("LinkedIn set_creative_status %s → HTTP %s %s", urn, resp.status_code, resp.text[:200])
+            return False
+        except Exception as exc:  # noqa: BLE001
+            log.warning("LinkedIn set_creative_status %s failed: %s", urn, str(exc)[:200])
+            return False
+
+    def set_campaign_status(self, campaign_urn_or_id: str, status: str = "PAUSED") -> bool:
+        """PATCH a campaign's status (PAUSED / ACTIVE / ARCHIVED). A real pause
+        (not the dailyBudget=0 hack in update_campaign_budget). Returns True on 2xx."""
+        campaign_id = str(campaign_urn_or_id).rsplit(":", 1)[-1]
+        try:
+            resp = self._req(
+                "POST",
+                self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/adCampaigns/{campaign_id}"),
+                json={"patch": {"$set": {"status": status}}},
+                headers={"X-RestLi-Method": "PARTIAL_UPDATE", "Content-Type": "application/json"},
+            )
+            if resp.status_code in (200, 204):
+                log.info("LinkedIn campaign %s → status=%s", campaign_id, status)
+                return True
+            log.warning("LinkedIn set_campaign_status %s → HTTP %s %s", campaign_id, resp.status_code, resp.text[:200])
+            return False
+        except Exception as exc:  # noqa: BLE001
+            log.warning("LinkedIn set_campaign_status %s failed: %s", campaign_id, str(exc)[:200])
+            return False
+
     def get_campaign(self, campaign_urn_or_id: str) -> dict:
         """Fetch full campaign JSON from LinkedIn API (includes targetingCriteria)."""
         campaign_id = str(campaign_urn_or_id).rsplit(":", 1)[-1]
