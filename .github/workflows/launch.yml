@@ -31,6 +31,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Assert Pillow RAQM shaping (fail closed on missing libraqm)
+        # Complex-script overlays (Bengali/Hindi/Thai/Arabic/CJK) need Pillow's
+        # RAQM layout engine to shape correctly. Without libraqm the text renders
+        # MISSHAPEN (matras out of order) — not tofu, so string checks + vision QC
+        # can miss it. Fail here rather than ship garbled brand creatives.
+        run: |
+          python -c "from PIL import features; assert features.check('raqm'), 'Pillow lacks RAQM (libraqm) — complex-script creatives would render misshapen; fix the libraqm0 install step'; print('Pillow RAQM shaping: OK')"
+
       - name: Install Doppler CLI
         uses: dopplerhq/cli-action@v4
 
