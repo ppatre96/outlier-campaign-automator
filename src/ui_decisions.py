@@ -854,17 +854,24 @@ CREATE TABLE IF NOT EXISTS meta_creative_format_daily (
     video_p75          BIGINT NOT NULL DEFAULT 0,
     video_p100         BIGINT NOT NULL DEFAULT 0,
     video_watch_seconds BIGINT NOT NULL DEFAULT 0,  -- sum(avg_watch * plays) → weighted avg
+    -- social engagement (both formats): post_reaction / comment / post(share) / save
+    reactions          BIGINT NOT NULL DEFAULT 0,
+    comments           BIGINT NOT NULL DEFAULT 0,
+    shares             BIGINT NOT NULL DEFAULT 0,
+    saves              BIGINT NOT NULL DEFAULT 0,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (ramp_id, language, creative_format, metric_date)
 )
 """
 
-# Additive migration for tables created before the video-engagement columns.
-_META_FORMAT_VIDEO_COLS = ["video_plays", "video_thruplays", "video_p25", "video_p50",
-                           "video_p75", "video_p100", "video_watch_seconds"]
+# Non-primary-key metric columns (video engagement + social). Additive
+# ADD COLUMN IF NOT EXISTS migration keeps older tables in sync.
+_META_FORMAT_EXTRA_COLS = ["video_plays", "video_thruplays", "video_p25", "video_p50",
+                           "video_p75", "video_p100", "video_watch_seconds",
+                           "reactions", "comments", "shares", "saves"]
 _META_FORMAT_MIGRATE = "\n".join(
     f"ALTER TABLE meta_creative_format_daily ADD COLUMN IF NOT EXISTS {c} BIGINT NOT NULL DEFAULT 0;"
-    for c in _META_FORMAT_VIDEO_COLS
+    for c in _META_FORMAT_EXTRA_COLS
 )
 
 
@@ -884,7 +891,7 @@ def upsert_meta_creative_format_batch(rows: list[dict]) -> int:
         except (TypeError, ValueError):
             return 0.0
         return 0.0 if f != f else f
-    base_cols = ["impressions", "clicks", "spend_usd"] + _META_FORMAT_VIDEO_COLS
+    base_cols = ["impressions", "clicks", "spend_usd"] + _META_FORMAT_EXTRA_COLS
     all_cols = ["ramp_id", "language", "creative_format", "metric_date"] + base_cols
     placeholders = ", ".join(["%s"] * len(all_cols))
     set_clause = ", ".join([f"{c} = excluded.{c}" for c in base_cols] + ["updated_at = NOW()"])
