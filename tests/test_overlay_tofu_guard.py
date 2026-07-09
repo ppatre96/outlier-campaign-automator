@@ -20,12 +20,14 @@ def test_bengali_ok_when_font_resolves(monkeypatch):
 
 
 def test_bengali_tofu_when_no_font_resolves(monkeypatch):
-    # No script font AND no broad font resolves → would fall back to Inter → tofu.
+    # No script font, no broad font, and fontconfig finds nothing → tofu → False.
     monkeypatch.setattr(gc, "_SCRIPT_FONTS", {"bengali": []})
     monkeypatch.setattr(gc, "_BROAD_UNICODE_FONTS", [])
     def _boom(path, size):
         raise OSError("no such font")
     monkeypatch.setattr(gc, "_truetype", _boom)
+    monkeypatch.setattr(gc, "_fc_list_font", lambda script: None)  # fontconfig has no covering font
+    monkeypatch.setattr(gc.time, "sleep", lambda *a: None)          # don't actually wait in the test
     assert gc.overlay_font_ok("বাংলা বিশেষজ্ঞ") is False
 
 
