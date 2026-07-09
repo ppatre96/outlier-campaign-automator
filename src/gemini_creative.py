@@ -728,6 +728,30 @@ def ensure_script_font(script: str, attempts: int = 3, delay: float = 4.0) -> bo
     return False
 
 
+_OVERLAY_SYMBOL_RE = re.compile(
+    "["
+    "\U0001F000-\U0001FAFF"   # emoji & pictographs
+    "\U00002600-\U000027BF"   # misc symbols + dingbats
+    "\U00002190-\U000021FF"   # arrows
+    "\U00002B00-\U00002BFF"   # misc symbols/arrows
+    "\U0000FE00-\U0000FE0F"   # variation selectors
+    "\U0000200D"              # zero-width joiner
+    "\U00002028-\U0000202F"   # separators / narrow-nbsp
+    "]+"
+)
+
+
+def strip_overlay_symbols(text: str) -> str:
+    """Remove emoji / pictographs / dingbats from overlay copy. Text fonts
+    (Noto Sans <script>, Inter) don't carry these glyphs, so an emoji the copy
+    LLM slips into a localized headline renders as a tofu box (seen on a live
+    Bengali creative). They're also off-brand. Collapses the whitespace left
+    behind. Latin/script letters, digits, $, %, punctuation are untouched."""
+    if not text:
+        return text
+    return re.sub(r"\s{2,}", " ", _OVERLAY_SYMBOL_RE.sub("", text)).strip()
+
+
 def overlay_font_ok(text: str) -> bool:
     """True if `text` can be rendered without tofu in THIS runtime — Latin
     (Inter covers it) OR a font for its non-Latin script is available (trying

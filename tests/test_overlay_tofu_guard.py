@@ -44,3 +44,12 @@ def test_check_overlay_renderable_clean_passes(monkeypatch):
     monkeypatch.setattr(gc, "overlay_font_ok", lambda t: True)
     ok, viol = qc.check_overlay_renderable({"headline": "H", "subheadline": "S"})
     assert ok is True and viol == []
+
+
+def test_strip_overlay_symbols_removes_emoji_keeps_script():
+    s = gc.strip_overlay_symbols
+    # emoji the LLM slipped in (the live Bengali creative's box glyphs) → gone,
+    # Bengali letters + $/% + digits kept.
+    assert s("📊 আউটপুট 💰 উপার্জন") == "আউটপুট উপার্জন"
+    assert s("Earn $5.50/hr — 85% remote ✅") == "Earn $5.50/hr — 85% remote"
+    assert s("no symbols here") == "no symbols here"
