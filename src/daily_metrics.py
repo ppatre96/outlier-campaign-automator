@@ -31,7 +31,7 @@ import config
 
 log = logging.getLogger(__name__)
 
-_UTM_CHANNELS = ("linkedin", "meta", "reddit")
+_UTM_CHANNELS = ("linkedin", "meta", "reddit", "tiktok")
 _RAMP_RE = re.compile(r"(GMR-\d{3,4})", re.IGNORECASE)
 
 
@@ -115,7 +115,7 @@ def _backfill_funnel_daily(window_days, by_utm, by_id, reddit_rep) -> int:
     batch: list[dict] = []
     # ad_key resolver differs by channel family.
     channels = [("linkedin", "utm"), ("meta", "utm"), ("reddit", "reddit"),
-                ("google", "id"), ("google_adgroup", "id")]
+                ("tiktok", "utm"), ("google", "id"), ("google_adgroup", "id")]
     for chan, family in channels:
         try:
             df = client.query_campaign_funnel_daily(chan, days_back=window_days)
@@ -296,6 +296,37 @@ def _backfill_reddit_delivery_daily(window_days, by_id) -> int:
     return written
 
 
+# ── Delivery-by-day: TikTok (report/integrated/get, stat_time_day) ──────────
+
+def _backfill_tiktok_delivery_daily(window_days, by_id) -> int:
+    if not config.TIKTOK_API_ENABLED:
+        return 0
+    from src.campaign_registry import _id_tail
+    from src.ui_decisions import upsert_daily_metrics_batch
+    try:
+        from src.tiktok_api import TikTokClient
+        rows = TikTokClient().fetch_campaign_metrics_daily(window_days)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("daily TikTok delivery fetch failed: %s", exc)
+        return 0
+    batch: list[dict] = []
+    for m in rows:
+        ident = by_id.get(_id_tail(m.get("campaign_id")))
+        if ident is None:
+            continue
+        batch.append({
+            "ramp_id": ident.ramp_id, "platform": "tiktok",
+            "campaign_key": ident.campaign_key, "campaign_name": ident.campaign_name,
+            "metric_date": m.get("metric_date"),
+            "impressions": int(_num(m.get("impressions"))),
+            "clicks": int(_num(m.get("clicks"))),
+            "spend_usd": _num(m.get("spend_usd")),
+        })
+    written = upsert_daily_metrics_batch(batch, ["impressions", "clicks", "spend_usd"])
+    log.info("daily TikTok delivery: wrote %d rows", written)
+    return written
+
+
 # ── Delivery-by-day: Google (GAQL segments.date) ────────────────────────────
 
 def _google_daily_query(ref: str, since: str, until: str) -> str | None:
@@ -397,6 +428,7 @@ def build_daily_metrics(window_days: int = 90) -> dict:
         "meta_rows":     _backfill_meta_delivery_daily(window_days, by_id),
         "google_rows":   _backfill_google_delivery_daily(window_days, by_id),
         "reddit_rows":   _backfill_reddit_delivery_daily(window_days, by_id),
+        "tiktok_rows":   _backfill_tiktok_delivery_daily(window_days, by_id),
     }
     reddit_rep = dict(reddit_rep_cum)
     for ramp, (key, name) in reddit_representative_by_spend().items():

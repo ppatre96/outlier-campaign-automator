@@ -619,6 +619,7 @@ _CHANNEL_FUNNEL = {
     "linkedin":       {"source": "ac.UTM_SOURCE ILIKE '%linkedin%'", "key_expr": _UTM_KEY,        "notnull": _UTM_NN,                      "by": "utm"},
     "meta":           {"source": _META_SOURCE,                       "key_expr": _UTM_KEY,        "notnull": _UTM_NN,                      "by": "utm"},
     "reddit":         {"source": "ac.UTM_SOURCE ILIKE '%reddit%'",   "key_expr": _UTM_KEY,        "notnull": _UTM_NN,                      "by": "utm"},
+    "tiktok":         {"source": "ac.UTM_SOURCE ILIKE '%tiktok%'",   "key_expr": _UTM_KEY,        "notnull": _UTM_NN,                      "by": "utm"},
     "google":         {"source": _GOOGLE_SOURCE,                     "key_expr": "ac.CAMPAIGN_ID", "notnull": "ac.CAMPAIGN_ID IS NOT NULL", "by": "campaign"},
     "google_adgroup": {"source": _GOOGLE_SOURCE,                     "key_expr": "ac.ADGROUP_ID",  "notnull": "ac.ADGROUP_ID IS NOT NULL",  "by": "adgroup"},
 }
