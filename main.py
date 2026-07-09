@@ -4502,31 +4502,65 @@ def _process_extra_platform_arm(
                     str(base_id_e)[:12], cluster_suffix, angle_label_e, _exc,
                 )
 
-        # Vision QC on the localized platform creative (closes #3 — this arm
-        # previously ran NO vision QC, so baked-in photo text like "85%" and
-        # overlay tofu shipped uncaught). Skip the creative on a brand-critical
-        # FAIL (rendered-text-in-photo / overlay-tofu) — never ship it. Only act
-        # on those two vision checks so localized copy-length quirks don't
-        # false-skip a clean creative.
+        # Full QC (copy + vision/design) on EVERY localized creative — this arm
+        # previously ran none, so baked-in photo text ("85%") + overlay tofu
+        # shipped uncaught. On a regen-fixable FAIL, REGENERATE the photo and
+        # re-QC up to QC_MAX_RETRIES times — ideally we never skip; skipping is a
+        # last resort only after every retry still fails. Copy-length notes are
+        # surfaced but don't gate here (regen can't fix copy, and localized
+        # length quirks would false-skip).
         if config.EXTRA_ARM_VISION_QC and png_path_e and Path(str(png_path_e)).exists():
-            try:
-                from src.copy_design_qc import qc_creative
-                _qcr = qc_creative(
-                    creative_path=png_path_e, reference_path=None,
-                    headline=(variant_e or {}).get("headline", ""),
-                    subheadline=(variant_e or {}).get("subheadline", ""),
+            from src.copy_design_qc import qc_creative
+            _hl = (variant_e or {}).get("headline", "")
+            _sub = (variant_e or {}).get("subheadline", "")
+            _max_qc = max(1, int(os.getenv("QC_MAX_RETRIES", "10")))
+
+            def _regen_extra_png():
+                from src.gemini_creative import generate_imagen_photo
+                from src.image_adapter import compose_ad_for_platform
+                _asp = (4, 5) if platform == "meta" else (1, 1)
+                _bg = generate_imagen_photo(variant_e, aspect=_asp)
+                return compose_ad_for_platform(
+                    bg_image=_bg, copy_variant=variant_e, platform=platform,
+                    angle=angle_label_e, aspect=_asp,
                 )
-                _critical = [v for v in _qcr.violations
-                             if any(k in v.lower() for k in ("rendered text", "tofu", "legible", "text in photo"))]
-                if _critical:
-                    log.error(
-                        "_process_extra_platform_arm[%s]: vision QC FAILED (brand-critical) — "
-                        "SKIPPING creative. cohort=%s geo=%s angle=%s: %s",
-                        platform, str(base_id_e)[:12], cluster_suffix, angle_label_e, "; ".join(_critical),
-                    )
-                    continue
-            except Exception as _exc:  # noqa: BLE001 — QC infra hiccup must not abort the arm
-                log.warning("_process_extra_platform_arm[%s]: vision QC errored (%s) — proceeding", platform, _exc)
+
+            _passed = False
+            for _att in range(_max_qc):
+                try:
+                    _qcr = qc_creative(creative_path=png_path_e, reference_path=None,
+                                       headline=_hl, subheadline=_sub, attempt_index=_att)
+                except Exception as _exc:  # noqa: BLE001 — QC infra hiccup must not gate
+                    log.warning("_process_extra_platform_arm[%s]: QC errored (%s) — proceeding ungated", platform, _exc)
+                    _passed = True
+                    break
+                if _qcr.copy_violations:
+                    log.warning("_process_extra_platform_arm[%s]: QC copy notes (not gated): %s", platform, _qcr.copy_violations)
+                _crit = [v for v in _qcr.violations if any(k in v.lower() for k in (
+                    "rendered text", "text in photo", "tofu", "legible", "logo",
+                    "subject", "overlap", "contrast", "photo fills"))]
+                if not _crit:
+                    _passed = True
+                    break
+                log.warning("_process_extra_platform_arm[%s]: QC FAIL attempt %d/%d (%s) — regenerating creative",
+                            platform, _att + 1, _max_qc, "; ".join(_crit))
+                try:
+                    _new = _regen_extra_png()
+                except Exception as _exc:  # noqa: BLE001
+                    log.warning("_process_extra_platform_arm[%s]: regen failed (%s) — stopping retries", platform, _exc)
+                    break
+                if _new and Path(str(_new)).exists():
+                    png_path_e = _new
+                    spec["png_path"] = _new
+                else:
+                    break
+            if not _passed:
+                log.error(
+                    "_process_extra_platform_arm[%s]: QC still failing after %d attempts — SKIPPING as "
+                    "LAST RESORT (never ship a broken creative). cohort=%s geo=%s angle=%s",
+                    platform, _max_qc, str(base_id_e)[:12], cluster_suffix, angle_label_e,
+                )
+                continue
 
         drive_url_e = ""
         if config.GDRIVE_ENABLED and png_path_e and Path(str(png_path_e)).exists():
