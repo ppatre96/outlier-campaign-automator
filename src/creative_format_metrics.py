@@ -139,7 +139,7 @@ def build_meta_creative_format_daily(window_days: int = 30) -> int:
         return fmt
 
     _VZERO = {"video_plays": 0, "video_thruplays": 0, "video_p25": 0, "video_p50": 0,
-              "video_p75": 0, "video_p100": 0, "video_watch_seconds": 0,
+              "video_p75": 0, "video_p100": 0, "video_watch_seconds": 0, "video_3sec": 0,
               "reactions": 0, "comments": 0, "shares": 0, "saves": 0}
     agg: dict[tuple, dict] = collections.defaultdict(
         lambda: {"impressions": 0, "clicks": 0, "spend_usd": 0.0, **dict(_VZERO)})
@@ -166,8 +166,10 @@ def build_meta_creative_format_daily(window_days: int = 30) -> int:
         a["video_p100"] += int(_action_val(r.get("video_p100_watched_actions")))
         # avg watch time is per-ad seconds → total seconds = avg * plays (weighted later)
         a["video_watch_seconds"] += int(_action_val(r.get("video_avg_time_watched_actions")) * plays)
-        # social engagement (both formats) from the actions list
+        # 3-second views (hook) live in the actions array as video_view
         acts = r.get("actions")
+        a["video_3sec"] += _action_by_type(acts, "video_view")
+        # social engagement (both formats) from the actions list
         a["reactions"] += _action_by_type(acts, "post_reaction")
         a["comments"] += _action_by_type(acts, "comment")
         a["shares"] += _action_by_type(acts, "post")               # post = shares
