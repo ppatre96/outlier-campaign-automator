@@ -52,6 +52,7 @@ on:
           - "linkedin"
           - "meta"
           - "google"
+          - "tiktok"
       only_cohort:
         description: "New-cohort scope (feature 010): restrict this run to a single Smart Ramp cohort id. Blank + a channel = scoped LAUNCH of that cohort; set + no channel = scoped additive PREP of that cohort (no ramp-wide wipe, ramp status untouched). Requires ramp_id."
         required: false

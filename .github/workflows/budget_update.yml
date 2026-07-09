@@ -12,13 +12,14 @@ on:
   workflow_dispatch:
     inputs:
       platform:
-        description: "Ad platform: linkedin | meta | google"
+        description: "Ad platform: linkedin | meta | google | tiktok"
         required: true
         type: choice
         options:
           - linkedin
           - meta
           - google
+          - tiktok
       campaign_id:
         description: >-
           Platform-native campaign id. LinkedIn: full URN
