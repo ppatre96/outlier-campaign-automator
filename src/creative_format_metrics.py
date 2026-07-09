@@ -66,6 +66,19 @@ def _action_val(lst) -> float:
     return total
 
 
+def _action_by_type(actions, atype: str) -> int:
+    """Sum the value of one action_type from a Meta `actions` list."""
+    total = 0
+    if isinstance(actions, (list, tuple)):
+        for a in actions:
+            if isinstance(a, dict) and a.get("action_type") == atype:
+                try:
+                    total += int(float(a.get("value") or 0))
+                except (TypeError, ValueError):
+                    pass
+    return total
+
+
 def build_meta_creative_format_daily(window_days: int = 30) -> int:
     """Pull Meta ad-level daily delivery, classify each ad's creative format,
     and upsert (ramp × language × format × day) rows. Returns rows written.
@@ -99,7 +112,7 @@ def build_meta_creative_format_daily(window_days: int = 30) -> int:
                        "video_play_actions", "video_thruplay_watched_actions",
                        "video_p25_watched_actions", "video_p50_watched_actions",
                        "video_p75_watched_actions", "video_p100_watched_actions",
-                       "video_avg_time_watched_actions"],
+                       "video_avg_time_watched_actions", "actions"],
             "limit": 500,
         })
     except Exception as exc:  # noqa: BLE001
@@ -126,7 +139,8 @@ def build_meta_creative_format_daily(window_days: int = 30) -> int:
         return fmt
 
     _VZERO = {"video_plays": 0, "video_thruplays": 0, "video_p25": 0, "video_p50": 0,
-              "video_p75": 0, "video_p100": 0, "video_watch_seconds": 0}
+              "video_p75": 0, "video_p100": 0, "video_watch_seconds": 0,
+              "reactions": 0, "comments": 0, "shares": 0, "saves": 0}
     agg: dict[tuple, dict] = collections.defaultdict(
         lambda: {"impressions": 0, "clicks": 0, "spend_usd": 0.0, **dict(_VZERO)})
     for r in rows:
@@ -152,6 +166,12 @@ def build_meta_creative_format_daily(window_days: int = 30) -> int:
         a["video_p100"] += int(_action_val(r.get("video_p100_watched_actions")))
         # avg watch time is per-ad seconds → total seconds = avg * plays (weighted later)
         a["video_watch_seconds"] += int(_action_val(r.get("video_avg_time_watched_actions")) * plays)
+        # social engagement (both formats) from the actions list
+        acts = r.get("actions")
+        a["reactions"] += _action_by_type(acts, "post_reaction")
+        a["comments"] += _action_by_type(acts, "comment")
+        a["shares"] += _action_by_type(acts, "post")               # post = shares
+        a["saves"] += _action_by_type(acts, "onsite_conversion.post_save")
 
     batch = [
         {"ramp_id": ramp, "language": lang, "creative_format": fmt, "metric_date": day,
