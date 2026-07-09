@@ -854,6 +854,7 @@ CREATE TABLE IF NOT EXISTS meta_creative_format_daily (
     video_p75          BIGINT NOT NULL DEFAULT 0,
     video_p100         BIGINT NOT NULL DEFAULT 0,
     video_watch_seconds BIGINT NOT NULL DEFAULT 0,  -- sum(avg_watch * plays) → weighted avg
+    video_3sec         BIGINT NOT NULL DEFAULT 0,   -- 3-second views (hook); actions.video_view
     -- social engagement (both formats): post_reaction / comment / post(share) / save
     reactions          BIGINT NOT NULL DEFAULT 0,
     comments           BIGINT NOT NULL DEFAULT 0,
@@ -867,7 +868,7 @@ CREATE TABLE IF NOT EXISTS meta_creative_format_daily (
 # Non-primary-key metric columns (video engagement + social). Additive
 # ADD COLUMN IF NOT EXISTS migration keeps older tables in sync.
 _META_FORMAT_EXTRA_COLS = ["video_plays", "video_thruplays", "video_p25", "video_p50",
-                           "video_p75", "video_p100", "video_watch_seconds",
+                           "video_p75", "video_p100", "video_watch_seconds", "video_3sec",
                            "reactions", "comments", "shares", "saves"]
 _META_FORMAT_MIGRATE = "\n".join(
     f"ALTER TABLE meta_creative_format_daily ADD COLUMN IF NOT EXISTS {c} BIGINT NOT NULL DEFAULT 0;"
