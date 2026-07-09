@@ -418,6 +418,39 @@ REDDIT_KEYWORDS  = [s.strip() for s in os.getenv("REDDIT_KEYWORDS", "").split(",
 # Suggested daily budget (USD) surfaced in the Reddit handoff manifest.
 REDDIT_DEFAULT_DAILY_USD = int(os.getenv("REDDIT_DEFAULT_DAILY_USD", "50"))
 
+# ── TikTok Ads (Marketing API v1.3) ─────────────────────────────────────────
+# Two-phase rollout mirroring Reddit: creative-only until TIKTOK_API_ENABLED is
+# flipped on (Doppler) AND creds are set. Auth = a long-lived advertiser-scoped
+# access token (does NOT expire on its own) sent as the `Access-Token` header;
+# app_id/secret identify the app for the one-time auth_code→token exchange.
+# Base URL is swappable so we validate the full create→upload→report loop in
+# TikTok's sandbox (sandbox-ads.tiktok.com) before spending real budget. All
+# entities are created PAUSED (operation_status=DISABLE) — a human activates in
+# TikTok Ads Manager. See data/specs/TIKTOK_AD_SPEC.md.
+TIKTOK_API_ENABLED   = os.getenv("TIKTOK_API_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+TIKTOK_API_BASE      = os.getenv("TIKTOK_API_BASE", "https://business-api.tiktok.com")
+TIKTOK_API_VERSION   = os.getenv("TIKTOK_API_VERSION", "v1.3")
+TIKTOK_APP_ID        = os.getenv("TIKTOK_APP_ID", "")
+TIKTOK_APP_SECRET    = os.getenv("TIKTOK_APP_SECRET", "")
+TIKTOK_ACCESS_TOKEN  = os.getenv("TIKTOK_ACCESS_TOKEN", "")
+TIKTOK_ADVERTISER_ID = os.getenv("TIKTOK_ADVERTISER_ID", "")
+# TikTok Pixel + posting identity (the brand handle an ad runs under — TikTok's
+# analog of Meta's Page ID). identity_id is required on every ad create.
+TIKTOK_PIXEL_ID      = os.getenv("TIKTOK_PIXEL_ID", "")
+TIKTOK_IDENTITY_ID   = os.getenv("TIKTOK_IDENTITY_ID", "")
+# Campaign objective + ad-group optimization. WEB_CONVERSIONS = TikTok's name
+# for Meta's "Conversions"; CONVERT optimizes toward the pixel event; OCPM is
+# the auto-bid conversions billing event (Meta oCPM analog).
+TIKTOK_OBJECTIVE          = os.getenv("TIKTOK_OBJECTIVE", "WEB_CONVERSIONS")
+TIKTOK_OPTIMIZATION_GOAL  = os.getenv("TIKTOK_OPTIMIZATION_GOAL", "CONVERT")
+TIKTOK_BILLING_EVENT      = os.getenv("TIKTOK_BILLING_EVENT", "OCPM")
+# Which pixel event counts as an Outlier conversion for optimization.
+TIKTOK_OPTIMIZATION_EVENT = os.getenv("TIKTOK_OPTIMIZATION_EVENT", "COMPLETE_REGISTRATION")
+# Static image ads ship as SINGLE_IMAGE (verified per objective); the exact
+# literal is overridable in case the live/sandbox account expects CAROUSEL.
+TIKTOK_IMAGE_AD_FORMAT    = os.getenv("TIKTOK_IMAGE_AD_FORMAT", "SINGLE_IMAGE")
+TIKTOK_DEFAULT_DAILY_USD  = int(os.getenv("TIKTOK_DEFAULT_DAILY_USD", "50"))
+
 # Minimum short-side px a creative must have before ANY platform's upload_image
 # will send it (Meta, LinkedIn, Google). Real pipeline creatives are ≥1080 on
 # every side (4:5=1080×1350, 1:1=1080, 9:16=1080×1920); a floor of 600 cleanly

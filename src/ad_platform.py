@@ -33,7 +33,7 @@ from typing import Any, Literal, Optional
 import config
 
 
-PlatformName = Literal["linkedin", "meta", "google", "google_search", "reddit"]
+PlatformName = Literal["linkedin", "meta", "google", "google_search", "reddit", "tiktok"]
 
 
 @dataclass(frozen=True)
@@ -149,12 +149,34 @@ REDDIT_CONSTRAINTS = PlatformConstraints(
 )
 
 
+# TikTok in-feed image ad. TikTok policy bars a pure static single image as a
+# standalone in-feed ad, so the image path ships as a Carousel Ad (2–35 slides,
+# all 9:16). The image OVERLAY headline follows the Outlier brand guideline
+# (≤6 words / ≤40 chars); the native "ad text" caption is ≤100 chars and the CTA
+# is an enum (Apply Now / Sign Up / Learn More / Get Started). No Meta-style
+# special ad category on TikTok. 9:16 primary (1080×1920); 1:1 also generated.
+# See data/specs/TIKTOK_AD_SPEC.md.
+TIKTOK_CONSTRAINTS = PlatformConstraints(
+    name="tiktok",
+    headline_max_chars=40,
+    description_max_chars=100,   # native "ad text" caption
+    primary_text_max_chars=None,
+    cta_max_chars=None,          # enum button
+    image_aspects=((9, 16), (1, 1)),
+    headline_count=1,
+    description_count=1,
+    supports_inmail=False,
+    supports_special_ad_category=False,
+)
+
+
 PLATFORM_CONSTRAINTS: dict[str, PlatformConstraints] = {
     "linkedin":      LINKEDIN_CONSTRAINTS,
     "meta":          META_CONSTRAINTS,
     "google":        GOOGLE_CONSTRAINTS,
     "google_search": GOOGLE_SEARCH_CONSTRAINTS,
     "reddit":        REDDIT_CONSTRAINTS,
+    "tiktok":        TIKTOK_CONSTRAINTS,
 }
 
 
