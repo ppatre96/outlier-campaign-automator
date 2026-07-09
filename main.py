@@ -4502,6 +4502,32 @@ def _process_extra_platform_arm(
                     str(base_id_e)[:12], cluster_suffix, angle_label_e, _exc,
                 )
 
+        # TikTok in-feed is a vertical 9:16 (1080×1920) surface. Compose a fresh
+        # 9:16 with the TikTok safe-zones (headline below the 140px top pill,
+        # subject above the ~400px bottom CTA strip) so the creative isn't a
+        # 4:5/1:1 crop inherited from the shared spec.
+        if platform == "tiktok" and variant_e:
+            try:
+                from src.gemini_creative import generate_imagen_photo
+                from src.image_adapter import compose_ad_for_platform, primary_aspect
+                tt_aspect = primary_aspect("tiktok")  # (9, 16)
+                tt_bg = generate_imagen_photo(variant_e, aspect=tt_aspect)
+                tt_png = compose_ad_for_platform(
+                    bg_image=tt_bg, copy_variant=variant_e,
+                    platform="tiktok", angle=angle_label_e, aspect=tt_aspect,
+                )
+                png_path_e = tt_png
+                spec["png_path"] = tt_png
+                log.info(
+                    "_process_extra_platform_arm[tiktok]: 9:16 PNG ready %s", tt_png,
+                )
+            except Exception as _exc:
+                log.warning(
+                    "_process_extra_platform_arm[tiktok]: 9:16 photo gen FAILED "
+                    "cohort=%s geo=%s angle=%s — falling back to existing PNG: %s",
+                    str(base_id_e)[:12], cluster_suffix, angle_label_e, _exc,
+                )
+
         # Full QC (copy + vision/design) on EVERY localized creative — this arm
         # previously ran none, so baked-in photo text ("85%") + overlay tofu
         # shipped uncaught. On a regen-fixable FAIL, REGENERATE the photo and
@@ -4518,7 +4544,7 @@ def _process_extra_platform_arm(
             def _regen_extra_png():
                 from src.gemini_creative import generate_imagen_photo
                 from src.image_adapter import compose_ad_for_platform
-                _asp = (4, 5) if platform == "meta" else (1, 1)
+                _asp = (4, 5) if platform == "meta" else (9, 16) if platform == "tiktok" else (1, 1)
                 _bg = generate_imagen_photo(variant_e, aspect=_asp)
                 return compose_ad_for_platform(
                     bg_image=_bg, copy_variant=variant_e, platform=platform,
@@ -5372,6 +5398,22 @@ def _build_extra_platform_clients(enabled: list[str]) -> dict:
             }
         except Exception as exc:
             log.warning("Skipping Reddit arm — init failed: %s", exc)
+    # 2026-07-09 — TikTok. Built UNCONDITIONALLY like Reddit: v1 is creative-only
+    # (export 9:16/1:1 images + manifest to Drive for manual upload), needing no
+    # API creds. TikTokClient self-gates its programmatic create methods on
+    # config.TIKTOK_API_ENABLED, so flipping the flag (once the Marketing API
+    # token lands) upgrades this same arm to full programmatic create with no
+    # dispatch change.
+    if "tiktok" in enabled:
+        from src.tiktok_api import TikTokClient
+        from src.tiktok_targeting import TikTokTargetingResolver
+        try:
+            out["tiktok"] = {
+                "client":   TikTokClient(),
+                "resolver": TikTokTargetingResolver(),
+            }
+        except Exception as exc:
+            log.warning("Skipping TikTok arm — init failed: %s", exc)
     return out
 
 

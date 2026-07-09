@@ -232,7 +232,8 @@ class CampaignEntry:
 
 
 # Internal lower-case platform key → user-facing channel label shown in Sheet.
-_CHANNEL_LABEL = {"linkedin": "LinkedIn", "meta": "Meta", "google": "Google"}
+_CHANNEL_LABEL = {"linkedin": "LinkedIn", "meta": "Meta", "google": "Google",
+                  "tiktok": "TikTok"}
 
 
 def _channel_label(platform: str) -> str:
@@ -269,6 +270,11 @@ def _derive_campaign_link(platform: str, campaign_id: str) -> str:
         )
     if p == "google":
         return f"https://ads.google.com/aw/campaigns?campaignId={campaign_id}"
+    if p == "tiktok":
+        # TikTok Ads Manager has no clean per-campaign deep link; scope to the
+        # advertiser dashboard so the reviewer lands in the right ad account.
+        adv = getattr(_cfg, "TIKTOK_ADVERTISER_ID", "") or ""
+        return f"https://ads.tiktok.com/i18n/perf?aadvid={adv}" if adv else ""
     return ""
 
 
