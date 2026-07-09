@@ -52,8 +52,13 @@ class TestEnabledPlatforms:
 
     def test_unknown_platforms_dropped(self, monkeypatch):
         import config
-        monkeypatch.setattr(config, "ENABLED_PLATFORMS", "linkedin,tiktok,meta")
+        monkeypatch.setattr(config, "ENABLED_PLATFORMS", "linkedin,snapchat,meta")
         assert enabled_platforms() == ["linkedin", "meta"]
+
+    def test_tiktok_is_a_known_platform(self, monkeypatch):
+        import config
+        monkeypatch.setattr(config, "ENABLED_PLATFORMS", "linkedin,tiktok,meta")
+        assert enabled_platforms() == ["linkedin", "tiktok", "meta"]
 
     def test_empty_falls_back_to_linkedin(self, monkeypatch):
         import config
