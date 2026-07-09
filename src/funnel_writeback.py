@@ -41,7 +41,7 @@ def backfill_funnel_metrics_all_channels(window_days: int = 7) -> dict:
     # the row's stored utm_campaign, canonicalized (_canonical_utm) on both sides
     # so encoding/whitespace variants re-aggregate + match — but NOT date-stripped,
     # so each launch generation attributes to its own row (no cross-gen merge).
-    for chan in ("linkedin", "meta", "reddit"):
+    for chan in ("linkedin", "meta", "reddit", "tiktok"):
         out[chan] = _write_grouped(
             client, chan, window_days, update_funnel_metrics,
             by="utm", key_fn=_canonical_utm,
@@ -56,9 +56,6 @@ def backfill_funnel_metrics_all_channels(window_days: int = 7) -> dict:
         if part.get("note"):
             google["note"] = part["note"]
     out["google"] = google
-
-    # TikTok — creative-only, no joinable id.
-    out["tiktok"] = {**_blank(), "note": "no attribution available (creative-only)"}
     return out
 
 

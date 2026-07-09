@@ -36,6 +36,25 @@ def test_index_uses_canonical_utm_for_utm_channels_and_idtail_for_google(monkeyp
     assert "999" not in by_id
 
 
+def test_tiktok_is_a_utm_funnel_channel(monkeypatch):
+    """TikTok is a real UTM-attributed channel (not creative-only): its campaign
+    key is the canonical UTM, and funnel_writeback + redash treat it as by=utm."""
+    from src.redash_db import _CHANNEL_FUNNEL, CHANNEL_JOIN_MODE
+    assert "tiktok" in dm._UTM_CHANNELS
+    assert _CHANNEL_FUNNEL["tiktok"]["by"] == "utm"
+    assert CHANNEL_JOIN_MODE["tiktok"] == "utm"
+    # a tiktok registry row keys by canonical utm (like meta/reddit)
+    rows = [{"smart_ramp_id": "GMR-0023", "platform": "tiktok", "campaign_type": "static",
+             "utm_campaign": "Scale-GMR-0023 | TikTok | US | 07/09/2026",
+             "platform_campaign_id": "ttc1"}]
+    monkeypatch.setattr(ui, "list_all_campaign_data", lambda: rows)
+    by_utm, by_id, _ = dm._build_indexes()
+    from src.campaign_registry import _canonical_utm
+    k = _canonical_utm("scale-gmr-0023 | tiktok | us | 07/09/2026")
+    assert k in by_utm and by_utm[k].platform == "tiktok"
+    assert by_id["ttc1"].campaign_key == k     # delivery resolvable by id → same key
+
+
 def test_reddit_representative_is_highest_impressions(monkeypatch):
     """Reddit funnel attributes at ramp level to the ramp's highest-impressions
     reddit row (warehouse UTM collapses geos + CAMPAIGN_ID is null)."""
