@@ -836,6 +836,61 @@ def upsert_daily_metrics_batch(rows: list[dict], metric_cols: list[str]) -> int:
         return 0
 
 
+_META_FORMAT_DDL = """
+CREATE TABLE IF NOT EXISTS meta_creative_format_daily (
+    ramp_id         TEXT NOT NULL,
+    language        TEXT NOT NULL,
+    creative_format TEXT NOT NULL,           -- 'video' | 'static'
+    metric_date     DATE NOT NULL,
+    impressions     BIGINT  NOT NULL DEFAULT 0,
+    clicks          BIGINT  NOT NULL DEFAULT 0,
+    spend_usd       NUMERIC NOT NULL DEFAULT 0,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (ramp_id, language, creative_format, metric_date)
+)
+"""
+
+
+def upsert_meta_creative_format_batch(rows: list[dict]) -> int:
+    """Bulk-upsert (ramp × language × format × day) Meta delivery rows into
+    meta_creative_format_daily — the video-vs-static delivery split behind the
+    Analytics dashboard's Creative Format panel. Delivery-only (impressions /
+    clicks / spend); activations are NOT format-attributable (see #94/#95), so
+    this table intentionally carries no funnel columns. Best-effort."""
+    clean = [r for r in rows if r.get("ramp_id") and r.get("language")
+             and r.get("creative_format") and r.get("metric_date")]
+    if not clean:
+        return 0
+    def _n(v):
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return 0.0
+        return 0.0 if f != f else f
+    params = [
+        [r["ramp_id"], r["language"], r["creative_format"], r["metric_date"],
+         int(_n(r.get("impressions"))), int(_n(r.get("clicks"))), _n(r.get("spend_usd"))]
+        for r in clean
+    ]
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(_META_FORMAT_DDL)
+            cur.executemany(
+                "INSERT INTO meta_creative_format_daily "
+                "(ramp_id, language, creative_format, metric_date, impressions, clicks, spend_usd) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (ramp_id, language, creative_format, metric_date) DO UPDATE SET "
+                "impressions = excluded.impressions, clicks = excluded.clicks, "
+                "spend_usd = excluded.spend_usd, updated_at = NOW()",
+                params,
+            )
+            conn.commit()
+            return len(params)
+    except UIDecisionsUnavailable as exc:
+        log.debug("upsert_meta_creative_format_batch skipped: %s", exc)
+        return 0
+
+
 def reddit_representative_by_spend() -> dict:
     """Per ramp, the reddit (campaign_key, campaign_name) with the most spend in
     campaign_daily_metrics — the row reddit funnel attributes to (reddit funnel
