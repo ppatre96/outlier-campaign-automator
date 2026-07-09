@@ -177,6 +177,28 @@ class TestReporting:
         assert json.loads(c._session.calls[0]["params"]["dimensions"]) == ["campaign_id", "stat_time_day"]
 
 
+# ── platform_metrics dispatch ─────────────────────────────────────────────────
+class TestPlatformMetrics:
+    def test_fetch_tiktok_metrics_maps_fields(self, monkeypatch):
+        import src.platform_metrics as pm
+        monkeypatch.setattr(config, "TIKTOK_API_ENABLED", True)
+        pm._tiktok_metrics_cache.clear()
+
+        class _FakeClient:
+            def fetch_campaign_metrics(self, window_days):
+                return {"c1": {"impressions": 500, "clicks": 20, "spend_usd": 9.9, "conversions": 3}}
+
+        monkeypatch.setattr("src.tiktok_api.TikTokClient", _FakeClient)
+        out = pm._fetch_tiktok_metrics("c1", 7)
+        assert out == {"impressions": 500, "clicks": 20, "spend_usd": 9.9, "applications": 0}
+        assert pm._fetch_tiktok_metrics("missing", 7) is None
+
+    def test_fetch_tiktok_metrics_disabled(self, monkeypatch):
+        import src.platform_metrics as pm
+        monkeypatch.setattr(config, "TIKTOK_API_ENABLED", False)
+        assert pm._fetch_tiktok_metrics("c1", 7) is None
+
+
 # ── auth exchange ─────────────────────────────────────────────────────────────
 def test_exchange_auth_code(monkeypatch):
     captured = {}

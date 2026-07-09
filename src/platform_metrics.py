@@ -63,6 +63,8 @@ def fetch_metrics_for_active_extra_platforms(window_days: int = 7) -> int:
                 metrics = _fetch_google_metrics(campaign_id, window_days)
             elif platform == "reddit":
                 metrics = _fetch_reddit_metrics(campaign_id, window_days)
+            elif platform == "tiktok":
+                metrics = _fetch_tiktok_metrics(campaign_id, window_days)
             else:
                 log.debug("platform_metrics: unknown platform %r — skipping", platform)
                 continue
@@ -241,6 +243,36 @@ def _fetch_reddit_metrics(campaign_id: str, window_days: int) -> dict[str, Any] 
             log.warning("platform_metrics[reddit]: reporting fetch failed — %s", exc)
             _reddit_metrics_cache[window_days] = {}
     m = _reddit_metrics_cache[window_days].get(str(campaign_id))
+    if not m:
+        return None
+    return {
+        "impressions":  m["impressions"],
+        "clicks":       m["clicks"],
+        "spend_usd":    m["spend_usd"],
+        "applications": 0,
+    }
+
+
+# ── TikTok reporting ──────────────────────────────────────────────────────────
+
+_tiktok_metrics_cache: dict[int, dict] = {}
+
+
+def _fetch_tiktok_metrics(campaign_id: str, window_days: int) -> dict[str, Any] | None:
+    """Impressions / clicks / spend for a TikTok campaign from the Marketing
+    reporting API. sign-ups / activations come from the funnel (funnel_writeback,
+    by UTM), so applications is left at 0 here. One report call covers all
+    campaigns → cache by window."""
+    if not config.TIKTOK_API_ENABLED:
+        return None
+    if window_days not in _tiktok_metrics_cache:
+        try:
+            from src.tiktok_api import TikTokClient
+            _tiktok_metrics_cache[window_days] = TikTokClient().fetch_campaign_metrics(window_days)
+        except Exception as exc:  # noqa: BLE001 — best-effort, non-fatal
+            log.warning("platform_metrics[tiktok]: reporting fetch failed — %s", exc)
+            _tiktok_metrics_cache[window_days] = {}
+    m = _tiktok_metrics_cache[window_days].get(str(campaign_id))
     if not m:
         return None
     return {

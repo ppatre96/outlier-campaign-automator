@@ -275,7 +275,8 @@ def _step_activations(dry_run: bool) -> dict:
     """Step F — summarize per-channel funnel outcomes (sign-ups / skill passes /
     activations) attributed to our campaigns. Read-only: the actual writeback
     runs daily in scripts/refresh_metrics.py; this just rolls up the campaign
-    rows for the Slack section. Reddit/TikTok have no joinable attribution."""
+    rows for the Slack section. Reddit is attributed at ramp level; every other
+    channel (incl. TikTok) matches by exact UTM."""
     log.info("Step F: activation summary (per channel)")
     try:
         # Postgres is the authoritative campaign store (fresh in CI); fall back
@@ -303,10 +304,8 @@ def _step_activations(dry_run: bool) -> dict:
             if a or p or ac:
                 s["campaigns"] += 1
 
-        # TikTok is still creative-only — no joinable attribution.
-        by_channel.setdefault(
-            "tiktok", {"applications": 0, "skill_passes": 0, "activations": 0,
-                       "campaigns": 0, "note": "no attribution available (creative-only)"})
+        # TikTok flows through the loop above like the other channels (UTM
+        # funnel attribution); it only appears once tiktok campaigns exist.
         return {"ok": True, "by_channel": by_channel}
     except Exception as e:
         log.exception("Step F failed")
