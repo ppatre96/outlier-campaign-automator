@@ -276,6 +276,29 @@ def _count_rendered_lines(text: str, font_size_frac: float, canvas_size: int = 1
     return total_lines
 
 
+def check_overlay_renderable(copy_variant: dict) -> tuple[bool, list[str]]:
+    """Deterministic tofu guard for the IMAGE OVERLAY text (headline +
+    subheadline). Returns (ok, violations). Tofu = a non-Latin (localized) script
+    was used but no font for it resolves at render time, so it falls back to
+    Latin-only Inter and renders as boxes — brand-critical and, unlike garbled
+    strings, invisible to every string-based check. This catches it WITHOUT a
+    vision call, so it works on the Meta/Google/Reddit path that runs no vision QC.
+    """
+    try:
+        from src.gemini_creative import overlay_font_ok, _detect_script
+    except Exception:  # noqa: BLE001 — never block QC on an import hiccup
+        return True, []
+    violations: list[str] = []
+    for field in ("headline", "subheadline"):
+        text = str((copy_variant or {}).get(field) or "")
+        if text and not overlay_font_ok(text):
+            violations.append(
+                f"overlay_text_legible: {field} is {_detect_script(text) or 'non-Latin'} "
+                f"but no font resolves — will render as tofu boxes: {text[:40]!r}"
+            )
+    return (not violations), violations
+
+
 def validate_copy_lengths(
     headline: str,
     subheadline: str,
@@ -638,6 +661,7 @@ SCAN PROTOCOL (execute in this order before scoring):
 (3) Measure the visible gap between the BOTTOM edge of the headline text (letter descenders, including the lowest descender on letters like 'g', 'p', 'y') and the TOP of the subject's hair (including any flyaway strands above the main mass). Be STRICT: if a single hair pixel appears within OR right against the headline's bounding box, that is TOO CLOSE — answer TOO CLOSE. Report it as: TOO CLOSE (text touching, overlapping, or directly abutting hair — even by 1-2 pixels), JUST RIGHT (clearly visible empty band between text and head, ~5-12% of frame height), or TOO FAR (very large wasted band, >15% of frame height). When in doubt between TOO CLOSE and JUST RIGHT, answer TOO CLOSE — borderline is FAIL.
 (4) Look at the bottom-right Outlier logo. Is it the actual Outlier wordmark (clean, proportional brown letterforms "O-u-t-l-i-e-r") or does it look warped, cut off, tiled, or like generic bold text?
 (5) Check the subject: does the person look like a real human (authentic skin, natural asymmetry) or clearly AI-generated (plastic, uncanny, glitched)?
+(6) Read the crisp headline and subheadline OVERLAY text character by character. This is BRAND-CRITICAL for localized (non-English) creatives. FAIL if ANY character renders as an empty box (□ / ▯ / tofu), a "?"/placeholder, or a missing-glyph rectangle; FAIL if the script looks garbled, mis-shaped, or mojibake; FAIL if the overlay is clearly NOT the language/script of EXPECTED HEADLINE / EXPECTED SUBHEADLINE (e.g. expected Bengali/Hindi but boxes or Latin appear). Non-Latin scripts (Bengali, Hindi, Tamil, Arabic, etc.) MUST render as proper connected glyphs, not boxes.
 
 Respond with a single JSON object (JSON only, no prose, no markdown fences):
 
@@ -686,6 +710,10 @@ Respond with a single JSON object (JSON only, no prose, no markdown fences):
   "text_zone_contrast": {{
     "pass": true | false,
     "detail": "FAIL if the white headline or subheadline sits on a near-white background where it becomes hard to read"
+  }},
+  "overlay_text_legible": {{
+    "pass": <true iff scan step 6 found the headline + subheadline overlay to be legible, correctly-shaped glyphs in the EXPECTED language/script with NO tofu boxes / missing-glyph placeholders / garbling>,
+    "detail": "FAIL with the offending text if any overlay character is a box/□/tofu/'?'/missing-glyph, or the script is garbled or not the expected language"
   }},
   "professional_quality": {{
     "pass": true | false,
@@ -948,6 +976,7 @@ def qc_creative(
         "subject_looks_ai":            ("Subject looks authentic",       "Subject reads as AI-generated. Add 'authentic candid photo, real human skin texture with natural asymmetry, not AI-generated, not uncanny, not stock-photo perfect'."),
         "matches_reference_person":    ("Subject differs from reference","Subject mimics the reference-image person. Omit the reference image on retry, OR explicitly specify a different gender/ethnicity than the reference."),
         "text_zone_contrast":          ("Contrast adequate",             "Text zones are too bright. Tell Gemini 'Top 30%% must be mid-tone to dark background. No white walls, no blown-out windows in text zones.'"),
+        "overlay_text_legible":        ("Overlay text legible (no tofu)", "The headline/subheadline overlay has tofu boxes / missing-glyph placeholders / garbled or wrong-language script — brand-critical on localized creatives. The script font for this language is missing at render time; install it (CI: fonts-noto-core / fonts-noto) and confirm gemini_creative.overlay_font_ok() before shipping."),
         # 2026-05-24 — `professional_quality` removed. Gemini grading its own
         # output against a subjective bar ("magazine-quality editorial,
         # Fortune-500 polish") generated ~30 false-fail retries per ramp on

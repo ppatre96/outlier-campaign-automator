@@ -606,7 +606,15 @@ def _load_font(size: int, bold: bool = False, text: str = ""):
                 return _truetype(path, size)
             except (IOError, OSError):
                 continue
-        # fall through to Inter/fallbacks (will likely show "?" but never crashes)
+        # No script font resolved → we're about to fall back to Inter (Latin-only),
+        # which renders every glyph of `script` as a "tofu" box. This is the
+        # brand-critical failure mode (Bengali/Hindi/… overlays). Log LOUD so it's
+        # never silent; overlay_font_ok() below lets callers/QC BLOCK the creative.
+        log.error(
+            "TOFU RISK: no %s font resolved (checked %d paths) — overlay will render "
+            "as boxes; text=%r. Install the script font or the creative must be QC-failed.",
+            script, len(_SCRIPT_FONTS.get(script, [])) + len(_BROAD_UNICODE_FONTS), (text or "")[:60],
+        )
 
     inter_paths = (
         [
@@ -649,6 +657,25 @@ def _load_font(size: int, bold: bool = False, text: str = ""):
         return ImageFont.load_default(size=size)
     except TypeError:
         return ImageFont.load_default()
+
+
+def overlay_font_ok(text: str) -> bool:
+    """True if `text` can be rendered without tofu in THIS runtime — i.e. it is
+    Latin/Cyrillic (Inter covers it) OR a script-specific font actually resolves
+    for its non-Latin script. Deterministic + cheap (just opens font files); the
+    definitive tofu guard, since tofu is exactly "a non-Latin script was detected
+    but no matching font loaded, so it fell back to Latin-only Inter". Used by QC
+    to BLOCK a creative before it ships boxes."""
+    script = _detect_script(text or "")
+    if not script:
+        return True
+    for path in _SCRIPT_FONTS.get(script, []) + _BROAD_UNICODE_FONTS:
+        try:
+            _truetype(path, 24)
+            return True
+        except (IOError, OSError):
+            continue
+    return False
 
 
 def _wrap_text(text: str, font, max_width: int) -> list[str]:

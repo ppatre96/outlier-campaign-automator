@@ -4353,13 +4353,31 @@ def _process_extra_platform_arm(
         # excluded by design; this arm only runs meta/google/google_search/reddit.
         copy_locale_e = resolve_copy_locale(cohort_e, getattr(cohort_e, "_icp", None))
         if config.LOCALIZE_PLATFORM_COPY and copy_locale_e and variant_e:
+            _english_e = dict(variant_e)   # fallback if the localized overlay can't render
             variant_e = localize_variant(variant_e, copy_locale_e)
+            # TOFU GUARD (brand-critical): if no font resolves for the localized
+            # overlay's script at render time, the image ships boxes — invisible
+            # to every string check and never vision-QC'd on this arm. Fail CLOSED:
+            # revert to the English overlay (legible + on-brand) and log LOUD so
+            # the missing script font gets installed. A language mismatch is far
+            # less damaging than tofu.
+            from src.copy_design_qc import check_overlay_renderable
+            _ok_e, _viol_e = check_overlay_renderable(variant_e)
+            if not _ok_e:
+                log.error(
+                    "_process_extra_platform_arm[%s]: localized overlay would render as TOFU "
+                    "for cohort=%s geo=%s angle=%s — reverting overlay to English to protect "
+                    "brand; INSTALL the script font (CI: fonts-noto-core/fonts-noto). %s",
+                    platform, getattr(cohort_e, "name", "")[:40], cluster_suffix, angle_label_e,
+                    "; ".join(_viol_e),
+                )
+                variant_e = _english_e
             if isinstance(variants_e, list) and angle_idx_e < len(variants_e):
                 variants_e[angle_idx_e] = variant_e
             log.info(
-                "_process_extra_platform_arm[%s]: localized variant → %s for cohort=%s geo=%s angle=%s",
+                "_process_extra_platform_arm[%s]: localized variant → %s for cohort=%s geo=%s angle=%s (overlay_ok=%s)",
                 platform, copy_locale_e.display_language,
-                getattr(cohort_e, "name", "")[:40], cluster_suffix, angle_label_e,
+                getattr(cohort_e, "name", "")[:40], cluster_suffix, angle_label_e, _ok_e,
             )
 
         # Carry the resolved rate so the Meta/Google/Reddit compositor's bottom

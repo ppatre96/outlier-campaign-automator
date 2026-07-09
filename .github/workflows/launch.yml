@@ -20,7 +20,8 @@ jobs:
       - name: Install fonts + libraqm (non-Latin creative text)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libraqm0 fonts-noto-core fonts-noto-cjk
+          sudo apt-get install -y -qq libraqm0 fonts-noto-core fonts-noto-cjk fonts-noto-extra
+          fc-list | grep -ci bengali | xargs -I{} echo "noto bengali faces: {}"  # non-fatal: surfaces missing Indic fonts (tofu guard reverts to English if absent)
 
       - uses: actions/setup-python@v5
         with:
