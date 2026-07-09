@@ -75,6 +75,16 @@ def main() -> int:
         log.warning("build_daily_metrics failed (non-fatal): %s", exc)
         daily = {}
 
+    # Meta video-vs-static delivery split (dashboard Creative Format panel).
+    # Delivery-only, straight from the Meta API (warehouse has no format tag —
+    # #94). Best-effort; never blocks the refresh.
+    try:
+        from src.creative_format_metrics import build_meta_creative_format_daily
+        fmt_rows = build_meta_creative_format_daily(window_days=args.window)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("build_meta_creative_format_daily failed (non-fatal): %s", exc)
+        fmt_rows = 0
+
     log.info(
         "refresh_metrics done: hydrated=%d linkedin=%d meta+google=%d funnel_rows=%d "
         "(delivery_window=%dd funnel_window=%dd)",
@@ -89,6 +99,7 @@ def main() -> int:
         log.info("  daily_metrics: funnel=%d delivery[li=%d meta=%d google=%d reddit=%d] (campaign×day rows)",
                  daily.get("funnel_rows", 0), daily.get("linkedin_rows", 0), daily.get("meta_rows", 0),
                  daily.get("google_rows", 0), daily.get("reddit_rows", 0))
+    log.info("  meta_creative_format: wrote %d (ramp×lang×format×day) rows", fmt_rows)
     return 0
 
 
