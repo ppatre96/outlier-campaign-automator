@@ -86,6 +86,14 @@ jobs:
           pip install --force-reinstall --no-deps --no-cache-dir certifi
           python -c "import certifi, os; p = certifi.where(); print('certifi:', p, 'exists:', os.path.exists(p))"
 
+      - name: Assert Pillow RAQM shaping (fail closed on missing libraqm)
+        # Complex-script overlays (Bengali/Hindi/Thai/Arabic/CJK) need Pillow's
+        # RAQM layout engine to shape correctly. Without libraqm the text renders
+        # MISSHAPEN (matras out of order) — not tofu, so string checks + vision QC
+        # can miss it. Fail here rather than ship garbled brand creatives.
+        run: |
+          python -c "from PIL import features; assert features.check('raqm'), 'Pillow lacks RAQM (libraqm) — complex-script creatives would render misshapen; fix the libraqm0 install step'; print('Pillow RAQM shaping: OK')"
+
       - name: Repoint SSL_CERT_FILE at certifi
         # httpx reads SSL_CERT_FILE first; setup-python's stale path breaks the
         # Anthropic/Gemini client construction. Point it at fresh certifi.
