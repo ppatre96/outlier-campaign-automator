@@ -4377,6 +4377,13 @@ def _process_extra_platform_arm(
                     "; ".join(_viol_e),
                 )
                 continue
+            # Strip emoji/symbols the copy LLM may have slipped into the overlay
+            # — text fonts don't carry those glyphs, so they render as tofu boxes
+            # (seen on a live Bengali creative). Off-brand regardless.
+            from src.gemini_creative import strip_overlay_symbols as _strip_sym
+            for _f in ("headline", "subheadline"):
+                if isinstance(variant_e, dict) and variant_e.get(_f):
+                    variant_e[_f] = _strip_sym(variant_e[_f])
             if isinstance(variants_e, list) and angle_idx_e < len(variants_e):
                 variants_e[angle_idx_e] = variant_e
             log.info(
@@ -4494,6 +4501,32 @@ def _process_extra_platform_arm(
                     "cohort=%s geo=%s angle=%s — falling back to existing PNG: %s",
                     str(base_id_e)[:12], cluster_suffix, angle_label_e, _exc,
                 )
+
+        # Vision QC on the localized platform creative (closes #3 — this arm
+        # previously ran NO vision QC, so baked-in photo text like "85%" and
+        # overlay tofu shipped uncaught). Skip the creative on a brand-critical
+        # FAIL (rendered-text-in-photo / overlay-tofu) — never ship it. Only act
+        # on those two vision checks so localized copy-length quirks don't
+        # false-skip a clean creative.
+        if config.EXTRA_ARM_VISION_QC and png_path_e and Path(str(png_path_e)).exists():
+            try:
+                from src.copy_design_qc import qc_creative
+                _qcr = qc_creative(
+                    creative_path=png_path_e, reference_path=None,
+                    headline=(variant_e or {}).get("headline", ""),
+                    subheadline=(variant_e or {}).get("subheadline", ""),
+                )
+                _critical = [v for v in _qcr.violations
+                             if any(k in v.lower() for k in ("rendered text", "tofu", "legible", "text in photo"))]
+                if _critical:
+                    log.error(
+                        "_process_extra_platform_arm[%s]: vision QC FAILED (brand-critical) — "
+                        "SKIPPING creative. cohort=%s geo=%s angle=%s: %s",
+                        platform, str(base_id_e)[:12], cluster_suffix, angle_label_e, "; ".join(_critical),
+                    )
+                    continue
+            except Exception as _exc:  # noqa: BLE001 — QC infra hiccup must not abort the arm
+                log.warning("_process_extra_platform_arm[%s]: vision QC errored (%s) — proceeding", platform, _exc)
 
         drive_url_e = ""
         if config.GDRIVE_ENABLED and png_path_e and Path(str(png_path_e)).exists():

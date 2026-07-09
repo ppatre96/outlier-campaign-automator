@@ -735,6 +735,11 @@ ANGLE_AUTO_ACT_ENABLED   = os.getenv("ANGLE_AUTO_ACT_ENABLED", "false").lower() 
 # Opt-in until the live creative-pause / attach calls are smoke-tested on one
 # real campaign (they mutate live ads and can't be validated offline).
 FEEDBACK_INPLACE_ROTATION = os.getenv("FEEDBACK_INPLACE_ROTATION", "false").lower() in ("1", "true", "yes")
+# Run vision QC on the Meta/Google/Reddit (localized) creative arm too — not just
+# LinkedIn. Closes the gap where localized creatives shipped un-QC'd: baked-in
+# photo text (e.g. a stray "85%") + overlay tofu boxes. Skips the creative on a
+# brand-critical FAIL rather than shipping it. On by default (brand > cost).
+EXTRA_ARM_VISION_QC = os.getenv("EXTRA_ARM_VISION_QC", "true").lower() in ("1", "true", "yes")
 # Significance gate — don't declare a winner/loser on thin data.
 ANGLE_MIN_IMPRESSIONS    = int(os.getenv("ANGLE_MIN_IMPRESSIONS", 2000))
 # Winner = best-in-group beyond this CTR z-score OR this CPA margin below median.
