@@ -24,7 +24,10 @@ import json
 import logging
 import os
 import re
+import shutil
+import subprocess
 import tempfile
+import time
 from io import BytesIO
 from pathlib import Path
 
@@ -601,6 +604,7 @@ def _load_font(size: int, bold: bool = False, text: str = ""):
     """
     script = _detect_script(text)
     if script:
+        ensure_script_font(script)   # register a fontconfig-resolved font if the hardcoded paths are absent
         for path in _SCRIPT_FONTS.get(script, []) + _BROAD_UNICODE_FONTS:
             try:
                 return _truetype(path, size)
@@ -659,16 +663,17 @@ def _load_font(size: int, bold: bool = False, text: str = ""):
         return ImageFont.load_default()
 
 
-def overlay_font_ok(text: str) -> bool:
-    """True if `text` can be rendered without tofu in THIS runtime — i.e. it is
-    Latin/Cyrillic (Inter covers it) OR a script-specific font actually resolves
-    for its non-Latin script. Deterministic + cheap (just opens font files); the
-    definitive tofu guard, since tofu is exactly "a non-Latin script was detected
-    but no matching font loaded, so it fell back to Latin-only Inter". Used by QC
-    to BLOCK a creative before it ships boxes."""
-    script = _detect_script(text or "")
-    if not script:
-        return True
+# script → BCP-47 lang tag for fontconfig lookups.
+_LANG_FOR_SCRIPT = {
+    "bengali": "bn", "devanagari": "hi", "tamil": "ta", "telugu": "te",
+    "kannada": "kn", "thai": "th", "arabic": "ar", "hebrew": "he",
+    "han": "zh", "hangul": "ko",
+}
+
+
+def _script_font_resolves(script: str) -> bool:
+    """True if any currently-registered font path for `script` (or a broad
+    fallback) actually loads."""
     for path in _SCRIPT_FONTS.get(script, []) + _BROAD_UNICODE_FONTS:
         try:
             _truetype(path, 24)
@@ -676,6 +681,62 @@ def overlay_font_ok(text: str) -> bool:
         except (IOError, OSError):
             continue
     return False
+
+
+def _fc_list_font(script: str) -> str | None:
+    """Ask fontconfig for an INSTALLED font that actually covers `script`'s
+    language (`fc-list :lang=<lang> file`). Unlike a hardcoded path this finds
+    the correct font wherever the OS/CI put it; unlike `fc-match` it only returns
+    a font that genuinely covers the language (fc-match would return a Latin
+    fallback). Best-effort — returns None if fontconfig is absent or has no
+    covering font (→ caller must NOT ship a degraded creative)."""
+    lang = _LANG_FOR_SCRIPT.get(script)
+    if not lang or not shutil.which("fc-list"):
+        return None
+    try:
+        out = subprocess.run(["fc-list", f":lang={lang}", "file"],
+                             capture_output=True, text=True, timeout=15).stdout
+    except Exception:  # noqa: BLE001
+        return None
+    for line in out.splitlines():
+        path = line.split(":", 1)[0].strip()
+        if path and (path.endswith(".ttf") or path.endswith(".ttc") or path.endswith(".otf")):
+            return path
+    return None
+
+
+def ensure_script_font(script: str, attempts: int = 3, delay: float = 4.0) -> bool:
+    """Make a font for `script` available, trying HARD before giving up — so we
+    render the correct localized overlay rather than degrade. If no hardcoded
+    path resolves, query fontconfig for an installed covering font and register
+    it; retry a few times (fonts may be mid-install in CI). Returns True once a
+    covering font is available, else False (caller must SKIP the creative — never
+    ship tofu, never mix scripts)."""
+    if _script_font_resolves(script):
+        return True
+    for i in range(max(1, attempts)):
+        p = _fc_list_font(script)
+        if p and str(p) not in _SCRIPT_FONTS.get(script, []):
+            _SCRIPT_FONTS.setdefault(script, []).insert(0, str(p))
+        if _script_font_resolves(script):
+            log.info("ensure_script_font: resolved %s font → %s", script, p)
+            return True
+        if i < attempts - 1:
+            log.warning("ensure_script_font: no %s font yet (attempt %d/%d) — waiting %.0fs",
+                        script, i + 1, attempts, delay)
+            time.sleep(delay)
+    return False
+
+
+def overlay_font_ok(text: str) -> bool:
+    """True if `text` can be rendered without tofu in THIS runtime — Latin
+    (Inter covers it) OR a font for its non-Latin script is available (trying
+    fontconfig + retries via ensure_script_font). Deterministic guard used by QC
+    to BLOCK a creative before it ships boxes; NEVER ships a degraded creative."""
+    script = _detect_script(text or "")
+    if not script:
+        return True
+    return ensure_script_font(script)
 
 
 def _wrap_text(text: str, font, max_width: int) -> list[str]:

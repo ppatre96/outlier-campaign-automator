@@ -4364,14 +4364,19 @@ def _process_extra_platform_arm(
             from src.copy_design_qc import check_overlay_renderable
             _ok_e, _viol_e = check_overlay_renderable(variant_e)
             if not _ok_e:
+                # SKIP — do NOT ship this creative. ensure_script_font already
+                # tried fontconfig + retries to obtain the correct font and
+                # failed, so we can neither render the localized overlay nor mix
+                # in English (unprofessional). Better no ad than a broken one.
                 log.error(
-                    "_process_extra_platform_arm[%s]: localized overlay would render as TOFU "
-                    "for cohort=%s geo=%s angle=%s — reverting overlay to English to protect "
-                    "brand; INSTALL the script font (CI: fonts-noto-core/fonts-noto). %s",
+                    "_process_extra_platform_arm[%s]: SKIPPING creative — no font for the "
+                    "localized overlay after retries; refusing to ship tofu OR mixed-language "
+                    "copy. cohort=%s geo=%s angle=%s. INSTALL the script font (CI: "
+                    "fonts-noto-core/fonts-noto-extra) + confirm `fc-list :lang=<lang>`. %s",
                     platform, getattr(cohort_e, "name", "")[:40], cluster_suffix, angle_label_e,
                     "; ".join(_viol_e),
                 )
-                variant_e = _english_e
+                continue
             if isinstance(variants_e, list) and angle_idx_e < len(variants_e):
                 variants_e[angle_idx_e] = variant_e
             log.info(
