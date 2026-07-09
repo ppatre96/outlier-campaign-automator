@@ -53,6 +53,19 @@ def _ramp_of(name: str) -> str:
     return m.group(1).upper() if m else ""
 
 
+def _action_val(lst) -> float:
+    """Sum the value(s) of a Meta 'actions'-style field (list of
+    {action_type, value}). Video-engagement fields return one video_view entry."""
+    total = 0.0
+    if isinstance(lst, (list, tuple)):
+        for a in lst:
+            try:
+                total += float(a.get("value", 0) or 0)
+            except (TypeError, ValueError, AttributeError):
+                pass
+    return total
+
+
 def build_meta_creative_format_daily(window_days: int = 30) -> int:
     """Pull Meta ad-level daily delivery, classify each ad's creative format,
     and upsert (ramp × language × format × day) rows. Returns rows written.
@@ -82,7 +95,11 @@ def build_meta_creative_format_daily(window_days: int = 30) -> int:
             "time_range": {"since": since, "until": until},
             "level": "ad",
             "time_increment": 1,   # one row per ad per day
-            "fields": ["ad_id", "campaign_name", "spend", "impressions", "clicks"],
+            "fields": ["ad_id", "campaign_name", "spend", "impressions", "clicks",
+                       "video_play_actions", "video_thruplay_watched_actions",
+                       "video_p25_watched_actions", "video_p50_watched_actions",
+                       "video_p75_watched_actions", "video_p100_watched_actions",
+                       "video_avg_time_watched_actions"],
             "limit": 500,
         })
     except Exception as exc:  # noqa: BLE001
@@ -108,8 +125,10 @@ def build_meta_creative_format_daily(window_days: int = 30) -> int:
         _fmt_cache[ad_id] = fmt
         return fmt
 
+    _VZERO = {"video_plays": 0, "video_thruplays": 0, "video_p25": 0, "video_p50": 0,
+              "video_p75": 0, "video_p100": 0, "video_watch_seconds": 0}
     agg: dict[tuple, dict] = collections.defaultdict(
-        lambda: {"impressions": 0, "clicks": 0, "spend_usd": 0.0})
+        lambda: {"impressions": 0, "clicks": 0, "spend_usd": 0.0, **dict(_VZERO)})
     for r in rows:
         ramp = _ramp_of(r.get("campaign_name", ""))
         lang = _lang_of(r.get("campaign_name", ""))
@@ -119,15 +138,25 @@ def build_meta_creative_format_daily(window_days: int = 30) -> int:
         if fmt == "unknown":
             continue
         day = r.get("date_start") or r.get("date_stop")
-        key = (ramp, lang, fmt, day)
-        a = agg[key]
+        a = agg[(ramp, lang, fmt, day)]
         a["impressions"] += int(float(r.get("impressions") or 0))
         a["clicks"] += int(float(r.get("clicks") or 0))
         a["spend_usd"] += float(r.get("spend") or 0)
+        # video engagement (0 for static ads — fields simply absent)
+        plays = _action_val(r.get("video_play_actions"))
+        a["video_plays"] += int(plays)
+        a["video_thruplays"] += int(_action_val(r.get("video_thruplay_watched_actions")))
+        a["video_p25"] += int(_action_val(r.get("video_p25_watched_actions")))
+        a["video_p50"] += int(_action_val(r.get("video_p50_watched_actions")))
+        a["video_p75"] += int(_action_val(r.get("video_p75_watched_actions")))
+        a["video_p100"] += int(_action_val(r.get("video_p100_watched_actions")))
+        # avg watch time is per-ad seconds → total seconds = avg * plays (weighted later)
+        a["video_watch_seconds"] += int(_action_val(r.get("video_avg_time_watched_actions")) * plays)
 
     batch = [
         {"ramp_id": ramp, "language": lang, "creative_format": fmt, "metric_date": day,
-         "impressions": v["impressions"], "clicks": v["clicks"], "spend_usd": round(v["spend_usd"], 2)}
+         "impressions": v["impressions"], "clicks": v["clicks"], "spend_usd": round(v["spend_usd"], 2),
+         **{k: v[k] for k in _VZERO}}
         for (ramp, lang, fmt, day), v in agg.items()
     ]
     from src.ui_decisions import upsert_meta_creative_format_batch

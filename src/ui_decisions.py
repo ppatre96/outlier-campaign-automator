@@ -845,18 +845,35 @@ CREATE TABLE IF NOT EXISTS meta_creative_format_daily (
     impressions     BIGINT  NOT NULL DEFAULT 0,
     clicks          BIGINT  NOT NULL DEFAULT 0,
     spend_usd       NUMERIC NOT NULL DEFAULT 0,
+    -- video-engagement counts (0 for static rows). All summable; the panel
+    -- derives view/thruplay/completion rates + weighted avg watch time.
+    video_plays        BIGINT NOT NULL DEFAULT 0,
+    video_thruplays    BIGINT NOT NULL DEFAULT 0,
+    video_p25          BIGINT NOT NULL DEFAULT 0,
+    video_p50          BIGINT NOT NULL DEFAULT 0,
+    video_p75          BIGINT NOT NULL DEFAULT 0,
+    video_p100         BIGINT NOT NULL DEFAULT 0,
+    video_watch_seconds BIGINT NOT NULL DEFAULT 0,  -- sum(avg_watch * plays) → weighted avg
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (ramp_id, language, creative_format, metric_date)
 )
 """
 
+# Additive migration for tables created before the video-engagement columns.
+_META_FORMAT_VIDEO_COLS = ["video_plays", "video_thruplays", "video_p25", "video_p50",
+                           "video_p75", "video_p100", "video_watch_seconds"]
+_META_FORMAT_MIGRATE = "\n".join(
+    f"ALTER TABLE meta_creative_format_daily ADD COLUMN IF NOT EXISTS {c} BIGINT NOT NULL DEFAULT 0;"
+    for c in _META_FORMAT_VIDEO_COLS
+)
+
 
 def upsert_meta_creative_format_batch(rows: list[dict]) -> int:
-    """Bulk-upsert (ramp × language × format × day) Meta delivery rows into
-    meta_creative_format_daily — the video-vs-static delivery split behind the
-    Analytics dashboard's Creative Format panel. Delivery-only (impressions /
-    clicks / spend); activations are NOT format-attributable (see #94/#95), so
-    this table intentionally carries no funnel columns. Best-effort."""
+    """Bulk-upsert (ramp × language × format × day) Meta delivery + video-
+    engagement rows into meta_creative_format_daily — behind the Analytics
+    dashboard's Creative Format panel. Delivery + video-engagement only;
+    activations are NOT format-attributable (see #94/#95), so no funnel columns.
+    Best-effort."""
     clean = [r for r in rows if r.get("ramp_id") and r.get("language")
              and r.get("creative_format") and r.get("metric_date")]
     if not clean:
@@ -867,21 +884,24 @@ def upsert_meta_creative_format_batch(rows: list[dict]) -> int:
         except (TypeError, ValueError):
             return 0.0
         return 0.0 if f != f else f
+    base_cols = ["impressions", "clicks", "spend_usd"] + _META_FORMAT_VIDEO_COLS
+    all_cols = ["ramp_id", "language", "creative_format", "metric_date"] + base_cols
+    placeholders = ", ".join(["%s"] * len(all_cols))
+    set_clause = ", ".join([f"{c} = excluded.{c}" for c in base_cols] + ["updated_at = NOW()"])
     params = [
-        [r["ramp_id"], r["language"], r["creative_format"], r["metric_date"],
-         int(_n(r.get("impressions"))), int(_n(r.get("clicks"))), _n(r.get("spend_usd"))]
+        [r["ramp_id"], r["language"], r["creative_format"], r["metric_date"]]
+        + [_n(r.get("spend_usd")) if c == "spend_usd" else int(_n(r.get(c))) for c in base_cols]
         for r in clean
     ]
     try:
         with _connect() as conn, conn.cursor() as cur:
             cur.execute(_META_FORMAT_DDL)
+            cur.execute(_META_FORMAT_MIGRATE)
             cur.executemany(
-                "INSERT INTO meta_creative_format_daily "
-                "(ramp_id, language, creative_format, metric_date, impressions, clicks, spend_usd) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
-                "ON CONFLICT (ramp_id, language, creative_format, metric_date) DO UPDATE SET "
-                "impressions = excluded.impressions, clicks = excluded.clicks, "
-                "spend_usd = excluded.spend_usd, updated_at = NOW()",
+                f"INSERT INTO meta_creative_format_daily ({', '.join(all_cols)}) "
+                f"VALUES ({placeholders}) "
+                f"ON CONFLICT (ramp_id, language, creative_format, metric_date) DO UPDATE SET "
+                f"{set_clause}",
                 params,
             )
             conn.commit()
