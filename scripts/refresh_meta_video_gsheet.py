@@ -53,11 +53,14 @@ log = logging.getLogger("refresh_meta_video_gsheet")
 # "Mexican" tasking is es-MX; the warehouse stores it as display language Spanish.
 DISPLAY_LOCALE = {"Spanish": "Mexican (es-MX)"}
 
-# Channels that go on the Overview coverage note. Meta is the only one with a
-# per-creative video-format feed today; the rest are pending (see module docs).
+# Overview coverage note. Monitored = extractor live, rows appear once a
+# GMR-named video campaign delivers. Pending = not yet wired.
+CHANNELS_MONITORED = {
+    "Meta": "live — video delivery + engagement from the Meta Marketing API",
+    "Reddit": "live — keyed by GMR ramp id; awaiting GMR-named video campaigns",
+    "YouTube": "live — keyed by GMR ramp id; awaiting GMR-named video campaigns",
+}
 CHANNELS_PENDING = {
-    "YouTube": "Google Ads API on — needs per-creative video-format extractor (pending)",
-    "Reddit": "Reddit API on — needs per-creative video-format extractor (pending)",
     "TikTok": "blocked — TIKTOK_API_ENABLED=false (no API creds yet)",
 }
 
@@ -80,19 +83,27 @@ def _f(x) -> float:
 
 
 def _row_cells(channel, locale, launched, last, days, m) -> list:
-    """Build a display row aligned to HEADERS from a raw-metric dict `m`."""
-    imp, plays, v3, thru = m["imp"], m["plays"], m["v3"], m["thru"]
+    """Build a display row aligned to HEADERS from a raw-metric dict `m`. A None
+    metric renders blank (channel doesn't support it); derived rates blank when
+    their inputs are missing — never fabricated."""
+    def I(v):
+        return "" if v is None else int(v)
+
+    def rate(num, den):
+        return round(num / den * 100, 1) if (num is not None and den) else ""
+
+    imp, plays, v3, thru, p100, ws, clk = (m.get(k) for k in ("imp", "plays", "v3", "thru", "p100", "ws", "clk"))
     return [
         channel, locale, str(launched) if launched else "", str(last) if last else "",
-        int(days), int(imp), int(plays), int(v3), int(thru),
-        int(m["p25"]), int(m["p50"]), int(m["p75"]), int(m["p100"]),
-        round(m["ws"] / plays, 1) if plays else 0,
-        round(m["p100"] / plays * 100, 1) if plays else 0,
-        int(m["clk"]),
-        round(m["clk"] / imp * 100, 3) if imp else 0,
-        round(v3 / plays * 100, 1) if plays else 0,
-        round(thru / plays * 100, 1) if plays else 0,
-        int(m["rx"]), int(m["cm"]), int(m["sh"]), int(m["sv"]),
+        int(days) if days else "", I(imp), I(plays), I(v3), I(thru),
+        I(m.get("p25")), I(m.get("p50")), I(m.get("p75")), I(p100),
+        round(ws / plays, 1) if (ws is not None and plays) else "",
+        rate(p100, plays),
+        I(clk),
+        round(clk / imp * 100, 3) if (clk is not None and imp) else "",
+        rate(v3, plays),
+        rate(thru, plays),
+        I(m.get("rx")), I(m.get("cm")), I(m.get("sh")), I(m.get("sv")),
     ]
 
 
@@ -133,10 +144,13 @@ def fetch_meta(conn) -> list[dict]:
 
 
 def fetch_all_video_rows(conn) -> list[dict]:
-    """All channels. Only Meta is implemented today; the rest are pending
-    per-channel video-format extractors (see CHANNELS_PENDING / module docs)."""
+    """All monitored channels. Meta comes from its persisted daily table;
+    Reddit + YouTube are pulled live (best-effort) and keyed by ramp id — they
+    yield rows once GMR-named video campaigns go live. TikTok is still blocked."""
+    from src.video_format_metrics import build_reddit_video_rows, build_youtube_video_rows
     rows = fetch_meta(conn)
-    # Future: rows += fetch_youtube(conn); rows += fetch_reddit(conn); rows += fetch_tiktok(conn)
+    rows += build_reddit_video_rows()
+    rows += build_youtube_video_rows()
     return rows
 
 
@@ -160,8 +174,12 @@ def _write_ramp_tab(sh, ramp_id: str, entries: list[dict], refreshed: str) -> No
     entries = sorted(entries, key=lambda e: (e["channel"], e["locale"]))
     data_rows = [_row_cells(e["channel"], e["locale"], e["launched"], e["last"], e["days"], e["m"])
                  for e in entries]
-    # TOTAL across every video in the ramp
-    tot = {k: sum(e["m"][k] for e in entries) for k in _METRIC_KEYS}
+    # TOTAL across every video in the ramp. None = channel didn't supply the
+    # metric → summed as absent; stays blank if no channel supplied it.
+    def _sum(k):
+        vals = [e["m"].get(k) for e in entries if e["m"].get(k) is not None]
+        return sum(vals) if vals else None
+    tot = {k: _sum(k) for k in _METRIC_KEYS}
     data_rows.append(_row_cells("TOTAL", "", "", "", 0, tot))
 
     channels = ", ".join(sorted({e["channel"] for e in entries}))
@@ -215,14 +233,15 @@ def _write_overview(sh, by_ramp: dict, refreshed: str) -> None:
         entries = by_ramp[ramp]
         chans = ", ".join(sorted({e["channel"] for e in entries}))
         locs = ", ".join(sorted({e["locale"] for e in entries}))
-        imp = sum(e["m"]["imp"] for e in entries)
+        imp = sum(e["m"].get("imp") or 0 for e in entries)
         rows.append([ramp, ramp, chans, locs, len(entries), int(imp)])
 
-    pending = [["", ""]] + [["Pending channels", ""]] + \
-              [[ch, why] for ch, why in CHANNELS_PENDING.items()]
+    coverage = ([["", ""], ["Channel coverage", ""]]
+                + [[ch, why] for ch, why in CHANNELS_MONITORED.items()]
+                + [[ch, why] for ch, why in CHANNELS_PENDING.items()])
     body = ([["Video Ad Metrics — Overview"],
              [f"One tab per ramp · refreshed {refreshed}"],
-             [], ov_headers] + rows + pending)
+             [], ov_headers] + rows + coverage)
     ws.clear()
     ws.update(body, "A1", value_input_option="RAW")
     ws.format("A1", {"textFormat": {"bold": True, "fontSize": 14}})
