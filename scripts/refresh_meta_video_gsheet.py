@@ -66,9 +66,7 @@ HEADERS = [
     "Impressions", "Video plays", "3-sec views", "ThruPlays",
     "Watched 25%", "Watched 50%", "Watched 75%", "Watched 100%",
     "Avg watch time (s)", "Completion % (100%/plays)",
-    "Clicks", "Spend (USD)",
-    "CTR %", "Hook rate % (3s/plays)", "ThruPlay rate % (thru/plays)",
-    "CPM (USD)", "Cost / 3-sec view", "Cost / ThruPlay",
+    "Clicks", "CTR %", "Hook rate % (3s/plays)", "ThruPlay rate % (thru/plays)",
     "Reactions", "Comments", "Shares", "Saves",
 ]
 HEADER_ROW = 4  # title(1) subtitle(2) blank(3) header(4)
@@ -90,13 +88,10 @@ def _row_cells(channel, locale, launched, last, days, m) -> list:
         int(m["p25"]), int(m["p50"]), int(m["p75"]), int(m["p100"]),
         round(m["ws"] / plays, 1) if plays else 0,
         round(m["p100"] / plays * 100, 1) if plays else 0,
-        int(m["clk"]), round(m["spend"], 2),
+        int(m["clk"]),
         round(m["clk"] / imp * 100, 3) if imp else 0,
         round(v3 / plays * 100, 1) if plays else 0,
         round(thru / plays * 100, 1) if plays else 0,
-        round(m["spend"] / imp * 1000, 2) if imp else 0,
-        round(m["spend"] / v3, 4) if v3 else 0,
-        round(m["spend"] / thru, 4) if thru else 0,
         int(m["rx"]), int(m["cm"]), int(m["sh"]), int(m["sv"]),
     ]
 
@@ -193,14 +188,12 @@ def _write_ramp_tab(sh, ramp_id: str, entries: list[dict], refreshed: str) -> No
               {"backgroundColor": {"red": .905, "green": .933, "blue": .968},
                "textFormat": {"bold": True}})
     fmt = {
-        "#,##0": [6, 7, 8, 9, 10, 11, 12, 13, 16, 24, 25, 26, 27],
-        "$#,##0.00": [17, 21], "$#,##0.0000": [22, 23],
-        '0.0"%"': [15, 18, 19, 20], "0.0": [14],
+        "#,##0": [6, 7, 8, 9, 10, 11, 12, 13, 16, 20, 21, 22, 23],
+        '0.0"%"': [15, 17, 18, 19], "0.0": [14],
     }
     for pattern, cols in fmt.items():
-        typ = "CURRENCY" if pattern.startswith("$") else "NUMBER"
         for c in cols:
-            ws.format(_a1(top, c, last_row, c), {"numberFormat": {"type": typ, "pattern": pattern}})
+            ws.format(_a1(top, c, last_row, c), {"numberFormat": {"type": "NUMBER", "pattern": pattern}})
 
     sh.batch_update({"requests": [
         {"updateSheetProperties": {
@@ -216,15 +209,14 @@ def _write_ramp_tab(sh, ramp_id: str, entries: list[dict], refreshed: str) -> No
 def _write_overview(sh, by_ramp: dict, refreshed: str) -> None:
     ws = _ws(sh, "Overview")
     ov_headers = ["Ramp", "Tab", "Channels live", "Locales", "Videos (rows)",
-                  "Impressions", "Spend (USD)"]
+                  "Impressions"]
     rows = []
     for ramp in sorted(by_ramp):
         entries = by_ramp[ramp]
         chans = ", ".join(sorted({e["channel"] for e in entries}))
         locs = ", ".join(sorted({e["locale"] for e in entries}))
         imp = sum(e["m"]["imp"] for e in entries)
-        spend = sum(e["m"]["spend"] for e in entries)
-        rows.append([ramp, ramp, chans, locs, len(entries), int(imp), round(spend, 2)])
+        rows.append([ramp, ramp, chans, locs, len(entries), int(imp)])
 
     pending = [["", ""]] + [["Pending channels", ""]] + \
               [[ch, why] for ch, why in CHANNELS_PENDING.items()]
@@ -241,9 +233,7 @@ def _write_overview(sh, by_ramp: dict, refreshed: str) -> None:
         "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}}})
     pend_row = 4 + len(rows) + 2
     ws.format(f"A{pend_row}", {"textFormat": {"bold": True, "foregroundColor": {"red": .75, "green": 0, "blue": 0}}})
-    for c, patt in ((6, "#,##0"), (7, "$#,##0.00")):
-        ws.format(_a1(5, c, 4 + len(rows), c),
-                  {"numberFormat": {"type": "CURRENCY" if patt.startswith("$") else "NUMBER", "pattern": patt}})
+    ws.format(_a1(5, 6, 4 + len(rows), 6), {"numberFormat": {"type": "NUMBER", "pattern": "#,##0"}})
     sh.batch_update({"requests": [
         {"updateSheetProperties": {"properties": {"sheetId": ws.id, "gridProperties": {"frozenRowCount": 4}},
                                     "fields": "gridProperties.frozenRowCount"}},
