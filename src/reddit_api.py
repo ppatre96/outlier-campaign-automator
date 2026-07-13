@@ -384,6 +384,48 @@ class RedditClient(AdPlatformClient):
         log.info("Reddit daily reporting: %d (campaign × day) rows (window=%dd)", len(out), window_days)
         return out
 
+    def list_campaigns(self) -> dict[str, str]:
+        """Return {campaign_id: name} for the account — used to attribute
+        reporting rows (which key by id) back to a ramp via the campaign name."""
+        self._ensure_init()
+        data = self._api("GET", f"/ad_accounts/{self._account_id}/campaigns")
+        camps = data if isinstance(data, list) else (data.get("data") or data.get("campaigns") or [])
+        return {str(c.get("id")): (c.get("name") or "") for c in camps if c.get("id")}
+
+    def fetch_video_metrics_daily(self, window_days: int = 180) -> list[dict]:
+        """Per-(campaign × day) VIDEO delivery + engagement from the reports API.
+        Adds the video-engagement fields to the daily report. A campaign is a
+        video campaign for a given day when `video_started` > 0. Returns a list
+        of raw metric dicts (spend in microcurrency). Best-effort field set per
+        the Reddit Ads API v3 reporting spec."""
+        from datetime import datetime, timedelta, timezone
+
+        self._ensure_init()
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=int(window_days))
+        fields = ["impressions", "clicks", "spend", "video_started",
+                  "video_watched_3_seconds", "video_watched_25_percent",
+                  "video_watched_50_percent", "video_watched_75_percent",
+                  "video_watched_100_percent"]
+        data = self._api("POST", f"/ad_accounts/{self._account_id}/reports", {
+            "breakdowns":   ["CAMPAIGN_ID", "DATE"],
+            "fields":       fields,
+            "starts_at":    start.strftime("%Y-%m-%dT00:00:00Z"),
+            "ends_at":      end.strftime("%Y-%m-%dT00:00:00Z"),
+            "time_zone_id": "GMT",
+        })
+        out: list[dict] = []
+        for m in data.get("metrics", []) or []:
+            cid = str(m.get("campaign_id") or "")
+            day = str(m.get("date") or "")[:10]
+            if not (cid and day):
+                continue
+            out.append({"campaign_id": cid, "metric_date": day,
+                        **{f: int(m.get(f) or 0) for f in fields if f != "spend"},
+                        "spend": float(m.get("spend") or 0)})
+        log.info("Reddit video reporting: %d (campaign × day) rows (window=%dd)", len(out), window_days)
+        return out
+
     def upload_image(self, image_path: str | Path) -> str:
         """Host the PNG at a URL Reddit can ingest as a post's media_url.
 
