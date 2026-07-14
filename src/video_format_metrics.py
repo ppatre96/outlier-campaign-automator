@@ -52,6 +52,7 @@ def _fold(entries: list[dict]) -> list[dict]:
         cur = agg.get(key)
         if cur is None:
             cur = {"ramp_id": e["ramp_id"], "channel": e["channel"], "locale": e["locale"],
+                   "lang": e.get("lang", e["locale"]),
                    "launched": e["metric_date"], "last": e["metric_date"], "days": set(),
                    "m": _blank_m()}
             agg[key] = cur
@@ -108,7 +109,8 @@ def build_reddit_video_rows(window_days: int = 180) -> list[dict]:
         if not ramp:
             continue  # pre-convention / non-ramp campaign — skip (no backfill)
         entries.append({"ramp_id": ramp, "channel": "Reddit", "locale": _locale_of(name),
-                        "metric_date": r["metric_date"], "m": _reddit_metrics(r)})
+                        "lang": _lang_of(name), "metric_date": r["metric_date"],
+                        "m": _reddit_metrics(r)})
     rows = _fold(entries)
     log.info("reddit video: %d (ramp × locale) rows from %d report rows", len(rows), len(report))
     return rows
@@ -175,7 +177,7 @@ def build_youtube_video_rows(window_days: int = 180) -> list[dict]:
                                      mm.video_quartile_p25_rate, mm.video_quartile_p50_rate,
                                      mm.video_quartile_p75_rate, mm.video_quartile_p100_rate)
                 entries.append({"ramp_id": ramp, "channel": "YouTube",
-                                "locale": _locale_of(name),
+                                "locale": _locale_of(name), "lang": _lang_of(name),
                                 "metric_date": str(row.segments.date), "m": m})
     except Exception as exc:  # noqa: BLE001 — best-effort
         log.warning("youtube video: fetch failed (non-fatal): %s", exc)

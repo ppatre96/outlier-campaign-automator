@@ -58,3 +58,43 @@ def test_fold_aggregates_and_dates():
 def test_locale_of_falls_back():
     assert vf._locale_of("Scale-GMR-0030 | Reddit | bn-IN") == "Bengali"
     assert vf._locale_of("Scale-GMR-0030 | Reddit | no-locale-token") == "(unspecified)"
+
+
+# ── targeting resolver (lives in the refresh script) ──
+import importlib.util
+_spec = importlib.util.spec_from_file_location(
+    "rg", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "scripts", "refresh_meta_video_gsheet.py"))
+rg = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(rg)
+
+
+def test_clean_icp_drops_campaign_names():
+    assert rg._clean_icp("Bengali generalist contributors") == "Bengali generalist contributors"
+    assert rg._clean_icp("Scale-GMR-0023 | Meta | bn-IN") == ""          # has pipe + gmr
+    assert rg._clean_icp("scale-gmr-0023+|+meta+|+bn-in") == ""          # slugified/lowercased
+    assert rg._clean_icp("") == ""
+
+
+def test_targeting_for_channel_and_fallback():
+    import collections
+    idx = collections.defaultdict(lambda: collections.defaultdict(set))
+    # Meta row for (GMR-0023, Bengali)
+    idx[("GMR-0023", "Bengali", "meta")]["icp"].add("Bengali generalist contributors")
+    idx[("GMR-0023", "Bengali", "meta")]["geo"].add("South Asian (BD, IN)")
+    idx[("GMR-0023", "Bengali", "meta")]["rate"].add("$5.50/hr")
+    idx[("GMR-0023", "Bengali", "meta")]["meta_audience_size"].add(192250000)
+    # channel-agnostic fallback bucket
+    idx[("GMR-0023", "Bengali", "*")]["icp"].add("Bengali generalist contributors")
+    idx[("GMR-0023", "Bengali", "*")]["geo"].add("South Asian (BD, IN)")
+    idx[("GMR-0023", "Bengali", "*")]["rate"].add("$5.50/hr")
+
+    meta = rg._targeting_for(idx, "GMR-0023", "Bengali", "Meta")
+    assert meta["icp"] == "Bengali generalist contributors"
+    assert meta["audience"] == 192250000 and meta["rate"] == "$5.50/hr"
+
+    # Reddit has no registry rows → ICP/geo/rate fall back to the agnostic bucket,
+    # audience stays blank (Reddit has no audience field).
+    reddit = rg._targeting_for(idx, "GMR-0023", "Bengali", "Reddit")
+    assert reddit["icp"] == "Bengali generalist contributors"
+    assert reddit["geo"] == "South Asian (BD, IN)" and reddit["audience"] is None
