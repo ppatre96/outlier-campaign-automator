@@ -65,7 +65,11 @@ CHANNELS_PENDING = {
 }
 
 HEADERS = [
-    "Channel", "Locale", "Launched", "Last day", "Days live",
+    "Channel", "Locale",
+    # ── who this video is targeting (from the campaign registry) ──
+    "ICP / cohort", "Geo", "Pay rate", "Est. audience", "Targeting detail",
+    # ── delivery + engagement ──
+    "Launched", "Last day", "Days live",
     "Impressions", "Video plays", "3-sec views", "ThruPlays",
     "Watched 25%", "Watched 50%", "Watched 75%", "Watched 100%",
     "Avg watch time (s)", "Completion % (100%/plays)",
@@ -75,6 +79,12 @@ HEADERS = [
 HEADER_ROW = 4  # title(1) subtitle(2) blank(3) header(4)
 
 
+def _ci(name: str) -> int:
+    """1-based column index of a header (keeps number-formatting robust to
+    column moves)."""
+    return HEADERS.index(name) + 1
+
+
 def _f(x) -> float:
     try:
         return float(x or 0)
@@ -82,19 +92,122 @@ def _f(x) -> float:
         return 0.0
 
 
-def _row_cells(channel, locale, launched, last, days, m) -> list:
-    """Build a display row aligned to HEADERS from a raw-metric dict `m`. A None
-    metric renders blank (channel doesn't support it); derived rates blank when
-    their inputs are missing — never fabricated."""
+# ── targeting / ICP (joined from the campaign registry) ────────────────────────
+# Which registry channels back each video channel's targeting.
+_REG_CHANNELS = {"Meta": {"meta"}, "YouTube": {"google", "google_search"}, "Reddit": {"reddit"}}
+_AUD_FIELD = {"Meta": "meta_audience_size", "YouTube": "google_audience_size", "Reddit": None}
+
+
+def _clean_icp(v) -> str:
+    """cohort_signature is occasionally polluted with the campaign name (some
+    Google rows; sometimes slugified/lowercased) — drop anything that looks like
+    a campaign name rather than an ICP description."""
+    v = (v or "").strip()
+    low = v.lower()
+    if not v or "gmr" in low or "|" in v or low.startswith("scale-"):
+        return ""
+    return v
+
+
+def _load_registry_rows() -> list[dict]:
+    """Authoritative campaign rows. Postgres is current in CI; fall back to the
+    committed JSON locally / on failure."""
+    try:
+        from src.ui_decisions import list_all_campaign_data
+        rows = list_all_campaign_data()
+        if rows:
+            return rows
+    except Exception as exc:  # noqa: BLE001
+        log.warning("targeting: Postgres registry read failed (%s) — using local JSON", exc)
+    try:
+        from src.campaign_registry import _load
+        return _load()
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def build_targeting_index() -> dict:
+    """Index registry targeting by (ramp, language, channel) plus a channel-
+    agnostic (ramp, language, '*') fallback for the cohort-level ICP fields."""
+    import collections
+    import json as _json
+    from src.creative_format_metrics import _lang_of, _ramp_of
+
+    idx: dict = collections.defaultdict(lambda: collections.defaultdict(set))
+    for r in _load_registry_rows():
+        if not isinstance(r, dict):
+            continue
+        name = r.get("campaign_name", "")
+        ramp, lang = _ramp_of(name), _lang_of(name)
+        if not (ramp and lang):
+            continue
+        ch = str(r.get("channel", "")).lower()
+        icp = _clean_icp(r.get("cohort_signature"))
+        geo_label = (r.get("geo_cluster_label") or "").strip()
+        geos = (r.get("geos") or "").strip()
+        geo = f"{geo_label} ({geos})" if (geo_label and geos) else (geo_label or geos)
+        rate = (r.get("advertised_rate") or "").strip()
+        for key in ((ramp, lang, ch), (ramp, lang, "*")):
+            if icp:
+                idx[key]["icp"].add(icp)
+            if geo:
+                idx[key]["geo"].add(geo)
+            if rate:
+                idx[key]["rate"].add(rate)
+        for fld in ("meta_audience_size", "google_audience_size", "audience_size"):
+            if r.get(fld):
+                idx[(ramp, lang, ch)][fld].add(int(r[fld]))
+        kw = r.get("google_keywords")
+        if kw:
+            try:
+                lst = _json.loads(kw) if isinstance(kw, str) else kw
+                if isinstance(lst, list):
+                    idx[(ramp, lang, ch)]["keywords"].update(str(x) for x in lst[:12])
+            except Exception:  # noqa: BLE001
+                pass
+    return idx
+
+
+def _targeting_for(idx: dict, ramp: str, lang: str, video_channel: str) -> dict:
+    """Resolve targeting for a (ramp × locale × channel) video row: channel-
+    specific where available, cohort-level fallback for ICP/geo/rate."""
+    icp, geo, rate, aud, kw = set(), set(), set(), set(), set()
+    aud_field = _AUD_FIELD.get(video_channel)
+    for ch in _REG_CHANNELS.get(video_channel, set()):
+        d = idx.get((ramp, lang, ch), {})
+        icp |= d.get("icp", set()); geo |= d.get("geo", set()); rate |= d.get("rate", set())
+        kw |= d.get("keywords", set())
+        if aud_field:
+            aud |= d.get(aud_field, set())
+    agnostic = idx.get((ramp, lang, "*"), {})
+    icp = icp or agnostic.get("icp", set())
+    geo = geo or agnostic.get("geo", set())
+    rate = rate or agnostic.get("rate", set())
+
+    def j(s):
+        return " · ".join(sorted(s))
+    return {"icp": j(icp), "geo": j(geo), "rate": j(rate),
+            "audience": max(aud) if aud else None,
+            "detail": (", ".join(sorted(kw))[:200]) if kw else ""}
+
+
+def _row_cells(channel, locale, t, launched, last, days, m) -> list:
+    """Build a display row aligned to HEADERS from targeting dict `t` and
+    raw-metric dict `m`. A None metric renders blank (channel doesn't support
+    it); derived rates blank when their inputs are missing — never fabricated."""
     def I(v):
         return "" if v is None else int(v)
 
     def rate(num, den):
         return round(num / den * 100, 1) if (num is not None and den) else ""
 
+    t = t or {}
     imp, plays, v3, thru, p100, ws, clk = (m.get(k) for k in ("imp", "plays", "v3", "thru", "p100", "ws", "clk"))
     return [
-        channel, locale, str(launched) if launched else "", str(last) if last else "",
+        channel, locale,
+        t.get("icp", ""), t.get("geo", ""), t.get("rate", ""),
+        "" if t.get("audience") is None else int(t["audience"]), t.get("detail", ""),
+        str(launched) if launched else "", str(last) if last else "",
         int(days) if days else "", I(imp), I(plays), I(v3), I(thru),
         I(m.get("p25")), I(m.get("p50")), I(m.get("p75")), I(p100),
         round(ws / plays, 1) if (ws is not None and plays) else "",
@@ -137,7 +250,7 @@ def fetch_meta(conn) -> list[dict]:
          p25, p50, p75, p100, ws, clk, spend, rx, cm, sh, sv) = r
         vals = (imp, plays, v3, thru, p25, p50, p75, p100, ws, clk, spend, rx, cm, sh, sv)
         m = {k: _f(v) for k, v in zip(_METRIC_KEYS, vals)}
-        out.append({"ramp_id": ramp, "channel": "Meta",
+        out.append({"ramp_id": ramp, "channel": "Meta", "lang": lang,
                     "locale": DISPLAY_LOCALE.get(lang, lang),
                     "launched": launched, "last": last, "days": int(days), "m": m})
     return out
@@ -168,19 +281,21 @@ def _a1(r1, c1, r2, c2):
     return f"{rowcol_to_a1(r1, c1)}:{rowcol_to_a1(r2, c2)}"
 
 
-def _write_ramp_tab(sh, ramp_id: str, entries: list[dict], refreshed: str) -> None:
+def _write_ramp_tab(sh, ramp_id: str, entries: list[dict], targeting: dict, refreshed: str) -> None:
     """Write one ramp's tab: header + one row per (channel × locale) + TOTAL."""
     ws = _ws(sh, ramp_id)
     entries = sorted(entries, key=lambda e: (e["channel"], e["locale"]))
-    data_rows = [_row_cells(e["channel"], e["locale"], e["launched"], e["last"], e["days"], e["m"])
-                 for e in entries]
+    data_rows = [_row_cells(
+        e["channel"], e["locale"],
+        _targeting_for(targeting, e["ramp_id"], e.get("lang", e["locale"]), e["channel"]),
+        e["launched"], e["last"], e["days"], e["m"]) for e in entries]
     # TOTAL across every video in the ramp. None = channel didn't supply the
     # metric → summed as absent; stays blank if no channel supplied it.
     def _sum(k):
         vals = [e["m"].get(k) for e in entries if e["m"].get(k) is not None]
         return sum(vals) if vals else None
     tot = {k: _sum(k) for k in _METRIC_KEYS}
-    data_rows.append(_row_cells("TOTAL", "", "", "", 0, tot))
+    data_rows.append(_row_cells("TOTAL", "", {}, "", "", 0, tot))
 
     channels = ", ".join(sorted({e["channel"] for e in entries}))
     subtitle = f"{ramp_id} · video creatives · channels: {channels} · refreshed {refreshed}"
@@ -206,13 +321,23 @@ def _write_ramp_tab(sh, ramp_id: str, entries: list[dict], refreshed: str) -> No
               {"backgroundColor": {"red": .905, "green": .933, "blue": .968},
                "textFormat": {"bold": True}})
     fmt = {
-        "#,##0": [6, 7, 8, 9, 10, 11, 12, 13, 16, 20, 21, 22, 23],
-        '0.0"%"': [15, 17, 18, 19], "0.0": [14],
+        "#,##0": ["Est. audience", "Impressions", "Video plays", "3-sec views", "ThruPlays",
+                 "Watched 25%", "Watched 50%", "Watched 75%", "Watched 100%",
+                 "Clicks", "Reactions", "Comments", "Shares", "Saves"],
+        '0.0"%"': ["Completion % (100%/plays)", "CTR %", "Hook rate % (3s/plays)",
+                   "ThruPlay rate % (thru/plays)"],
+        "0.0": ["Avg watch time (s)"],
     }
-    for pattern, cols in fmt.items():
-        for c in cols:
+    for pattern, names in fmt.items():
+        for name in names:
+            c = _ci(name)
             ws.format(_a1(top, c, last_row, c), {"numberFormat": {"type": "NUMBER", "pattern": pattern}})
+    # Wrap the free-text targeting columns so they stay readable.
+    for name in ("ICP / cohort", "Geo", "Targeting detail"):
+        c = _ci(name)
+        ws.format(_a1(top, c, last_row, c), {"wrapStrategy": "WRAP"})
 
+    detail_i = _ci("Targeting detail") - 1  # 0-based for the dimension range
     sh.batch_update({"requests": [
         {"updateSheetProperties": {
             "properties": {"sheetId": ws.id,
@@ -220,6 +345,13 @@ def _write_ramp_tab(sh, ramp_id: str, entries: list[dict], refreshed: str) -> No
             "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount"}},
         {"autoResizeDimensions": {"dimensions": {"sheetId": ws.id, "dimension": "COLUMNS",
                                                  "startIndex": 0, "endIndex": n}}},
+        # Clamp the free-text columns so auto-resize can't blow the layout wide.
+        {"updateDimensionProperties": {
+            "range": {"sheetId": ws.id, "dimension": "COLUMNS", "startIndex": _ci("ICP / cohort") - 1, "endIndex": _ci("ICP / cohort")},
+            "properties": {"pixelSize": 200}, "fields": "pixelSize"}},
+        {"updateDimensionProperties": {
+            "range": {"sheetId": ws.id, "dimension": "COLUMNS", "startIndex": detail_i, "endIndex": detail_i + 1},
+            "properties": {"pixelSize": 260}, "fields": "pixelSize"}},
     ]})
     log.info("  %s: %d video rows across %s", ramp_id, len(entries), channels)
 
@@ -323,12 +455,13 @@ def main() -> int:
     gc = gspread.authorize(creds)
     sh = _get_spreadsheet(gc, args)
 
+    targeting = build_targeting_index()
     refreshed = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     if not by_ramp:
         log.warning("No live video rows on any channel — writing Overview only.")
     _write_overview(sh, by_ramp, refreshed)
     for ramp in sorted(by_ramp):
-        _write_ramp_tab(sh, ramp, by_ramp[ramp], refreshed)
+        _write_ramp_tab(sh, ramp, by_ramp[ramp], targeting, refreshed)
 
     # Repurpose the default empty "Sheet1" if it's still hanging around.
     try:
