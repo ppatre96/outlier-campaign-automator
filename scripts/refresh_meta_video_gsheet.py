@@ -281,14 +281,23 @@ def _a1(r1, c1, r2, c2):
     return f"{rowcol_to_a1(r1, c1)}:{rowcol_to_a1(r2, c2)}"
 
 
-def _write_ramp_tab(sh, ramp_id: str, entries: list[dict], targeting: dict, refreshed: str) -> None:
+def _write_ramp_tab(sh, ramp_id: str, entries: list[dict], targeting: dict,
+                    meta_targeting: dict, refreshed: str) -> None:
     """Write one ramp's tab: header + one row per (channel × locale) + TOTAL."""
     ws = _ws(sh, ramp_id)
     entries = sorted(entries, key=lambda e: (e["channel"], e["locale"]))
-    data_rows = [_row_cells(
-        e["channel"], e["locale"],
-        _targeting_for(targeting, e["ramp_id"], e.get("lang", e["locale"]), e["channel"]),
-        e["launched"], e["last"], e["days"], e["m"]) for e in entries]
+    data_rows = []
+    for e in entries:
+        lang = e.get("lang", e["locale"])
+        t = _targeting_for(targeting, e["ramp_id"], lang, e["channel"])
+        # For Meta, replace the (blank) registry detail with the EXACT live
+        # ad-set targeting pulled from the Meta API.
+        if e["channel"] == "Meta":
+            live = meta_targeting.get((e["ramp_id"], lang))
+            if live:
+                t = {**t, "detail": live}
+        data_rows.append(_row_cells(e["channel"], e["locale"], t,
+                                    e["launched"], e["last"], e["days"], e["m"]))
     # TOTAL across every video in the ramp. None = channel didn't supply the
     # metric → summed as absent; stays blank if no channel supplied it.
     def _sum(k):
@@ -456,12 +465,18 @@ def main() -> int:
     sh = _get_spreadsheet(gc, args)
 
     targeting = build_targeting_index()
+    try:
+        from src.creative_format_metrics import fetch_meta_video_targeting
+        meta_targeting = fetch_meta_video_targeting(window_days=args.window)
+    except Exception as exc:  # noqa: BLE001 — best-effort
+        log.warning("meta targeting fetch failed (non-fatal): %s", exc)
+        meta_targeting = {}
     refreshed = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     if not by_ramp:
         log.warning("No live video rows on any channel — writing Overview only.")
     _write_overview(sh, by_ramp, refreshed)
     for ramp in sorted(by_ramp):
-        _write_ramp_tab(sh, ramp, by_ramp[ramp], targeting, refreshed)
+        _write_ramp_tab(sh, ramp, by_ramp[ramp], targeting, meta_targeting, refreshed)
 
     # Repurpose the default empty "Sheet1" if it's still hanging around.
     try:
