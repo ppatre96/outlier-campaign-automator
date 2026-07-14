@@ -186,3 +186,136 @@ def build_meta_creative_format_daily(window_days: int = 30) -> int:
     log.info("meta creative-format: wrote %d (ramp×lang×format×day) rows (window=%dd, %d ads classified)",
              written, window_days, len(_fmt_cache))
     return written
+
+
+# ── live ad-set targeting for video ads (exact params set on Meta) ──────────────
+def _ad_is_video(ad_id: str, cache: dict) -> bool:
+    """True when an ad's creative is a video (cached)."""
+    if ad_id in cache:
+        return cache[ad_id]
+    v = False
+    try:
+        from facebook_business.adobjects.ad import Ad
+        from facebook_business.adobjects.adcreative import AdCreative
+        cid = (Ad(ad_id).api_get(fields=["creative"]).get("creative") or {}).get("id")
+        if cid:
+            c = AdCreative(cid).api_get(fields=["object_type", "video_id", "object_story_spec"])
+            v = (c.get("object_type") == "VIDEO" or bool(c.get("video_id"))
+                 or bool((c.get("object_story_spec") or {}).get("video_data")))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("meta targeting: classify %s failed: %s", ad_id, exc)
+    cache[ad_id] = v
+    return v
+
+
+def _targeting_components(data: dict) -> dict:
+    """Pull the human-relevant knobs out of one ad-set targeting spec."""
+    gl = data.get("geo_locations") or {}
+    geo = set(gl.get("countries") or [])
+    for k in ("regions", "cities"):
+        geo.update(x["name"] for x in (gl.get(k) or []) if isinstance(x, dict) and x.get("name"))
+    interests = set()
+    for spec in data.get("flexible_spec") or []:
+        for grp in ("interests", "behaviors", "life_events", "industries",
+                    "work_positions", "education_majors"):
+            interests.update(x["name"] for x in (spec.get(grp) or [])
+                             if isinstance(x, dict) and x.get("name"))
+    interests.update(x["name"] for x in (data.get("interests") or [])
+                     if isinstance(x, dict) and x.get("name"))
+    custom = {x["name"] for x in (data.get("custom_audiences") or [])
+              if isinstance(x, dict) and x.get("name")}
+    excluded = {x["name"] for x in (data.get("excluded_custom_audiences") or [])
+                if isinstance(x, dict) and x.get("name")}
+    genders = data.get("genders")
+    gtxt = "Men" if genders == [1] else "Women" if genders == [2] else "All genders"
+    return {"geo": geo, "age_min": data.get("age_min"), "age_max": data.get("age_max"),
+            "genders": gtxt, "interests": interests, "custom": custom, "excluded": excluded,
+            "advantage": bool((data.get("targeting_automation") or {}).get("advantage_audience"))}
+
+
+def _render_targeting(comps: list[dict]) -> str:
+    """Fold one-or-more ad-set component dicts into one readable summary."""
+    geo, interests, custom, excluded, genders = set(), set(), set(), set(), set()
+    amins, amaxs, advantage = [], [], False
+    for c in comps:
+        geo |= c["geo"]; interests |= c["interests"]; custom |= c["custom"]; excluded |= c["excluded"]
+        genders.add(c["genders"]); advantage = advantage or c["advantage"]
+        if c["age_min"]:
+            amins.append(c["age_min"])
+        if c["age_max"]:
+            amaxs.append(c["age_max"])
+    parts = [f"{len(comps)} ad set{'s' if len(comps) != 1 else ''}"]
+    if geo:
+        parts.append("Geo: " + ", ".join(sorted(geo)))
+    if amins and amaxs:
+        parts.append(f"Age {min(amins)}–{max(amaxs)}")
+    parts.append(next(iter(genders)) if len(genders) == 1 else "All genders")
+    if interests:
+        parts.append("Interests: " + ", ".join(sorted(interests)))
+    if custom:
+        parts.append("Custom/Lookalike: " + ", ".join(sorted(custom)))
+    if advantage:
+        parts.append("Advantage+ audience ON")
+    if excluded:
+        parts.append(f"Excludes {len(excluded)} audience(s)")
+    return " · ".join(parts)
+
+
+def fetch_meta_video_targeting(window_days: int = 30) -> dict:
+    """Return {(ramp, language): targeting summary} — the EXACT targeting set on
+    the ad sets that contain delivering video ads, read live from the Meta API.
+    Best-effort: returns {} without creds or on failure."""
+    if not (config.META_ACCESS_TOKEN and config.META_AD_ACCOUNT_ID):
+        return {}
+    try:
+        from facebook_business.api import FacebookAdsApi
+        from facebook_business.adobjects.adaccount import AdAccount
+        from facebook_business.adobjects.adset import AdSet
+    except Exception as exc:  # noqa: BLE001
+        log.warning("meta targeting: facebook_business unavailable: %s", exc)
+        return {}
+    acct_id = config.META_AD_ACCOUNT_ID
+    if acct_id and not acct_id.startswith("act_"):
+        acct_id = f"act_{acct_id}"
+    since = (datetime.now(timezone.utc) - timedelta(days=int(window_days))).date().isoformat()
+    until = datetime.now(timezone.utc).date().isoformat()
+    try:
+        FacebookAdsApi.init(access_token=config.META_ACCESS_TOKEN,
+                            api_version=config.META_API_VERSION or "v21.0")
+        rows = AdAccount(acct_id).get_insights(params={
+            "time_range": {"since": since, "until": until}, "level": "ad",
+            "fields": ["ad_id", "adset_id", "campaign_name"], "limit": 500})
+    except Exception as exc:  # noqa: BLE001
+        log.warning("meta targeting: insights fetch failed: %s", exc)
+        return {}
+
+    vid_cache: dict = {}
+    adsets_by_key: dict[tuple, set] = collections.defaultdict(set)
+    for r in rows:
+        ramp = _ramp_of(r.get("campaign_name", ""))
+        lang = _lang_of(r.get("campaign_name", ""))
+        adset_id = r.get("adset_id")
+        if not (ramp and lang and adset_id):
+            continue
+        if _ad_is_video(r["ad_id"], vid_cache):
+            adsets_by_key[(ramp, lang)].add(adset_id)
+
+    out: dict = {}
+    tcache: dict = {}
+    for key, adset_ids in adsets_by_key.items():
+        comps = []
+        for aid in adset_ids:
+            if aid not in tcache:
+                try:
+                    tg = AdSet(aid).api_get(fields=["targeting"]).get("targeting")
+                    data = tg.export_all_data() if hasattr(tg, "export_all_data") else dict(tg or {})
+                    tcache[aid] = _targeting_components(data)
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("meta targeting: adset %s fetch failed: %s", aid, exc)
+                    tcache[aid] = None
+            if tcache[aid]:
+                comps.append(tcache[aid])
+        if comps:
+            out[key] = _render_targeting(comps)
+    log.info("meta targeting: resolved %d (ramp×language) video cohorts", len(out))
+    return out

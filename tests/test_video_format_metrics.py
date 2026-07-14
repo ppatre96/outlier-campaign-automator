@@ -98,3 +98,33 @@ def test_targeting_for_channel_and_fallback():
     reddit = rg._targeting_for(idx, "GMR-0023", "Bengali", "Reddit")
     assert reddit["icp"] == "Bengali generalist contributors"
     assert reddit["geo"] == "South Asian (BD, IN)" and reddit["audience"] is None
+
+
+# ── Meta live-targeting summariser (creative_format_metrics) ──
+import src.creative_format_metrics as cf
+
+
+def test_meta_targeting_broad_adset():
+    # Shape observed live for a broad Bengali ad set (geo + age + exclusions + Advantage+).
+    data = {"age_min": 18, "age_max": 65, "geo_locations": {"countries": ["IN"]},
+            "excluded_custom_audiences": [{"name": "Generalists Actives"}],
+            "targeting_automation": {"advantage_audience": 1}}
+    s = cf._render_targeting([cf._targeting_components(data)])
+    assert "Geo: IN" in s and "Age 18–65" in s and "All genders" in s
+    assert "Advantage+ audience ON" in s and "Excludes 1 audience(s)" in s
+    assert "Interests" not in s   # none set → not shown
+
+
+def test_meta_targeting_interests_and_lookalike_fold():
+    a = {"age_min": 25, "age_max": 55, "genders": [2],
+         "geo_locations": {"countries": ["US", "CA"]},
+         "flexible_spec": [{"interests": [{"name": "Artificial intelligence"}, {"name": "Data science"}]}]}
+    b = {"age_min": 18, "age_max": 65, "genders": [2],
+         "geo_locations": {"countries": ["US"]},
+         "custom_audiences": [{"name": "LAL 1% Signups"}]}
+    s = cf._render_targeting([cf._targeting_components(a), cf._targeting_components(b)])
+    assert s.startswith("2 ad sets")
+    assert "Age 18–65" in s          # min-of-mins .. max-of-maxs across ad sets
+    assert "Women" in s
+    assert "Artificial intelligence, Data science" in s
+    assert "Custom/Lookalike: LAL 1% Signups" in s
