@@ -163,6 +163,53 @@ Return ONLY a JSON object with the SAME keys, values translated into {lang}."""
     return localized
 
 
+def localize_inmail(subject: str, body: str, locale) -> tuple[str, str]:
+    """Translate a LinkedIn InMail subject + body into the target locale's
+    language in ONE LLM call, keeping "$"/USD/numerals + "Outlier" in English and
+    preserving the identity-first hook, angle, and ~length.
+
+    Unlike `localize_variant` this is NOT gated on config — it's driven by the
+    per-ramp `localize_inmail` decision flag (console Review tab). No-op (returns
+    the inputs unchanged) for English locales or on any LLM/parse failure, so a
+    failure degrades to the English InMail rather than breaking the send.
+    """
+    lang = (getattr(locale, "display_language", "") or "").strip() if locale else ""
+    if not lang or lang.lower() == "english":
+        return subject, body
+    present = {"subject": (subject or "").strip(), "body": (body or "").strip()}
+    if not present["body"]:
+        return subject, body
+
+    prompt = f"""\
+Translate the following Outlier LinkedIn InMail into {lang}. Preserve the meaning,
+the identity-first opening hook, the angle, and the approximate length (subject
+≤60 chars, body 100–130 words). Output STRICT JSON only — keys "subject" and
+"body", no markdown fences, no commentary.
+
+{_KEEP_ENGLISH_RULE}
+
+Locale brand-voice rules for {lang}:
+{locale_brand_voice_notes(lang)}
+
+INMAIL (JSON):
+{json.dumps(present, ensure_ascii=False, indent=2)}
+
+Return ONLY a JSON object with keys "subject" and "body", translated into {lang}."""
+    try:
+        raw = call_claude(messages=[{"role": "user", "content": prompt}], max_tokens=900)
+        out = _extract_json(raw) or {}
+    except Exception as exc:  # noqa: BLE001
+        log.warning("localize_inmail LLM failed (%s) — keeping English InMail", exc)
+        return subject, body
+    if not isinstance(out, dict):
+        return subject, body
+    s, b = out.get("subject"), out.get("body")
+    new_subject = s.strip() if isinstance(s, str) and s.strip() else subject
+    new_body = b.strip() if isinstance(b, str) and b.strip() else body
+    log.info("localize_inmail → %s: localized subject+body", lang)
+    return new_subject, new_body
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
 

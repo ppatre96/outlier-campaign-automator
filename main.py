@@ -1223,6 +1223,37 @@ def _process_inmail_campaigns(
         )
         return
 
+    # InMail localization (opt-in per ramp via the console Review tab): when the
+    # decision flag is set and the ramp has a non-English target locale, InMail
+    # subject/body are translated into that language before validation/upload.
+    _inmail_localize = False
+    _inmail_locale = None
+    if ramp_id:
+        try:
+            from src.ui_decisions import get_decision
+            _inmail_localize = bool(getattr(get_decision(ramp_id), "localize_inmail", False))
+        except Exception as _exc:  # noqa: BLE001 — best-effort; default English
+            log.debug("InMail localize flag lookup failed (%s) — staying English", _exc)
+    if _inmail_localize and naming_meta and naming_meta.get("locale"):
+        from src.locales import get_locale
+        _inmail_locale = get_locale(naming_meta.get("locale"))
+    if _inmail_localize:
+        log.info("_process_inmail_campaigns: InMail localization ON (locale=%s)",
+                 getattr(_inmail_locale, "display_language", None))
+
+    def _maybe_localize(variant):
+        """Translate an InMailVariant's subject+body when localization is on and
+        a non-English locale resolved. No-op otherwise. Returns a (possibly new)
+        variant."""
+        if not (_inmail_localize and _inmail_locale):
+            return variant
+        from src.copy_adapter import localize_inmail as _loc
+        s, b = _loc(variant.subject, variant.body, _inmail_locale)
+        if s == variant.subject and b == variant.body:
+            return variant
+        import dataclasses
+        return dataclasses.replace(variant, subject=s, body=b)
+
     # Group-level name: Smart Ramp v2 spec without the per-leaf angle/geo
     # detail (those live on the child campaigns). Falls back to the legacy
     # "Outlier <flow_id> <location> InMail" pattern when naming_meta isn't
@@ -1281,6 +1312,7 @@ def _process_inmail_campaigns(
                         task_card=cached_card(ramp_id, cohort_id_override),
                     )
                     v = variants[["A","B","C"].index(angle_label) % len(variants)]
+                    v = _maybe_localize(v)
                 log.info("[dry-run] Subject: %s", v.subject)
                 log.info("[dry-run] Body:\n%s", v.body)
                 log.info("[dry-run] CTA: %s", v.cta_label)
@@ -1383,6 +1415,7 @@ def _process_inmail_campaigns(
             for angle_label in inmail_angle_keys:
                 angle_idx = inmail_angle_keys.index(angle_label)
                 variant = variants[angle_idx % len(variants)]
+                variant = _maybe_localize(variant)
                 full_copy = f"{variant.subject}\n\n{variant.body}"
                 report = brand_voice_validator.validate_copy(full_copy)
                 if report.is_compliant:
