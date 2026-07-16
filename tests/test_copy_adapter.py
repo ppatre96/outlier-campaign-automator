@@ -198,3 +198,32 @@ class TestLocalizeVariant:
         with patch("config.LOCALIZE_PLATFORM_COPY", False):
             out = localize_variant(CANONICAL, HI)
         assert out is CANONICAL
+
+
+# ── InMail localization (localize_inmail) ──────────────────────────────────────
+from src.copy_adapter import localize_inmail  # noqa: E402
+
+
+def test_localize_inmail_english_and_none_are_noop():
+    # English locale → no translation, no LLM call.
+    with patch("src.copy_adapter.call_claude") as m:
+        class _EN:
+            display_language = "English"
+        assert localize_inmail("Subj", "Body text", _EN()) == ("Subj", "Body text")
+        assert localize_inmail("Subj", "Body text", None) == ("Subj", "Body text")
+        m.assert_not_called()
+
+
+def test_localize_inmail_translates_non_english():
+    with patch("src.copy_adapter.call_claude") as m:
+        m.return_value = '{"subject": "Asunto ES", "body": "Cuerpo ES $5.50/hr"}'
+        subj, body = localize_inmail("English subject", "English body $5.50/hr", get_locale("es-mx"))
+        assert subj == "Asunto ES" and body == "Cuerpo ES $5.50/hr"
+        # prompt names the language + keeps $/USD rule
+        prompt = _prompt_of(m)
+        assert "Spanish" in prompt and "$" in prompt
+
+
+def test_localize_inmail_llm_failure_keeps_english():
+    with patch("src.copy_adapter.call_claude", side_effect=RuntimeError("boom")):
+        assert localize_inmail("Subj", "Body", get_locale("es-mx")) == ("Subj", "Body")

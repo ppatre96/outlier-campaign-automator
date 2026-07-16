@@ -56,6 +56,10 @@ class Decision:
     # prep, awaiting user-driven review+launch. Each entry:
     # {cohort_id, label, detected_at, status}. Orthogonal to `status`.
     pending_cohorts: list[dict] = field(default_factory=list)
+    # When true, InMail subject/body are localized into the ramp's target locale
+    # language (set by the reviewer in the console Review tab). Default off →
+    # InMails stay English, matching prior behavior.
+    localize_inmail: bool = False
 
 
 _SCHEMA_READY = False
@@ -84,6 +88,10 @@ def _ensure_pending_cols() -> None:
                 "ALTER TABLE ramp_decisions "
                 "ADD COLUMN IF NOT EXISTS pending_cohorts JSONB NOT NULL DEFAULT '[]'::jsonb"
             )
+            cur.execute(
+                "ALTER TABLE ramp_decisions "
+                "ADD COLUMN IF NOT EXISTS localize_inmail BOOLEAN NOT NULL DEFAULT FALSE"
+            )
         _SCHEMA_READY = True
     except Exception as exc:                                   # pragma: no cover
         log.debug("pending-cohort column ensure skipped (non-fatal): %s", exc)
@@ -105,7 +113,7 @@ def _connect():
 _DECISION_COLS = (
     "ramp_id, status::text, channels, budgets, decided_by, decided_at, "
     "version, matched_domain, requester_name, summary, submitted_at, "
-    "coalesce(pending_cohorts, '[]'::jsonb)"
+    "coalesce(pending_cohorts, '[]'::jsonb), coalesce(localize_inmail, false)"
 )
 
 
@@ -123,6 +131,7 @@ def _row_to_decision(row) -> Decision:
         summary=row[9],
         submitted_at=row[10].isoformat() if row[10] else None,
         pending_cohorts=list(row[11] or []) if len(row) > 11 else [],
+        localize_inmail=bool(row[12]) if len(row) > 12 else False,
     )
 
 
