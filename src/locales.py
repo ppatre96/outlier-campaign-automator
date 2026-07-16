@@ -252,6 +252,38 @@ def get_locale(locale: str | None) -> LocaleTargeting | None:
     return LOCALES.get(key)
 
 
+# LinkedIn Ads supported campaign/profile languages (governs Message Ads too —
+# there is no separate InMail message-language setting; see the LinkedIn help
+# page "Supported languages for LinkedIn Ads campaigns", 35 langs, only Chinese
+# excluded). Keyed by our LocaleTargeting.display_language label. Used to gate
+# InMail localization: we only translate InMails into a language LinkedIn can
+# actually target. (EU delivery is a separate GEO/consent concern, not a
+# language block — surfaced as a caveat in the console, not enforced here.)
+LINKEDIN_AD_LANGUAGES = frozenset({
+    "Arabic", "Bengali", "Czech", "Danish", "Dutch", "English", "Finnish",
+    "French", "German", "Greek", "Hebrew", "Hindi", "Hungarian", "Indonesian",
+    "Italian", "Japanese", "Korean", "Malay", "Malaysian", "Marathi",
+    "Norwegian", "Persian", "Polish", "Portuguese", "Punjabi", "Romanian",
+    "Russian", "Spanish", "Swedish", "Tagalog", "Telugu", "Thai", "Turkish",
+    "Ukrainian", "Vietnamese",
+})
+
+
+def linkedin_supports_language(display_language: str) -> bool:
+    """True when LinkedIn Ads can target the given display language (so an
+    InMail localized into it can actually be delivered). Matches region-variant
+    labels too — e.g. "Mexican Spanish" → Spanish, "Brazilian Portuguese" →
+    Portuguese — by checking whether any supported language name is contained
+    in the label."""
+    dl = (display_language or "").strip()
+    if not dl:
+        return False
+    if dl in LINKEDIN_AD_LANGUAGES:
+        return True
+    low = dl.lower()
+    return any(lang.lower() in low for lang in LINKEDIN_AD_LANGUAGES)
+
+
 # ── Copy localization (2026-06-17) ─────────────────────────────────────────────
 # BCP-47 prefixes / exact codes that mean "English audience" → no localization.
 # language_pref is a BCP-47 code (e.g. "hi-IN", "en-US", "es-419"); en-* of any

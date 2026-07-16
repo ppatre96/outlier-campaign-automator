@@ -176,6 +176,13 @@ def localize_inmail(subject: str, body: str, locale) -> tuple[str, str]:
     lang = (getattr(locale, "display_language", "") or "").strip() if locale else ""
     if not lang or lang.lower() == "english":
         return subject, body
+    # Only localize into a language LinkedIn Ads can actually target — otherwise
+    # a translated InMail can't be delivered to that audience. (EU geo/consent
+    # is a separate concern handled at targeting time, not here.)
+    from src.locales import linkedin_supports_language
+    if not linkedin_supports_language(lang):
+        log.info("localize_inmail: %s not a LinkedIn-supported ad language — keeping English", lang)
+        return subject, body
     present = {"subject": (subject or "").strip(), "body": (body or "").strip()}
     if not present["body"]:
         return subject, body
