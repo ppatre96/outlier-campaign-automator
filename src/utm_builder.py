@@ -117,13 +117,15 @@ def resolve_base_lp_url(
     matched_domain: Optional[str] = None,
     sheets_client=None,
     ramp_id: Optional[str] = None,
+    cohort_id: Optional[str] = None,
 ) -> str:
     """Pull the per-cohort landing page URL.
 
     Resolution order:
       0. Postgres `lp_url_overrides` — reviewer-set override via the console's
-         Landing-page URLs section. Per-ramp ONLY (ramp_id × platform). When
-         set, wins over every other path. Skipped when ramp_id is None.
+         Landing-page URLs section. Resolved as cohort-specific
+         (ramp_id × platform × cohort_id) first, then ramp-wide. When set,
+         wins over every other path. Skipped when ramp_id is None.
       1. `campaign_state.utm_<channel>.<base_url|url|...>` — when the marketing
          team fills this in via Smart Ramp.
       2. `matched_domain` → slug via `config.LP_URL_BY_DOMAIN`, then slug →
@@ -143,7 +145,7 @@ def resolve_base_lp_url(
     if ramp_id:
         try:
             from src.console_db import get_lp_url_override
-            ov = get_lp_url_override(ramp_id, platform)
+            ov = get_lp_url_override(ramp_id, platform, cohort_id or "")
             if ov:
                 return ov
         except Exception as exc:

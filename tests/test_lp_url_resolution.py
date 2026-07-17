@@ -206,3 +206,35 @@ def test_sheet_read_failure_falls_back_silently():
             sheets_client=sheets,
         )
     assert url == "https://fallback.example/"
+
+
+# ── Path 0: Postgres per-cohort override wins, and cohort_id is threaded ───────
+
+def test_override_wins_and_receives_cohort_id():
+    """When a reviewer sets a per-cohort LP override, it beats campaign_state,
+    and resolve_base_lp_url passes the cohort_id through to the DB lookup so
+    the console's cohort-scoped row can be matched."""
+    with patch("src.console_db.get_lp_url_override", return_value="https://override.example/") as gov:
+        url = resolve_base_lp_url(
+            campaign_state={"utm_linkedin": {"base_url": "https://from-campaign-state.example/"}},
+            platform="linkedin",
+            fallback="https://fallback.example/",
+            ramp_id="GMR-0023",
+            cohort_id="cohort-abc",
+        )
+    assert url == "https://override.example/"
+    gov.assert_called_once_with("GMR-0023", "linkedin", "cohort-abc")
+
+
+def test_no_ramp_id_skips_override_lookup():
+    """ramp_id=None must never hit the DB even when cohort_id is supplied."""
+    with patch("src.console_db.get_lp_url_override") as gov:
+        url = resolve_base_lp_url(
+            campaign_state={"utm_linkedin": {"base_url": "https://cs.example/"}},
+            platform="linkedin",
+            fallback="https://fallback.example/",
+            ramp_id=None,
+            cohort_id="cohort-abc",
+        )
+    assert url == "https://cs.example/"
+    gov.assert_not_called()
