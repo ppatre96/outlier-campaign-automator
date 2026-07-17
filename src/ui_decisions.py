@@ -307,10 +307,13 @@ def release_channel_lock(
 
     Locks are keyed per (ramp_id, locale, channel) once the console has added
     the `locale` column (Phase 2). When `locales` is given, release exactly
-    those (locale × channel) pairs — the ones this scoped run held. When it's
-    empty/None (an all-locales launch) release every running lock for the
-    channel. Falls back to the legacy (ramp_id, channel) release when the
-    `locale` column doesn't exist yet, so either deploy order is safe.
+    those (locale x channel) pairs — the ones this scoped run held. When it's
+    empty/None, release only the whole-channel lock (locale = '') — the one a
+    cohort-scoped or legacy per-channel launch holds — so a run that never held
+    per-locale locks can NEVER stomp locks held by a concurrent per-locale
+    launch of the same channel. Falls back to the legacy (ramp_id, channel)
+    release when the `locale` column doesn't exist yet, so either deploy order
+    is safe.
     """
     channel = (channel or "").strip().lower()
     want = [str(l).strip().lower().replace("_", "-") for l in (locales or []) if str(l).strip()]
@@ -332,9 +335,21 @@ def release_channel_lock(
                     """,
                     (ramp_id, channel, want),
                 )
+            elif has_locale_col:
+                # No locales scoped → this run held only the whole-channel lock
+                # (locale = ''). Release just that; leave per-locale locks alone.
+                cur.execute(
+                    """
+                    UPDATE channel_locks
+                       SET status = 'released', released_at = NOW()
+                     WHERE ramp_id = %s AND channel = %s
+                       AND locale = '' AND status = 'running'
+                    """,
+                    (ramp_id, channel),
+                )
             else:
-                # No locale column (legacy) OR an all-locales launch → release
-                # every running lock for this (ramp, channel).
+                # Legacy table without the locale column → release the single
+                # (ramp, channel) row.
                 cur.execute(
                     """
                     UPDATE channel_locks
