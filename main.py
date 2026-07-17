@@ -5953,10 +5953,13 @@ def _process_row_both_modes(
         # Phase 2 — `channels` decision-row override filters the extras list.
         if channels is not None:
             allowed_extras = {c for c in channels if c != "linkedin"}
-            # A "google" channel selection covers BOTH Google arms — Display
-            # ("google") and Search ("google_search") — so the console's single
-            # Google toggle launches Search + Display together.
-            if "google" in allowed_extras:
+            # A bare "google" selection covers BOTH Google arms — Display
+            # ("google") and Search ("google_search") — for the full/approve-all
+            # path. But a SCOPED per-channel launch (ONLY_CHANNEL set) means the
+            # console picked exactly one Google arm: "google" = Display only,
+            # "google_search" = Search only. So only auto-pair the two when this
+            # is NOT a scoped single-channel run.
+            if "google" in allowed_extras and not (getattr(config, "ONLY_CHANNEL", "") or "").strip():
                 allowed_extras.add("google_search")
             filtered = [p for p in platforms if p in allowed_extras]
             if filtered != platforms:
@@ -6420,6 +6423,25 @@ def _launch_ramp(ramp_id: str, decision=None) -> dict:
                 pass
         except Exception as exc:
             log.warning("_launch_ramp: relaunch-replace archive failed (%s) — continuing to fresh launch", exc)
+
+    # Lock key: the console locks per GRANULAR channel. LinkedIn splits into
+    # Sponsored (static arm) and InMail (inmail arm); both dispatch
+    # only_channel=linkedin but the console locks/releases them under distinct
+    # keys ("linkedin" vs "linkedin_inmail") so the two don't block each other.
+    _arms = (os.environ.get("OUTLIER_ARMS") or "").strip().lower()
+    lock_channel = "linkedin_inmail" if (only_channel == "linkedin" and _arms == "inmail") else only_channel
+
+    # Unified launcher: prep the scoped cohort BEFORE launching, so a
+    # not-yet-prepped cohort launches in one action. Additive/idempotent
+    # (ON_CONFLICT); scoped by ONLY_COHORT/ONLY_LOCALES like the launch itself.
+    if only_channel and getattr(config, "PREP_THEN_LAUNCH", False):
+        try:
+            log.info("_launch_ramp: PREP_THEN_LAUNCH — prepping scoped cohort=%s before launch",
+                     getattr(config, "ONLY_COHORT", "") or "?")
+            run_launch_for_ramp(ramp_id, dry_run=False, prep_only=True, channels=channels, budgets=budgets)
+        except Exception as exc:
+            log.warning("_launch_ramp: prep-then-launch prep phase failed (%s) — attempting launch anyway", exc)
+
     try:
         return run_launch_for_ramp(
             ramp_id, dry_run=False, prep_only=False,
@@ -6430,15 +6452,15 @@ def _launch_ramp(ramp_id: str, decision=None) -> dict:
             try:
                 from src.ui_decisions import release_channel_lock
                 # Release exactly the (locale × channel) locks this scoped run
-                # held. ONLY_LOCALES is the console's acquired-locale set; empty
-                # means an all-locales launch → release every locale for the
-                # channel (handled inside release_channel_lock).
+                # held, under the granular lock key. ONLY_LOCALES is the
+                # console's acquired-locale set; empty → release only the
+                # whole-channel (locale='') lock (see release_channel_lock).
                 _rl = (os.environ.get("ONLY_LOCALES") or "").strip()
                 _rl_locales = [l for l in _rl.split(",") if l.strip()] if _rl else None
-                release_channel_lock(ramp_id=ramp_id, channel=only_channel, locales=_rl_locales)
+                release_channel_lock(ramp_id=ramp_id, channel=lock_channel, locales=_rl_locales)
             except Exception as exc:
                 log.warning("_launch_ramp: channel lock release failed (%s/%s): %s — TTL will clear it",
-                            ramp_id, only_channel, exc)
+                            ramp_id, lock_channel, exc)
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

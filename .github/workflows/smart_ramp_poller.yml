@@ -43,7 +43,7 @@ on:
           - "true"
           - "false"
       only_channel:
-        description: "Per-channel manual launch (feature #3): restrict this run to one channel and bypass the ramp status machine (channel_locks guard concurrency). Requires ramp_id + a prior approval. Blank = all approved channels."
+        description: "Per-channel manual launch (feature #3): restrict this run to one channel and bypass the ramp status machine (channel_locks guard concurrency). Requires ramp_id + a prior approval. Blank = all approved channels. NOTE: 'google' = Display only + 'google_search' = Search only when scoped (a bare 'google' in the full/approve path still covers both)."
         required: false
         default: ""
         type: choice
@@ -52,7 +52,26 @@ on:
           - "linkedin"
           - "meta"
           - "google"
+          - "google_search"
+          - "reddit"
           - "tiktok"
+      only_arms:
+        description: "LinkedIn arm scope: 'inmail' (Message Ads only) or 'static' (Sponsored Content only). Sets OUTLIER_ARMS. Blank = both. Lets the console launch LinkedIn InMail and Sponsored as independent channels."
+        required: false
+        default: ""
+        type: choice
+        options:
+          - ""
+          - "inmail"
+          - "static"
+      prep_then_launch:
+        description: "Unified launcher: prep the scoped cohort (ONLY_COHORT) BEFORE launching it in the same run, so a not-yet-prepped cohort launches in one action. Sets PREP_THEN_LAUNCH. Requires only_cohort + a channel."
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
       only_cohort:
         description: "New-cohort scope (feature 010): restrict this run to a single Smart Ramp cohort id. Blank + a channel = scoped LAUNCH of that cohort; set + no channel = scoped additive PREP of that cohort (no ramp-wide wipe, ramp status untouched). Requires ramp_id."
         required: false
@@ -200,6 +219,13 @@ jobs:
           # restricts the run to one channel + triggers the channel_locks
           # release path. Blank for normal (all-channel) runs.
           ONLY_CHANNEL: ${{ github.event.inputs.only_channel }}
+          # LinkedIn arm scope (unified launcher). 'inmail' | 'static' | blank.
+          # main.py reads OUTLIER_ARMS to run only that LinkedIn arm — lets the
+          # console launch InMail and Sponsored as independent channels.
+          OUTLIER_ARMS: ${{ github.event.inputs.only_arms }}
+          # Unified launcher: prep the scoped cohort before launching it in the
+          # same run (config.PREP_THEN_LAUNCH). Blank/false on normal runs.
+          PREP_THEN_LAUNCH: ${{ github.event.inputs.prep_then_launch }}
           # New-cohort scope (feature 010). Read at config import time
           # (config.ONLY_COHORT); restricts the run to one Smart Ramp cohort id
           # (scoped additive prep when no channel, scoped launch with a channel).
