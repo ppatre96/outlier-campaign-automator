@@ -6429,7 +6429,13 @@ def _launch_ramp(ramp_id: str, decision=None) -> dict:
         if only_channel:
             try:
                 from src.ui_decisions import release_channel_lock
-                release_channel_lock(ramp_id=ramp_id, channel=only_channel)
+                # Release exactly the (locale × channel) locks this scoped run
+                # held. ONLY_LOCALES is the console's acquired-locale set; empty
+                # means an all-locales launch → release every locale for the
+                # channel (handled inside release_channel_lock).
+                _rl = (os.environ.get("ONLY_LOCALES") or "").strip()
+                _rl_locales = [l for l in _rl.split(",") if l.strip()] if _rl else None
+                release_channel_lock(ramp_id=ramp_id, channel=only_channel, locales=_rl_locales)
             except Exception as exc:
                 log.warning("_launch_ramp: channel lock release failed (%s/%s): %s — TTL will clear it",
                             ramp_id, only_channel, exc)

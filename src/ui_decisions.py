@@ -298,25 +298,54 @@ def upsert_cohort_audience(
                   ramp_id, cohort_signature, platform, exc)
 
 
-def release_channel_lock(*, ramp_id: str, channel: str) -> None:
-    """Release a per-channel launch lock (feature #3) when a per-channel run
-    finishes. Marks the (ramp_id, channel) lock 'released' so the console
-    re-enables the trigger. Best-effort; the table is created by the console
-    (lib/db.ts) — if it's missing here, nothing to release. Idempotent.
+def release_channel_lock(
+    *, ramp_id: str, channel: str, locales: "list[str] | None" = None
+) -> None:
+    """Release per-channel launch locks when a per-channel run finishes, so the
+    console re-enables the trigger. Best-effort; the table is created by the
+    console (lib/db.ts) — if it's missing here, nothing to release. Idempotent.
+
+    Locks are keyed per (ramp_id, locale, channel) once the console has added
+    the `locale` column (Phase 2). When `locales` is given, release exactly
+    those (locale × channel) pairs — the ones this scoped run held. When it's
+    empty/None (an all-locales launch) release every running lock for the
+    channel. Falls back to the legacy (ramp_id, channel) release when the
+    `locale` column doesn't exist yet, so either deploy order is safe.
     """
+    channel = (channel or "").strip().lower()
+    want = [str(l).strip().lower().replace("_", "-") for l in (locales or []) if str(l).strip()]
     try:
         with _connect() as conn, conn.cursor() as cur:
             cur.execute(
-                """
-                UPDATE channel_locks
-                   SET status = 'released', released_at = NOW()
-                 WHERE ramp_id = %s AND channel = %s AND status = 'running'
-                """,
-                (ramp_id, (channel or "").strip().lower()),
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'channel_locks' AND column_name = 'locale'"
             )
+            has_locale_col = cur.fetchone() is not None
+
+            if has_locale_col and want:
+                cur.execute(
+                    """
+                    UPDATE channel_locks
+                       SET status = 'released', released_at = NOW()
+                     WHERE ramp_id = %s AND channel = %s
+                       AND lower(locale) = ANY(%s) AND status = 'running'
+                    """,
+                    (ramp_id, channel, want),
+                )
+            else:
+                # No locale column (legacy) OR an all-locales launch → release
+                # every running lock for this (ramp, channel).
+                cur.execute(
+                    """
+                    UPDATE channel_locks
+                       SET status = 'released', released_at = NOW()
+                     WHERE ramp_id = %s AND channel = %s AND status = 'running'
+                    """,
+                    (ramp_id, channel),
+                )
             conn.commit()
-            log.info("release_channel_lock: released %s/%s (%d row(s))",
-                     ramp_id, channel, cur.rowcount)
+            log.info("release_channel_lock: released %s/%s locales=%s (%d row(s))",
+                     ramp_id, channel, want or "all", cur.rowcount)
     except UIDecisionsUnavailable as exc:
         log.debug("release_channel_lock skipped (%s/%s): %s", ramp_id, channel, exc)
     except Exception as exc:
