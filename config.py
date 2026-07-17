@@ -247,6 +247,10 @@ ONLY_COHORT          = os.getenv("ONLY_COHORT", "").strip()
 # Relaunch (replace): archive ONLY_CHANNEL's existing campaigns for the ramp
 # before creating fresh ones (console "Relaunch (replace)" → poller `replace`).
 REPLACE_EXISTING     = os.getenv("REPLACE_EXISTING", "").strip().lower() in ("1", "true", "yes")
+# Unified launcher (console): prep the scoped cohort BEFORE launching it in the
+# same run, so a not-yet-prepped cohort can be launched in one action. Requires
+# ONLY_COHORT + a channel. Prep is additive/idempotent (ON_CONFLICT).
+PREP_THEN_LAUNCH     = os.getenv("PREP_THEN_LAUNCH", "").strip().lower() in ("1", "true", "yes")
 
 # Piece C — inline post-launch verify-and-heal. When on, each arm checks every
 # campaign/ad-set it just created for child ads; any that ended the run empty
