@@ -125,10 +125,17 @@ def list_approved_negative_keywords(ramp_id: str) -> list[str]:
         return []
 
 
-def get_lp_url_override(ramp_id: str, platform: str) -> str:
-    """Return the reviewer-set LP URL override for (ramp_id × platform),
-    or "" when no override exists. Read by utm_builder.resolve_base_lp_url
-    BEFORE the Smart Ramp campaign_state lookup so reviewer intent wins.
+def get_lp_url_override(ramp_id: str, platform: str, cohort_id: str = "") -> str:
+    """Return the reviewer-set LP URL override for a ramp, or "" when none.
+    Read by utm_builder.resolve_base_lp_url BEFORE the Smart Ramp
+    campaign_state lookup so reviewer intent wins.
+
+    Resolution when the per-cohort column exists:
+      1. cohort-specific override (ramp_id × platform × cohort_id), then
+      2. ramp-wide override (cohort_id = '').
+    When the console migration adding `cohort_id` hasn't run yet, falls back
+    to the legacy (ramp_id × platform) query so existing ramp-wide overrides
+    keep resolving regardless of which repo deploys first.
 
     Never raises — connection errors / missing table return "".
     """
@@ -139,17 +146,38 @@ def get_lp_url_override(ramp_id: str, platform: str) -> str:
         import psycopg
     except ImportError:
         return ""
+    platform = platform.lower()
+    cohort_id = cohort_id or ""
     try:
         with psycopg.connect(db_url, connect_timeout=10) as conn:
             with conn.cursor() as cur:
+                # Does the per-cohort column exist yet? (console migration)
                 cur.execute(
-                    "SELECT url FROM lp_url_overrides "
-                    "WHERE ramp_id = %s AND platform = %s",
-                    (ramp_id, platform.lower()),
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'lp_url_overrides' AND column_name = 'cohort_id'"
                 )
+                has_cohort_col = cur.fetchone() is not None
+
+                if has_cohort_col:
+                    # cohort-specific wins over ramp-wide ('') in a single query.
+                    cur.execute(
+                        "SELECT url FROM lp_url_overrides "
+                        "WHERE ramp_id = %s AND platform = %s AND cohort_id IN (%s, '') "
+                        "ORDER BY (cohort_id = %s) DESC LIMIT 1",
+                        (ramp_id, platform, cohort_id, cohort_id),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT url FROM lp_url_overrides "
+                        "WHERE ramp_id = %s AND platform = %s",
+                        (ramp_id, platform),
+                    )
                 row = cur.fetchone()
                 if row and row[0]:
-                    log.info("Using lp_url override for ramp=%s platform=%s", ramp_id, platform)
+                    log.info(
+                        "Using lp_url override for ramp=%s platform=%s cohort=%s",
+                        ramp_id, platform, cohort_id or "(ramp-wide)",
+                    )
                     return str(row[0])
                 return ""
     except Exception as exc:

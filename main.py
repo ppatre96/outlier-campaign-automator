@@ -1563,6 +1563,7 @@ def _process_inmail_campaigns(
                 matched_domain=(naming_meta or {}).get("domain"),
                 sheets_client=sheets,
                 ramp_id=ramp_id,
+                cohort_id=cohort_id_override or getattr(cohort, "id", None) or "",
             )
 
             # Attach one InMail ad per (valid) angle to the same campaign.
@@ -4080,6 +4081,7 @@ def _process_static_campaigns(
                 matched_domain=(naming_meta or {}).get("domain"),
                 sheets_client=sheets,
                 ramp_id=ramp_id,
+                cohort_id=cohort_id_override or getattr(cohort, "id", None) or "",
             )
             utm_url = build_utm_url(
                 base_url=base_lp, platform="linkedin",
@@ -5100,6 +5102,7 @@ def _process_extra_platform_arm(
                     matched_domain=(naming_meta or {}).get("domain"),
                     sheets_client=sheets,
                     ramp_id=ramp_id,
+                    cohort_id=cohort_id_override or getattr(cohort, "id", None) or "",
                 )
                 utm_url = build_utm_url(
                     base_url=base_lp, platform=platform,
@@ -5145,6 +5148,7 @@ def _process_extra_platform_arm(
                         matched_domain=(naming_meta or {}).get("domain"),
                         sheets_client=sheets,
                         ramp_id=ramp_id,
+                        cohort_id=cohort_id_override or getattr(cohort, "id", None) or "",
                     )
                     utm_url = build_utm_url(
                         base_url=base_lp, platform=platform,
