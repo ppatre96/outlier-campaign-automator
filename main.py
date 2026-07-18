@@ -5707,7 +5707,10 @@ def _process_row_both_modes(
             _platforms_csv = (getattr(_cfg, "ENABLED_PLATFORMS", "") or "").lower()
             _platforms_list = [p.strip() for p in _platforms_csv.split(",") if p.strip()]
             enabled_channels = ["linkedin"]
-            for ch in ("meta", "google"):
+            # Meta/Google/Reddit/TikTok get their own Phase-1 briefs when enabled,
+            # so the console can review each channel's variants. The launch arm
+            # reads per-channel briefs (list_briefs_for_ramp(channel=platform)).
+            for ch in ("meta", "google", "reddit", "tiktok"):
                 if ch in _platforms_list:
                     enabled_channels.append(ch)
 
