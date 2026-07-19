@@ -1279,6 +1279,7 @@ def _process_inmail_campaigns(
 
     from src.geo_tiers import group_geos_for_campaigns, GeoCampaignGroup
     from src.campaign_registry import log_campaign as _reg_log_inmail
+    from src.ui_decisions import upsert_launch_progress as _lp
 
     raw_geos = included_geos or []
     geo_groups = group_geos_for_campaigns(raw_geos, base_rate_usd, apply_geo_multiplier=not rate_geo_specific)
@@ -1456,6 +1457,15 @@ def _process_inmail_campaigns(
             # incident — LinkedIn returning 400 FAILED_TO_PROCESS_CAMPAIGN_FOR_
             # AUDIENCE_SIZE_ESTIMATION on a single NW-European cohort — aborted
             # the entire row's InMail arm before this try block existed.
+            # Launch-progress telemetry (console "Launch status" view).
+            _lp_locale = (naming_meta.get("locale") if naming_meta else "") or ""
+            _lp_cohort_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
+            _lp_kw = dict(
+                ramp_id=ramp_id or "", channel="linkedin_inmail", locale=_lp_locale,
+                cohort_id=str(_lp_cohort_id or ""), cohort_signature=getattr(cohort, "name", ""),
+                geo_cluster=geo_group.cluster,
+            )
+            _lp(**_lp_kw, status="queued")
             try:
                 # Targeting resolution — once per (cohort × geo).
                 facet_urns = urn_res.resolve_cohort_rules(cohort.rules)
@@ -1531,6 +1541,7 @@ def _process_inmail_campaigns(
                 # conversion so LinkedIn optimizes on worker_skill_grant only;
                 # unknown pod → None → falls back to LINKEDIN_CONVERSION_ID.
                 _pod_conv = _linkedin_pod_conversion_id(naming_meta.get("pod") if naming_meta else None)
+                _lp(**_lp_kw, status="creating")
                 campaign_urn = li_client.create_inmail_campaign(
                     name=campaign_name,
                     campaign_group_urn=group_urn,
@@ -1545,11 +1556,13 @@ def _process_inmail_campaigns(
                     "Created InMail campaign %s cohort=%s geo=%s rate=%s (%d angles to attach)",
                     campaign_urn, cohort.name, geo_group.cluster_label, geo_group.advertised_rate, len(valid_pairs),
                 )
+                _lp(**_lp_kw, status="created")
             except Exception as exc:
                 log.exception(
                     "_process_inmail_campaigns: cohort '%s' geo=%s campaign creation failed — skipping all angles: %s",
                     getattr(cohort, "name", "?"), geo_group.cluster_label, exc,
                 )
+                _lp(**_lp_kw, status="failed", error=str(exc))
                 continue
 
             # Build the UTM destination URL once per (cohort × geo). Each
@@ -3865,6 +3878,7 @@ def _process_static_campaigns(
     )
 
     from src.campaign_registry import log_campaign as _reg_log
+    from src.ui_decisions import upsert_launch_progress as _lp
 
     # ── Group specs by (cohort × geo_group) so each (cohort × geo) becomes
     # ONE LinkedIn campaign with multiple creatives attached (one per angle).
@@ -3897,6 +3911,17 @@ def _process_static_campaigns(
         group_geos = meta["group_geos"]
         variants = meta["variants"]
         geo_label = geo_group.cluster_label
+
+        # Launch-progress telemetry (console "Launch status" view). Key fields
+        # for this (channel × locale × cohort) unit; best-effort, never breaks.
+        _lp_locale = (naming_meta.get("locale") if naming_meta else "") or ""
+        _lp_cohort_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
+        _lp_kw = dict(
+            ramp_id=ramp_id or "", channel="linkedin", locale=_lp_locale,
+            cohort_id=str(_lp_cohort_id or ""), cohort_signature=getattr(cohort, "name", ""),
+            geo_cluster=geo_group.cluster,
+        )
+        _lp(**_lp_kw, status="queued")
 
         # Per-(cohort × geo_group) isolation: failure in one combo never
         # aborts another. Each angle inside the combo is also isolated below.
@@ -3976,6 +4001,7 @@ def _process_static_campaigns(
             # Known pod REPLACES the default OCP conversion so LinkedIn optimizes
             # on worker_skill_grant only; unknown pod → None → LINKEDIN_CONVERSION_ID.
             _pod_conv = _linkedin_pod_conversion_id(naming_meta.get("pod") if naming_meta else None)
+            _lp(**_lp_kw, status="creating")
             campaign_urn = li_client.create_campaign(
                 name=campaign_name,
                 campaign_group_urn=group_urn,
@@ -3995,11 +4021,13 @@ def _process_static_campaigns(
                 "_process_static_campaigns: campaign %s cohort=%s geo=%s (%d angles to attach)",
                 campaign_urn, base_id, geo_group.cluster_label, len(specs),
             )
+            _lp(**_lp_kw, status="created")
         except Exception as exc:
             log.exception(
                 "_process_static_campaigns: cohort '%s' geo=%s campaign creation failed — skipping all angles: %s",
                 getattr(cohort, "name", "?"), geo_label, exc,
             )
+            _lp(**_lp_kw, status="failed", error=str(exc))
             continue
 
         # Verify-and-heal (piece C) trackers for THIS campaign: row_ids that
@@ -4290,6 +4318,7 @@ def _process_extra_platform_arm(
     """
     from src.ad_platform import CreateAdResult
     from src.campaign_registry import log_campaign as _reg_log
+    from src.ui_decisions import upsert_launch_progress as _lp
     from src.copy_adapter import adapt_copy_for_platform, localize_variant
     from src.locales import resolve_copy_locale
     from src import launch_verify
@@ -4872,6 +4901,16 @@ def _process_extra_platform_arm(
             )
             continue
 
+        # Launch-progress telemetry (console "Launch status" view). channel is
+        # the platform key (meta | google | google_search | reddit | tiktok).
+        _lp_locale = (naming_meta.get("locale") if naming_meta else "") or ""
+        _lp_kw = dict(
+            ramp_id=ramp_id or "", channel=platform, locale=_lp_locale,
+            cohort_id=str(base_id or ""), cohort_signature=getattr(cohort, "name", ""),
+            geo_cluster=geo_group.cluster,
+        )
+        _lp(**_lp_kw, status="queued")
+
         # Per (cohort × geo) isolation: failure in one combo never aborts another.
         try:
             # Smart Ramp v2 naming for the ad-set (Meta) / ad-group (Google);
@@ -5038,6 +5077,7 @@ def _process_extra_platform_arm(
                         )
                 except Exception as _exc:
                     log.warning("extra-arm: approved-negative-keyword merge failed (non-fatal): %s", _exc)
+            _lp(**_lp_kw, status="creating")
             sub_id = client.create_campaign(
                 name=campaign_name,
                 campaign_group_id=group_id,
@@ -5050,12 +5090,14 @@ def _process_extra_platform_arm(
                 "_process_extra_platform_arm[%s]: ad set/group %s cohort=%s geo=%s (%d angles)",
                 platform, sub_id, base_id, geo_group.cluster_label, len(specs),
             )
+            _lp(**_lp_kw, status="created")
         except Exception as exc:
             log.exception(
                 "_process_extra_platform_arm[%s]: ad set creation failed cohort=%s geo=%s — skipping all angles: %s",
                 platform, getattr(cohort, "name", "?"),
                 getattr(geo_group, "cluster_label", "?"), exc,
             )
+            _lp(**_lp_kw, status="failed", error=str(exc))
             continue
 
         # ── Attach one ad/RDA per angle to the just-created ad set/group. ───
@@ -6461,6 +6503,10 @@ def _launch_ramp(ramp_id: str, decision=None) -> dict:
                 _rl = (os.environ.get("ONLY_LOCALES") or "").strip()
                 _rl_locales = [l for l in _rl.split(",") if l.strip()] if _rl else None
                 release_channel_lock(ramp_id=ramp_id, channel=lock_channel, locales=_rl_locales)
+                # Crash-safety: flip any unit still 'creating' (run died mid-API
+                # call) to 'failed' so the console doesn't show it stuck forever.
+                from src.ui_decisions import mark_launch_progress_failed
+                mark_launch_progress_failed(ramp_id, lock_channel, _rl_locales)
             except Exception as exc:
                 log.warning("_launch_ramp: channel lock release failed (%s/%s): %s — TTL will clear it",
                             ramp_id, lock_channel, exc)
