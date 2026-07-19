@@ -40,6 +40,34 @@ from src.ad_platform import (
 log = logging.getLogger(__name__)
 
 
+# Meta rejects detailed targeting when the audience can include young people in
+# certain markets (e.g. Thailand, under 20) with this error subcode. The only
+# fix under EMPLOYMENT SAC (where a custom age_min is itself forbidden) is to
+# target location + age only. See create_campaign's retry.
+_YOUNG_MARKET_SUBCODE = 1870249
+# The only targeting keys Meta allows for a young-market audience.
+_LOCATION_AGE_KEYS = frozenset({"geo_locations", "age_min", "age_max", "genders"})
+
+
+def _fb_error_subcode(exc: Exception) -> Optional[int]:
+    """Best-effort extract of a FacebookRequestError's error_subcode (else None)."""
+    try:
+        sub = exc.api_error_subcode()  # type: ignore[attr-defined]
+        return int(sub) if sub is not None else None
+    except Exception:
+        try:
+            return int((((exc.body() or {}).get("error") or {}).get("error_subcode")))  # type: ignore[attr-defined]
+        except Exception:
+            return None
+
+
+def _strip_to_location_age(targeting: dict[str, Any]) -> dict[str, Any]:
+    """Keep only location + age (+ gender) keys — drops detailed targeting
+    (custom-audience exclusions, interests, education, locales, …) so an ad set
+    is accepted in a young-market country."""
+    return {k: v for k, v in (targeting or {}).items() if k in _LOCATION_AGE_KEYS}
+
+
 # Meta CTA enum — facebook_business uses these literal strings on AdCreative.
 # GET_STARTED was removed from Meta's accepted list at some point — confirmed
 # 2026-05-08 via 400 error from /act_*/adcreatives. The platform-agnostic
@@ -309,8 +337,28 @@ class MetaClient(AdPlatformClient):
             account = AdAccount(self._ad_account_id)
             ad_set = account.create_ad_set(params=params)
         except Exception as exc:
-            log.error("Meta create_campaign (ad set) failed for %r: %s", name, exc)
-            raise
+            # Young-market targeting restriction (subcode 1870249): some countries
+            # (e.g. Thailand — under 20) forbid detailed targeting when the
+            # audience can include young people. Under EMPLOYMENT SAC we can't
+            # raise age_min (that hits subcode 2909037), so Meta's only allowed
+            # remedy is "location + age only". Retry once with detailed targeting
+            # stripped. This self-heals for ANY under-20 market, not just TH.
+            if _fb_error_subcode(exc) == _YOUNG_MARKET_SUBCODE:
+                stripped = _strip_to_location_age(targeting)
+                dropped = sorted(set(targeting or {}) - set(stripped))
+                log.warning(
+                    "Meta ad set %r hit young-market targeting restriction (subcode "
+                    "1870249, geos=%s) — retrying with location+age only (dropped: %s)",
+                    name,
+                    (targeting.get("geo_locations", {}) or {}).get("countries"),
+                    dropped,
+                )
+                params[AdSet.Field.targeting] = stripped
+                account = AdAccount(self._ad_account_id)
+                ad_set = account.create_ad_set(params=params)
+            else:
+                log.error("Meta create_campaign (ad set) failed for %r: %s", name, exc)
+                raise
         ad_set_id = str(ad_set["id"])
         log.info(
             "Meta ad set created %s (name=%s, campaign=%s, optimize=%s, freq_cap=%s)",

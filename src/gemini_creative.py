@@ -1341,7 +1341,12 @@ def generate_imagen_photo(
     return bg_image
 
 
-_QC_MAX_RETRIES_DEFAULT = int(os.getenv("QC_MAX_RETRIES", "10"))
+# Capped 2026-07-19 from 10 → 5: a cohort whose creatives keep failing QC was
+# burning ~25s/attempt × 10 × multiple angles (~40 min for one Thai cohort,
+# GMR-0023). 5 still recovers transient QC misses while bounding worst-case run
+# time; on exhaust we still ship the lowest-violation attempt. Override with
+# QC_MAX_RETRIES if a specific ramp needs more headroom.
+_QC_MAX_RETRIES_DEFAULT = int(os.getenv("QC_MAX_RETRIES", "5"))
 
 
 def generate_imagen_creative_with_qc(
