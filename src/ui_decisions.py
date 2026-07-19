@@ -557,6 +557,131 @@ def upsert_campaign(entry: dict) -> None:
         log.debug("upsert_campaign skipped (%s): %s", ramp_id, exc)
 
 
+_LAUNCH_PROGRESS_DDL = """
+CREATE TABLE IF NOT EXISTS launch_progress (
+    ramp_id          TEXT NOT NULL,
+    channel          TEXT NOT NULL,            -- linkedin | linkedin_inmail | meta | google | google_search | reddit | tiktok
+    locale           TEXT NOT NULL DEFAULT '',
+    cohort_id        TEXT NOT NULL DEFAULT '',
+    cohort_signature TEXT NOT NULL DEFAULT '',
+    geo_cluster      TEXT NOT NULL DEFAULT '',
+    status           TEXT NOT NULL DEFAULT 'queued',  -- queued | creating | created | failed
+    error            TEXT,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (ramp_id, channel, locale, cohort_signature, geo_cluster)
+)
+"""
+
+
+def upsert_launch_progress(
+    *,
+    ramp_id: str,
+    channel: str,
+    locale: str = "",
+    cohort_id: str = "",
+    cohort_signature: str = "",
+    geo_cluster: str = "",
+    status: str,
+    error: "str | None" = None,
+) -> None:
+    """Record per-(channel x locale x cohort) launch progress so the console can
+    show a real status (queued -> creating -> created -> failed) instead of
+    inferring one from channel_locks + campaign rows.
+
+    One row per lock-covered unit, keyed on
+    (ramp_id, channel, locale, cohort_signature, geo_cluster) — the campaigns
+    unique key minus `angle`. `channel` uses the console's granular keys
+    (linkedin | linkedin_inmail | meta | google | google_search | reddit |
+    tiktok). Idempotent: a re-run walks the same row through the states again.
+
+    Best-effort — a progress-write failure must never break the launch, so
+    UIDecisionsUnavailable is swallowed (mirrors upsert_campaign).
+    """
+    ramp_id = (ramp_id or "").strip()
+    channel = (channel or "").strip().lower()
+    if not ramp_id or not channel or not status:
+        return
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(_LAUNCH_PROGRESS_DDL)
+            cur.execute(
+                """
+                INSERT INTO launch_progress (
+                    ramp_id, channel, locale, cohort_id, cohort_signature,
+                    geo_cluster, status, error
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (ramp_id, channel, locale, cohort_signature, geo_cluster)
+                DO UPDATE SET
+                    cohort_id  = EXCLUDED.cohort_id,
+                    status     = EXCLUDED.status,
+                    error      = EXCLUDED.error,
+                    updated_at = NOW()
+                """,
+                (
+                    ramp_id,
+                    channel,
+                    (locale or "").strip().lower().replace("_", "-"),
+                    cohort_id or "",
+                    cohort_signature or "",
+                    geo_cluster or "",
+                    status,
+                    error,
+                ),
+            )
+            conn.commit()
+    except UIDecisionsUnavailable as exc:
+        log.debug("upsert_launch_progress skipped (%s/%s): %s", ramp_id, channel, exc)
+    except Exception as exc:
+        # Progress telemetry must never break a real launch.
+        log.warning("upsert_launch_progress failed (%s/%s): %s", ramp_id, channel, exc)
+
+
+def mark_launch_progress_failed(
+    ramp_id: str, channel: str, locales: "list[str] | None" = None
+) -> None:
+    """Flip any rows still 'creating' for this (ramp x channel [x locale]) to
+    'failed'. Called from the launch run's finally block (next to
+    release_channel_lock) so a crash mid-create doesn't leave a unit stuck
+    'creating' forever. Deliberately does NOT touch 'queued' rows — a below-floor
+    audience skip legitimately stays 'queued' on a successful run. On success
+    this is a no-op (every 'creating' is already followed by 'created'/'failed').
+    Best-effort; mirrors release_channel_lock.
+    """
+    channel = (channel or "").strip().lower()
+    want = [str(l).strip().lower().replace("_", "-") for l in (locales or []) if str(l).strip()]
+    if not ramp_id or not channel:
+        return
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            if want:
+                cur.execute(
+                    """
+                    UPDATE launch_progress
+                       SET status = 'failed', updated_at = NOW()
+                     WHERE ramp_id = %s AND channel = %s
+                       AND lower(locale) = ANY(%s)
+                       AND status = 'creating'
+                    """,
+                    (ramp_id, channel, want),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE launch_progress
+                       SET status = 'failed', updated_at = NOW()
+                     WHERE ramp_id = %s AND channel = %s
+                       AND status = 'creating'
+                    """,
+                    (ramp_id, channel),
+                )
+            conn.commit()
+    except UIDecisionsUnavailable as exc:
+        log.debug("mark_launch_progress_failed skipped (%s/%s): %s", ramp_id, channel, exc)
+    except Exception as exc:
+        log.warning("mark_launch_progress_failed failed (%s/%s): %s", ramp_id, channel, exc)
+
+
 def list_campaign_platform_ids(
     ramp_id: str, platform: str, locales: list[str] | None = None
 ) -> list[str]:
