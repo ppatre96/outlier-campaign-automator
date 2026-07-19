@@ -97,6 +97,50 @@ def _ensure_pending_cols() -> None:
         log.debug("pending-cohort column ensure skipped (non-fatal): %s", exc)
 
 
+_CAMPAIGNS_GEN_READY = False
+
+
+def _ensure_campaigns_generation() -> None:
+    """Self-heal the `generation` dimension on the campaigns table once per
+    process. Adds the column (default 1 for all existing rows) and swaps the
+    6-col unique key for a 7-col one that includes generation, so an additive
+    relaunch (a new generation) coexists with prior generations instead of
+    upserting over them. Idempotent + best-effort (mirrors _ensure_pending_cols).
+    """
+    global _CAMPAIGNS_GEN_READY
+    if _CAMPAIGNS_GEN_READY or psycopg is None:
+        return
+    url = os.environ.get("DATABASE_URL", "").strip()
+    if not url:
+        return
+    try:
+        with psycopg.connect(url, autocommit=True, connect_timeout=10) as c, c.cursor() as cur:
+            cur.execute("ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS generation INT NOT NULL DEFAULT 1")
+            # Drop the legacy 6-col unique constraint (by whatever name it has)
+            # so the 7-col index below becomes the ON CONFLICT target.
+            cur.execute(
+                """
+                DO $$
+                DECLARE c text;
+                BEGIN
+                  SELECT conname INTO c FROM pg_constraint
+                   WHERE conrelid = 'campaigns'::regclass AND contype = 'u'
+                     AND array_length(conkey, 1) = 6;
+                  IF c IS NOT NULL THEN
+                    EXECUTE format('ALTER TABLE campaigns DROP CONSTRAINT %I', c);
+                  END IF;
+                END $$;
+                """
+            )
+            cur.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS campaigns_gen_key ON campaigns "
+                "(ramp_id, platform, campaign_type, cohort_signature, geo_cluster, angle, generation)"
+            )
+        _CAMPAIGNS_GEN_READY = True
+    except Exception as exc:                                   # pragma: no cover
+        log.debug("campaigns generation ensure skipped (non-fatal): %s", exc)
+
+
 def _connect():
     if psycopg is None:
         raise UIDecisionsUnavailable("psycopg not installed (pip install 'psycopg[binary]')")
@@ -104,6 +148,7 @@ def _connect():
     if not url:
         raise UIDecisionsUnavailable("DATABASE_URL is not set")
     _ensure_pending_cols()
+    _ensure_campaigns_generation()
     try:
         return psycopg.connect(url, autocommit=False, connect_timeout=10)
     except psycopg.OperationalError as exc:                    # pragma: no cover
@@ -508,6 +553,7 @@ def upsert_campaign(entry: dict) -> None:
                     cohort_signature     TEXT NOT NULL DEFAULT '',
                     geo_cluster          TEXT NOT NULL DEFAULT '',
                     angle                TEXT NOT NULL DEFAULT '',
+                    generation           INT  NOT NULL DEFAULT 1,
                     cohort_id            TEXT,
                     platform_campaign_id TEXT,
                     platform_creative_id TEXT,
@@ -516,7 +562,7 @@ def upsert_campaign(entry: dict) -> None:
                     data                 JSONB NOT NULL DEFAULT '{}'::jsonb,
                     created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    UNIQUE (ramp_id, platform, campaign_type, cohort_signature, geo_cluster, angle)
+                    UNIQUE (ramp_id, platform, campaign_type, cohort_signature, geo_cluster, angle, generation)
                 )
                 """
             )
@@ -524,10 +570,10 @@ def upsert_campaign(entry: dict) -> None:
                 """
                 INSERT INTO campaigns (
                     ramp_id, platform, campaign_type, cohort_signature, geo_cluster, angle,
-                    cohort_id, platform_campaign_id, platform_creative_id,
+                    generation, cohort_id, platform_campaign_id, platform_creative_id,
                     campaign_name, creative_image_path, data
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-                ON CONFLICT (ramp_id, platform, campaign_type, cohort_signature, geo_cluster, angle)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                ON CONFLICT (ramp_id, platform, campaign_type, cohort_signature, geo_cluster, angle, generation)
                 DO UPDATE SET
                     cohort_id            = EXCLUDED.cohort_id,
                     platform_campaign_id = EXCLUDED.platform_campaign_id,
@@ -544,6 +590,7 @@ def upsert_campaign(entry: dict) -> None:
                     entry.get("cohort_signature", "") or "",
                     entry.get("geo_cluster", "") or "",
                     entry.get("angle", "") or "",
+                    int(entry.get("generation") or 1),
                     entry.get("cohort_id"),
                     entry.get("platform_campaign_id", "") or "",
                     entry.get("platform_creative_id", "") or "",
@@ -555,6 +602,37 @@ def upsert_campaign(entry: dict) -> None:
             conn.commit()
     except UIDecisionsUnavailable as exc:
         log.debug("upsert_campaign skipped (%s): %s", ramp_id, exc)
+
+
+def next_generation(
+    *,
+    ramp_id: str,
+    platform: str,
+    campaign_type: str,
+    cohort_signature: str,
+    geo_cluster: str,
+) -> int:
+    """Next launch generation for a campaign key = max existing generation + 1
+    (1 when none exist). The additive-launch path calls this once per
+    (cohort × geo) unit so a fresh variation coexists with prior generations
+    instead of upserting over them. Best-effort → 1 on any error (degrades to
+    the pre-generation single-row behavior rather than breaking a launch)."""
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT COALESCE(MAX(generation), 0) FROM campaigns "
+                "WHERE ramp_id = %s AND platform = %s AND campaign_type = %s "
+                "AND cohort_signature = %s AND geo_cluster = %s",
+                (ramp_id, platform, campaign_type, cohort_signature, geo_cluster),
+            )
+            row = cur.fetchone()
+            return int((row[0] if row else 0) or 0) + 1
+    except Exception as exc:
+        log.warning(
+            "next_generation failed (%s/%s cohort=%s geo=%s): %s — defaulting to 1",
+            ramp_id, platform, cohort_signature, geo_cluster, exc,
+        )
+        return 1
 
 
 _LAUNCH_PROGRESS_DDL = """

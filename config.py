@@ -247,6 +247,14 @@ ONLY_COHORT          = os.getenv("ONLY_COHORT", "").strip()
 # Relaunch (replace): archive ONLY_CHANNEL's existing campaigns for the ramp
 # before creating fresh ones (console "Relaunch (replace)" → poller `replace`).
 REPLACE_EXISTING     = os.getenv("REPLACE_EXISTING", "").strip().lower() in ("1", "true", "yes")
+# Additive launch (console "Launch new variation" button): create a NEW campaign
+# generation for every targeted (cohort × geo) even when one already exists —
+# WITHOUT archiving the prior generation (unlike REPLACE_EXISTING). Each launch
+# bumps `generation` (v1 → v2 → v3 …) so all variations coexist in the campaigns
+# table and keep their own attribution. Used to add a fresh variation once an
+# earlier one has spent its budget / stopped delivering. Bypasses the
+# skip-existing idempotency guard for this run only.
+ADDITIVE_LAUNCH      = os.getenv("ADDITIVE_LAUNCH", "").strip().lower() in ("1", "true", "yes")
 # Unified launcher (console): prep the scoped cohort BEFORE launching it in the
 # same run, so a not-yet-prepped cohort can be launched in one action. Requires
 # ONLY_COHORT + a channel. Prep is additive/idempotent (ON_CONFLICT).

@@ -172,6 +172,13 @@ COLUMNS = [
     # rows created before this column existed (the matcher falls back to
     # campaign_name, which equals the stamped value for non-relaunched rows).
     "utm_campaign",
+    # ── Additive-launch generation (APPEND ONLY) ──────────────────────────────
+    # 1 for the first launch of a (cohort × geo × angle); bumped (v2, v3 …) by an
+    # additive relaunch so each variation coexists with prior generations in the
+    # campaigns table and keeps its own attribution. Part of the campaigns unique
+    # key (ramp_id, platform, campaign_type, cohort_signature, geo_cluster, angle,
+    # generation).
+    "generation",
 ]
 
 
@@ -229,6 +236,7 @@ class CampaignEntry:
     sends:                  int | None = None  # LinkedIn InMail: messages delivered (no impressions for InMail)
     opens:                  int | None = None  # LinkedIn InMail: messages opened
     utm_campaign:           str = ""           # exact utm_campaign stamped on the ad URL — the funnel join key (issue #75)
+    generation:             int = 1            # additive-launch variation: 1, then 2/3/… on each additive relaunch (part of the campaigns unique key)
 
 
 # Internal lower-case platform key → user-facing channel label shown in Sheet.
@@ -411,6 +419,7 @@ def log_campaign(
     google_keywords: list[str] | str | None = None,
     experiment_id: str = "",
     utm_campaign: str = "",
+    generation: int = 1,
 ) -> None:
     """Append one campaign row to the registry. Safe to call from any platform arm.
 
@@ -517,6 +526,7 @@ def log_campaign(
         # they fed to build_utm_url; falls back to campaign_name, which equals
         # the stamped value for every non-relaunched row.
         utm_campaign=utm_campaign or campaign_name,
+        generation=int(generation or 1),
     )
     # Hold the registry lock across the load-mutate-save window. _load and
     # _save also acquire the (re-entrant) lock internally; this ensures the
