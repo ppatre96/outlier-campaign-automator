@@ -1280,6 +1280,7 @@ def _process_inmail_campaigns(
     from src.geo_tiers import group_geos_for_campaigns, GeoCampaignGroup
     from src.campaign_registry import log_campaign as _reg_log_inmail
     from src.ui_decisions import upsert_launch_progress as _lp
+    from src.ui_decisions import next_generation as _next_gen
 
     raw_geos = included_geos or []
     geo_groups = group_geos_for_campaigns(raw_geos, base_rate_usd, apply_geo_multiplier=not rate_geo_specific)
@@ -1466,6 +1467,12 @@ def _process_inmail_campaigns(
                 geo_cluster=geo_group.cluster,
             )
             _lp(**_lp_kw, status="queued")
+            # Additive launch → fresh generation (v2/v3…); default stays gen 1.
+            _gen = (
+                _next_gen(ramp_id=ramp_id or "", platform="linkedin", campaign_type="inmail",
+                          cohort_signature=getattr(cohort, "name", ""), geo_cluster=geo_group.cluster)
+                if getattr(config, "ADDITIVE_LAUNCH", False) else 1
+            )
             try:
                 # Targeting resolution — once per (cohort × geo).
                 facet_urns = urn_res.resolve_cohort_rules(cohort.rules)
@@ -1635,6 +1642,7 @@ def _process_inmail_campaigns(
                         inmail_subject=variant.subject,
                         inmail_body=variant.body,
                         campaign_name=campaign_name,
+                        generation=_gen,
                     )
                 except Exception as _exc:
                     log.warning("Registry log failed (non-fatal): %s", _exc)
@@ -2140,14 +2148,17 @@ def _cohort_channel_already_live(ramp_id, platform: str, campaign_type: str, coh
     if not ramp_id:
         return False
     from src.ui_decisions import campaign_exists_for_cohort_channel
-    if config.REPLACE_EXISTING or not config.SKIP_EXISTING_COHORT_CAMPAIGNS:
-        # Guard disabled. REPLACE_EXISTING archives + recreates on purpose, so it's
-        # safe. But SKIP_EXISTING=false with REPLACE=false silently creates a NEW
-        # campaign ALONGSIDE any existing one with no archival — the failure mode
-        # behind GMR-0023's 2026-07-03 ko-KR/vi-VN duplicates (a scoped re-run of
-        # the same locales dispatched with skip_existing=false). Warn loudly, once
-        # per duplicate we're about to create, so an accidental re-run is visible.
-        if not config.REPLACE_EXISTING and campaign_exists_for_cohort_channel(
+    if config.REPLACE_EXISTING or config.ADDITIVE_LAUNCH or not config.SKIP_EXISTING_COHORT_CAMPAIGNS:
+        # Guard disabled. REPLACE_EXISTING archives + recreates on purpose;
+        # ADDITIVE_LAUNCH creates a NEW generation alongside prior ones on purpose
+        # (each keeps a distinct campaigns-table key via `generation`), so it's
+        # safe. But SKIP_EXISTING=false with REPLACE=false AND ADDITIVE=false
+        # silently creates a NEW campaign ALONGSIDE any existing one with no
+        # archival — the failure mode behind GMR-0023's 2026-07-03 ko-KR/vi-VN
+        # duplicates (a scoped re-run of the same locales dispatched with
+        # skip_existing=false). Warn loudly for THAT case only (not the
+        # intentional additive path), so an accidental re-run is visible.
+        if not config.REPLACE_EXISTING and not config.ADDITIVE_LAUNCH and campaign_exists_for_cohort_channel(
             ramp_id, platform, campaign_type,
             getattr(cohort, "name", ""), getattr(geo_group, "cluster", ""),
         ):
@@ -3879,6 +3890,7 @@ def _process_static_campaigns(
 
     from src.campaign_registry import log_campaign as _reg_log
     from src.ui_decisions import upsert_launch_progress as _lp
+    from src.ui_decisions import next_generation as _next_gen
 
     # ── Group specs by (cohort × geo_group) so each (cohort × geo) becomes
     # ONE LinkedIn campaign with multiple creatives attached (one per angle).
@@ -3922,6 +3934,13 @@ def _process_static_campaigns(
             geo_cluster=geo_group.cluster,
         )
         _lp(**_lp_kw, status="queued")
+        # Additive launch → a fresh generation (v2/v3…) that coexists with prior
+        # ones; default launch stays generation 1 (unchanged behavior).
+        _gen = (
+            _next_gen(ramp_id=ramp_id or "", platform="linkedin", campaign_type="static",
+                      cohort_signature=getattr(cohort, "name", ""), geo_cluster=geo_group.cluster)
+            if getattr(config, "ADDITIVE_LAUNCH", False) else 1
+        )
 
         # Per-(cohort × geo_group) isolation: failure in one combo never
         # aborts another. Each angle inside the combo is also isolated below.
@@ -4087,6 +4106,7 @@ def _process_static_campaigns(
                     qc_attempts=qc_report.get("attempts") if qc_report else None,
                     qc_violations=qc_report.get("violations") if qc_report else None,
                     campaign_name=campaign_name,
+                    generation=_gen,
                 )
             except Exception as _exc:
                 log.warning("Registry log failed (non-fatal): %s", _exc)
@@ -4319,6 +4339,7 @@ def _process_extra_platform_arm(
     from src.ad_platform import CreateAdResult
     from src.campaign_registry import log_campaign as _reg_log
     from src.ui_decisions import upsert_launch_progress as _lp
+    from src.ui_decisions import next_generation as _next_gen
     from src.copy_adapter import adapt_copy_for_platform, localize_variant
     from src.locales import resolve_copy_locale
     from src import launch_verify
@@ -4834,6 +4855,12 @@ def _process_extra_platform_arm(
     # specific campaign), so the parent_id is always traceable post-mortem.
     try:
         from src.campaign_registry import log_campaign as _reg_log_parent
+        # Additive launch → the new campaign group coexists with prior generations.
+        _parent_gen = (
+            _next_gen(ramp_id=ramp_id or "", platform=platform, campaign_type="parent",
+                      cohort_signature=f"{platform}_root", geo_cluster="")
+            if getattr(config, "ADDITIVE_LAUNCH", False) else 1
+        )
         _reg_log_parent(
             smart_ramp_id=ramp_id or flow_id or "",
             cohort_id=cohort_id_override or "",
@@ -4848,6 +4875,7 @@ def _process_extra_platform_arm(
             platform_campaign_id=str(group_id),
             platform_creative_id="",
             campaign_name=group_name,
+            generation=_parent_gen,
         )
         log.info(
             "_process_extra_platform_arm[%s]: parent group %s logged to registry (campaign_type=parent)",
@@ -4910,6 +4938,12 @@ def _process_extra_platform_arm(
             geo_cluster=geo_group.cluster,
         )
         _lp(**_lp_kw, status="queued")
+        # Additive launch → fresh generation (v2/v3…); default stays gen 1.
+        _gen = (
+            _next_gen(ramp_id=ramp_id or "", platform=platform, campaign_type="static",
+                      cohort_signature=getattr(cohort, "name", ""), geo_cluster=geo_group.cluster)
+            if getattr(config, "ADDITIVE_LAUNCH", False) else 1
+        )
 
         # Per (cohort × geo) isolation: failure in one combo never aborts another.
         try:
@@ -5051,6 +5085,7 @@ def _process_extra_platform_arm(
                         google_audience_size=audience_count if platform == "google" else None,
                         audience_check_status=audience_status,
                         campaign_name=campaign_name,
+                        generation=_gen,
                     )
                 except Exception as exc:
                     log.warning(
@@ -5308,6 +5343,7 @@ def _process_extra_platform_arm(
                     google_audience_size=audience_count if platform == "google" else None,
                     audience_check_status=audience_status,
                     campaign_name=campaign_name,
+                    generation=_gen,
                     # Google search keywords (review surface for Diego/Bryan in the
                     # outlier-campaign-console keywords-card). Captured from the same
                     # targeting dict that's about to be applied to the Search ad-group

@@ -92,6 +92,14 @@ on:
         options:
           - "true"
           - "false"
+      additive:
+        description: "Additive launch (new variation): create a NEW campaign generation (v2/v3…) for each targeted cohort×geo WITHOUT archiving prior ones. All generations coexist + keep their own attribution. Use to add a fresh variation once an earlier one stopped delivering."
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
       verify_heal:
         description: "Verify-and-heal (piece C): after launch, archive any campaign/ad-set left with zero ads + flag (Slack + audit log). Default off while it bakes — enable per-run to validate, then flip the Doppler prd default on."
         required: false
@@ -239,6 +247,9 @@ jobs:
           # Relaunch (replace): archive only_channel's existing campaigns before
           # creating fresh ones. Read at config import time (config.REPLACE_EXISTING).
           REPLACE_EXISTING: ${{ github.event.inputs.replace }}
+          # Additive launch: create a NEW generation (v2/v3…) alongside prior ones
+          # without archiving (config.ADDITIVE_LAUNCH). Console "Launch new variation".
+          ADDITIVE_LAUNCH: ${{ github.event.inputs.additive }}
           # Per-cohort idempotency (config.SKIP_EXISTING_COHORT_CAMPAIGNS). Blank
           # on scheduled ticks → config defaults to true (blank-safe parse). A
           # manual dispatch can pass "false" to create NEW campaigns alongside
