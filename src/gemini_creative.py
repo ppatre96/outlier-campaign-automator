@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import unicodedata
 from io import BytesIO
 from pathlib import Path
 
@@ -853,6 +854,28 @@ def _draw_line(draw, xy, line: str, font, fill) -> None:
         x += draw.textlength(t, font=f)
 
 
+def _char_wrap(word: str, font, max_width: int, draw) -> list[str]:
+    """Break a single over-wide token at the CHARACTER level. Space-less scripts
+    (Thai/Lao/Khmer/CJK) come through _wrap_text as ONE giant token that no
+    space-split can break, so without this a long Thai headline overflows the
+    canvas width and gets clipped off both edges. Greedy fit per line; a combining
+    mark (Thai tone/vowel signs, category Mn/Mc — near-zero advance) never starts a
+    new line, so a base char keeps its marks. Word-boundary wrapping would need a
+    dictionary; char wrapping is imperfect but always legible and never clips."""
+    pieces: list[str] = []
+    cur = ""
+    for ch in word:
+        combining = unicodedata.combining(ch) != 0 or unicodedata.category(ch) in ("Mn", "Mc")
+        if not cur or combining or _text_width(draw, cur + ch, font) <= max_width:
+            cur += ch
+        else:
+            pieces.append(cur)
+            cur = ch
+    if cur:
+        pieces.append(cur)
+    return pieces
+
+
 def _wrap_text(text: str, font, max_width: int) -> list[str]:
     words = text.replace("\n", " \n ").split(" ")
     lines, cur = [], ""
@@ -866,7 +889,14 @@ def _wrap_text(text: str, font, max_width: int) -> list[str]:
             cur = test
         else:
             if cur: lines.append(cur.strip())
-            cur = word
+            # A token wider than the whole zone can't be space-wrapped (space-less
+            # Thai/CJK, or a long URL) — break it char-by-char so it never clips.
+            if _text_width(draw, word, font) > max_width:
+                chunks = _char_wrap(word, font, max_width, draw)
+                lines.extend(chunks[:-1])
+                cur = chunks[-1] if chunks else ""
+            else:
+                cur = word
     if cur.strip(): lines.append(cur.strip())
     return lines
 
