@@ -534,6 +534,34 @@ META_YOUNG_MARKET_COUNTRIES = {
     if c.strip()
 }
 
+# Countries that need a MANUAL action before Meta will accept a programmatic ad
+# set — each is DROPPED from the ad set so the remaining geos still create, and
+# Tuan is flagged with the specific action. Maps ISO-2 → human reason. Extends the
+# young-market set with other geo-compliance gates surfaced live:
+#   - young-market (1870249): can't raise age_min under EMPLOYMENT SAC.
+#   - SG (3858550): the AD ACCOUNT must complete the Singapore Universal Ads
+#     declaration in Business Settings (an account-level, not per-ad-set, step);
+#     once done, SG can be added manually. Surfaced GMR-0023 2026-07-20.
+# Extend via META_DECLARATION_REQUIRED_COUNTRIES (comma-separated ISO-2) as more
+# such markets appear; each gets a generic "needs manual declaration" reason.
+META_MANUAL_GEO_REASONS: dict[str, str] = {}
+for _c in META_YOUNG_MARKET_COUNTRIES:
+    META_MANUAL_GEO_REASONS[_c] = (
+        "young-market age restriction (Meta 1870249) — add this country manually "
+        "in Ads Manager (set age 20+ / handle policy there)"
+    )
+META_MANUAL_GEO_REASONS["SG"] = (
+    "Singapore Universal Ads declaration required (Meta 3858550) — complete the "
+    "Singapore Universal Ads declaration in Business Settings, then add SG manually"
+)
+for _c in os.getenv("META_DECLARATION_REQUIRED_COUNTRIES", "").split(","):
+    _c = _c.strip().upper()
+    if _c and _c not in META_MANUAL_GEO_REASONS:
+        META_MANUAL_GEO_REASONS[_c] = (
+            f"{_c}: Meta requires a manual regulatory declaration for this market — "
+            "declare it in Business Settings, then add the country manually"
+        )
+
 # Meta LAL feature flags (2026-05-27). Toggles the lookalike-audience layer
 # in src/meta_lal.py. When META_USE_LAL is True, src/meta_targeting.py
 # resolve_cohort() will auto-attach 1% LAL audiences seeded from the 4

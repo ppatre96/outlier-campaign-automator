@@ -835,6 +835,61 @@ Return ONLY valid JSON, no markdown fences:
     return updated
 
 
+def repair_photo_subject(variant: dict, violations: list[str]) -> dict:
+    """Rewrite a too-generic `photo_subject` into a CONCRETE one.
+
+    GENERALIST cohorts have no single profession, so build_copy_variants() can emit
+    a generic subject like "German knowledge worker", which validate_photo_subject()
+    (gemini_creative.py) rejects — deterministically, on every image-gen retry, so
+    the cohort ends up with no creative at all. This asks the copy LLM to pick a
+    concrete, plausible everyday profession (writer, editor, tutor, translator,
+    analyst, designer…) while KEEPING the gender, ethnicity/nationality, and
+    setting, and avoiding the banned generic terms. Passed to
+    generate_imagen_creative_with_qc as `subject_repairer`.
+
+    Returns the variant with an updated `photo_subject`; on any failure returns the
+    variant unchanged (gemini_creative's deterministic concretizer is the net)."""
+    current = (variant.get("photo_subject") or "").strip()
+    if not current:
+        return variant
+    violation_bullets = "\n".join(f"- {v}" for v in violations) or "(too generic)"
+    prompt = f"""\
+Rewrite the `photo_subject` for an Outlier ad creative. It was rejected as too generic:
+{violation_bullets}
+
+CURRENT photo_subject: {current!r}
+
+Rules:
+- Name ONE concrete, everyday profession that plausibly represents a generalist
+  knowledge contributor — e.g. content writer, copy editor, language tutor,
+  translator, research analyst, UX writer, technical writer, journalist.
+- KEEP the gender and ethnicity/nationality and the home/casual setting from the
+  current subject; only make the ROLE concrete.
+- BANNED (never use): "knowledge worker", "domain expert", "remote worker",
+  "professional person", "professional individual", a bare "professional",
+  "scientist at a computer", "person working at a laptop".
+- Format: "[gender] [ethnicity/nationality] [concrete profession], [activity/setting]".
+- English only (it is an image-generation prompt, not ad copy).
+
+Return ONLY valid JSON, no markdown fences:
+{{"photo_subject": "<rewritten>"}}
+"""
+    try:
+        raw = call_claude(
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200,
+        ).strip()
+        parsed = _extract_json(raw) or {}
+        new_subject = (parsed.get("photo_subject") or "").strip() if isinstance(parsed, dict) else ""
+    except Exception as exc:
+        log.warning("repair_photo_subject LLM call failed (%s) — leaving subject for deterministic net", exc)
+        return variant
+    if not new_subject:
+        return variant
+    log.info("repair_photo_subject (angle %s): %r -> %r", variant.get("angle"), current, new_subject)
+    return {**variant, "photo_subject": new_subject}
+
+
 def _validate_copy_limits(variants: list[dict]) -> list[str]:
     """
     Return a list of human-readable violations for headline/subheadline length limits.

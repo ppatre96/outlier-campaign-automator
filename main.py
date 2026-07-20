@@ -660,13 +660,14 @@ def _process_row(
         # ── Step 8c: Gemini generation + auto QC retry loop ──
         if png_path is None and selected_variant:
             try:
-                from src.figma_creative import rewrite_variant_copy
+                from src.figma_creative import rewrite_variant_copy, repair_photo_subject
                 # max_retries comes from the function default (env-var
                 # QC_MAX_RETRIES, default 9 = 10 attempts) — Pranav rule
                 # 2026-04-29, we always want to ship a creative.
                 png_path, qc_report = generate_imagen_creative_with_qc(
                     variant=selected_variant,
                     copy_rewriter=rewrite_variant_copy,
+                    subject_repairer=repair_photo_subject,
                 )
                 log.info(
                     "Creative: cohort %d '%s' → angle %s → %s (QC: %s)",
@@ -3739,7 +3740,7 @@ def _process_static_campaigns(
 
             if png_path is None and selected_variant:
                 try:
-                    from src.figma_creative import rewrite_variant_copy
+                    from src.figma_creative import rewrite_variant_copy, repair_photo_subject
                     # Carry the resolved rate so the creative's bottom band shows
                     # the real figure (not a hardcoded range) on angles whose
                     # subheadline leads with a non-rate hook.
@@ -3747,6 +3748,7 @@ def _process_static_campaigns(
                     png_path, qc_report = generate_imagen_creative_with_qc(
                         variant=selected_variant,
                         copy_rewriter=rewrite_variant_copy,
+                        subject_repairer=repair_photo_subject,
                     )
                     if qc_report and qc_report.get("verdict") == "FAIL":
                         log.error(
@@ -4340,6 +4342,7 @@ def _process_extra_platform_arm(
     from src.campaign_registry import log_campaign as _reg_log
     from src.ui_decisions import upsert_launch_progress as _lp
     from src.ui_decisions import next_generation as _next_gen
+    from src.ui_decisions import resolve_live_container_id as _resolve_container
     from src.copy_adapter import adapt_copy_for_platform, localize_variant
     from src.locales import resolve_copy_locale
     from src import launch_verify
@@ -4842,53 +4845,84 @@ def _process_extra_platform_arm(
             )]
             if r
         })
-    try:
-        group_id = client.create_campaign_group(group_name, geos=union_geos)
-    except Exception as exc:
-        log.error(
-            "_process_extra_platform_arm[%s]: create_campaign_group failed (%s) — "
-            "platform-side skipped, but Phase 1 already wrote %d creatives + manifest to Drive (%s)",
-            platform, exc, len(handoff_entries), manual_handoff_url or "drive disabled",
-        )
-        return out
-    out["campaign_groups"].append(group_id)
+    # Additive launch = attach NEW ad creatives to the ad set/campaign that's
+    # ALREADY live for each (cohort × geo) — one campaign accumulates fresh
+    # creatives as older ones fatigue. It must NOT create a new campaign/ad set
+    # per launch (the old, wrong "generation = new campaign" model). So in
+    # additive mode we do NOT create the parent campaign-group up front; it's
+    # created lazily via _ensure_group() only for a (cohort × geo) that has
+    # nothing live to extend (a genuine first-launch fallback).
+    _additive = bool(getattr(config, "ADDITIVE_LAUNCH", False))
+    _group_state: dict = {"id": None}
 
-    # Log the platform-level campaign-group/parent immediately. This row gets
-    # written to the registry even when downstream ad-set creation fails (e.g.
-    # Meta Special Ad Category geo mismatch, Google permission-denied on a
-    # specific campaign), so the parent_id is always traceable post-mortem.
-    try:
-        from src.campaign_registry import log_campaign as _reg_log_parent
-        # Additive launch → the new campaign group coexists with prior generations.
-        _parent_gen = (
-            _next_gen(ramp_id=ramp_id or "", platform=platform, campaign_type="parent",
-                      cohort_signature=f"{platform}_root", geo_cluster="")
-            if getattr(config, "ADDITIVE_LAUNCH", False) else 1
-        )
-        _reg_log_parent(
-            smart_ramp_id=ramp_id or flow_id or "",
-            cohort_id=cohort_id_override or "",
-            cohort_signature=f"{platform}_root",
-            geo_cluster="",
-            geo_cluster_label="",
-            geos=[],
-            angle="",
-            campaign_type="parent",
-            advertised_rate="",
-            platform=platform,
-            platform_campaign_id=str(group_id),
-            platform_creative_id="",
-            campaign_name=group_name,
-            generation=_parent_gen,
-        )
+    def _ensure_group():
+        """Create the platform campaign-group (Meta campaign / Google campaign)
+        and log its parent registry row, once. Returns the group id, or None on
+        creation failure. Idempotent within this arm invocation."""
+        if _group_state["id"] is not None:
+            return _group_state["id"]
+        try:
+            gid = client.create_campaign_group(group_name, geos=union_geos)
+        except Exception as exc:
+            log.error(
+                "_process_extra_platform_arm[%s]: create_campaign_group failed (%s) — "
+                "platform-side skipped, but Phase 1 already wrote %d creatives + manifest to Drive (%s)",
+                platform, exc, len(handoff_entries), manual_handoff_url or "drive disabled",
+            )
+            return None
+        _group_state["id"] = gid
+        out["campaign_groups"].append(gid)
+        # Log the platform-level campaign-group/parent immediately. This row gets
+        # written to the registry even when downstream ad-set creation fails (e.g.
+        # Meta Special Ad Category geo mismatch, Google permission-denied on a
+        # specific campaign), so the parent_id is always traceable post-mortem.
+        try:
+            from src.campaign_registry import log_campaign as _reg_log_parent
+            # A parent row is only ever logged for a fresh create (first launch /
+            # replace, or additive's first-launch fallback), so it always maps to
+            # a real new group. generation follows the same batch-tag scheme.
+            _parent_gen = (
+                _next_gen(ramp_id=ramp_id or "", platform=platform, campaign_type="parent",
+                          cohort_signature=f"{platform}_root", geo_cluster="")
+                if _additive else 1
+            )
+            _reg_log_parent(
+                smart_ramp_id=ramp_id or flow_id or "",
+                cohort_id=cohort_id_override or "",
+                cohort_signature=f"{platform}_root",
+                geo_cluster="",
+                geo_cluster_label="",
+                geos=[],
+                angle="",
+                campaign_type="parent",
+                advertised_rate="",
+                platform=platform,
+                platform_campaign_id=str(gid),
+                platform_creative_id="",
+                campaign_name=group_name,
+                generation=_parent_gen,
+            )
+            log.info(
+                "_process_extra_platform_arm[%s]: parent group %s logged to registry (campaign_type=parent)",
+                platform, gid,
+            )
+        except Exception as _exc:
+            log.warning(
+                "_process_extra_platform_arm[%s]: registry log for parent group failed (non-fatal): %s",
+                platform, _exc,
+            )
+        return gid
+
+    if not _additive:
+        # First-launch / replace: create the parent up front (existing behavior).
+        # A failure here means the whole arm can't proceed.
+        if _ensure_group() is None:
+            return out
+    else:
         log.info(
-            "_process_extra_platform_arm[%s]: parent group %s logged to registry (campaign_type=parent)",
-            platform, group_id,
-        )
-    except Exception as _exc:
-        log.warning(
-            "_process_extra_platform_arm[%s]: registry log for parent group failed (non-fatal): %s",
-            platform, _exc,
+            "_process_extra_platform_arm[%s]: ADDITIVE mode — will attach new creatives to "
+            "existing live ad sets; parent group created lazily only for cohorts with nothing live.",
+            platform,
         )
 
     # ── Group specs by (cohort × geo_group) so each becomes ONE Meta Ad Set
@@ -5051,7 +5085,18 @@ def _process_extra_platform_arm(
             _is_generalist_locale = bool(
                 (getattr(cohort, "facet_strength", None) or {}).get("generalist_locale")
             )
-            if audience_status == "below_floor" and _is_generalist_locale:
+            if audience_status == "below_floor" and _additive:
+                # Additive attach re-targets nothing — it adds creatives to an ad
+                # set/campaign that's ALREADY live (and already passed the floor at
+                # creation). An audience recheck must never gate a creative refresh.
+                log.info(
+                    "_process_extra_platform_arm[%s]: audience=%s below floor but ADDITIVE — "
+                    "not gating a creative refresh on an existing campaign (cohort=%s geo=%s).",
+                    platform, audience_count,
+                    getattr(cohort, "name", "?"),
+                    getattr(geo_group, "cluster_label", "?"),
+                )
+            elif audience_status == "below_floor" and _is_generalist_locale:
                 # Generalist/i18n locale cohort (Bug 2): de-narrowing already ran
                 # above; we must NOT skip even below floor — the ramp needs these
                 # users. Launch anyway. ⚠️ RELOOK: how small-but-required locale
@@ -5117,62 +5162,122 @@ def _process_extra_platform_arm(
                         )
                 except Exception as _exc:
                     log.warning("extra-arm: approved-negative-keyword merge failed (non-fatal): %s", _exc)
-            # Young-market workaround (Meta): drop countries Meta won't accept for
-            # a young-eligible audience under EMPLOYMENT SAC (subcode 1870249, e.g.
-            # Thailand) so the rest of the ad set still creates; Tuan adds them
-            # manually in Ads Manager. If the ad set is young-market-ONLY, skip the
-            # programmatic create entirely and flag it for manual creation.
-            _manual_note = None
-            if platform == "meta":
-                _geo = (targeting or {}).get("geo_locations") or {}
-                _countries = list(_geo.get("countries") or [])
-                _young = [c for c in _countries if c in config.META_YOUNG_MARKET_COUNTRIES]
-                if _young:
-                    _remaining = [c for c in _countries if c not in config.META_YOUNG_MARKET_COUNTRIES]
-                    _base_note = {
-                        "platform": platform,
-                        "cohort_signature": getattr(cohort, "name", ""),
-                        "geo_cluster": geo_group.cluster,
-                        "geo_cluster_label": getattr(geo_group, "cluster_label", ""),
-                        "dropped_countries": _young,
-                        "campaign_name": campaign_name,
-                    }
-                    if _remaining:
-                        targeting = dict(targeting or {})
-                        targeting["geo_locations"] = {**_geo, "countries": _remaining}
-                        log.warning(
-                            "_process_extra_platform_arm[meta]: dropping young-market %s from ad set "
-                            "(cohort=%s geo=%s) — creating for %s; Tuan to add %s manually (Meta 1870249)",
-                            _young, getattr(cohort, "name", ""), geo_group.cluster, _remaining, _young,
+            # ── Additive attach: reuse the ad set/campaign already LIVE for this
+            #    (cohort × geo) and attach new creatives to it, instead of creating
+            #    a fresh container. Only when a live container exists; otherwise
+            #    fall through to the normal first-launch create below. ──────────
+            _attach_to_existing = False
+            sub_id = None
+            if _additive:
+                _resolved = _resolve_container(
+                    ramp_id=ramp_id or "", platform=platform, campaign_type="static",
+                    cohort_signature=getattr(cohort, "name", ""), geo_cluster=geo_group.cluster,
+                )
+                _cid = (_resolved or {}).get("container_id") or ""
+                if _cid:
+                    # Meta: confirm the ad set is still live on-platform before
+                    # attaching (a DELETED/ARCHIVED one can't take new ads).
+                    _live = True
+                    if platform == "meta" and hasattr(client, "is_live"):
+                        try:
+                            _live = client.is_live(_cid, level="adset")
+                        except Exception as _exc:
+                            log.warning("additive: is_live check failed for %s (%s) — treating as live", _cid, _exc)
+                            _live = True
+                    if _live:
+                        _attach_to_existing = True
+                        sub_id = _cid
+                        _lp(**_lp_kw, status="creating")
+                        out["campaigns"].append(sub_id)
+                        out["campaigns_by_cohort"][by_cohort_key] = sub_id
+                        log.info(
+                            "_process_extra_platform_arm[%s]: ADDITIVE — attaching new creatives to "
+                            "existing ad set %s cohort=%s geo=%s (%d angles); no new campaign/ad set created.",
+                            platform, sub_id, base_id, geo_group.cluster_label, len(specs),
                         )
-                        _manual_note = {**_base_note, "reason": "add these countries manually in Ads Manager (Meta young-market age restriction 1870249)"}
+                        _lp(**_lp_kw, status="created")
                     else:
                         log.warning(
-                            "_process_extra_platform_arm[meta]: ad set is young-market-only %s "
-                            "(cohort=%s geo=%s) — skipping programmatic create; Tuan to create manually",
-                            _young, getattr(cohort, "name", ""), geo_group.cluster,
+                            "_process_extra_platform_arm[%s]: ADDITIVE — existing container %s for cohort=%s "
+                            "geo=%s is DELETED/ARCHIVED on-platform; creating a fresh one (first-launch fallback).",
+                            platform, _cid, getattr(cohort, "name", ""), geo_group.cluster,
                         )
-                        manual_location_adds.append({**_base_note, "whole_adset": True, "reason": "entire ad set is young-market-only — create manually in Ads Manager (Meta 1870249)"})
-                        _lp(**_lp_kw, status="failed", error=f"young-market {_young}: manual creation needed (Meta 1870249)")
-                        continue
+                else:
+                    log.info(
+                        "_process_extra_platform_arm[%s]: ADDITIVE — no existing live container for cohort=%s "
+                        "geo=%s; creating first launch for it.",
+                        platform, getattr(cohort, "name", ""), geo_group.cluster,
+                    )
 
-            _lp(**_lp_kw, status="creating")
-            sub_id = client.create_campaign(
-                name=campaign_name,
-                campaign_group_id=group_id,
-                targeting=targeting,
-                **_extra_budget_kwargs,
-            )
-            if _manual_note is not None:
-                _manual_note["platform_campaign_id"] = sub_id
-                manual_location_adds.append(_manual_note)
-            out["campaigns"].append(sub_id)
-            out["campaigns_by_cohort"][by_cohort_key] = sub_id
-            log.info(
-                "_process_extra_platform_arm[%s]: ad set/group %s cohort=%s geo=%s (%d angles)",
-                platform, sub_id, base_id, geo_group.cluster_label, len(specs),
-            )
-            _lp(**_lp_kw, status="created")
+            if not _attach_to_existing:
+                # ── First launch / replace / additive first-launch-fallback:
+                #    create a fresh campaign group (lazily) + ad set. ───────────
+                # Geo-compliance workaround (Meta): some countries can't be created
+                # programmatically and need a MANUAL action — young-market age limits
+                # (subcode 1870249, e.g. Thailand) and Singapore's Universal Ads
+                # declaration (subcode 3858550). DROP them so the rest of the ad set
+                # still creates; Tuan is flagged with the per-country reason. If the ad
+                # set is ENTIRELY such countries, skip the programmatic create + flag.
+                _manual_note = None
+                if platform == "meta":
+                    _geo = (targeting or {}).get("geo_locations") or {}
+                    _countries = list(_geo.get("countries") or [])
+                    _reasons = config.META_MANUAL_GEO_REASONS
+                    _blocked = [c for c in _countries if c in _reasons]
+                    if _blocked:
+                        _remaining = [c for c in _countries if c not in _reasons]
+                        _reason_str = "; ".join(f"{c}: {_reasons[c]}" for c in _blocked)
+                        _base_note = {
+                            "platform": platform,
+                            "cohort_signature": getattr(cohort, "name", ""),
+                            "geo_cluster": geo_group.cluster,
+                            "geo_cluster_label": getattr(geo_group, "cluster_label", ""),
+                            "dropped_countries": _blocked,
+                            "campaign_name": campaign_name,
+                        }
+                        if _remaining:
+                            targeting = dict(targeting or {})
+                            targeting["geo_locations"] = {**_geo, "countries": _remaining}
+                            log.warning(
+                                "_process_extra_platform_arm[meta]: dropping manual-declaration geos %s from ad "
+                                "set (cohort=%s geo=%s) — creating for %s; Tuan to add manually. Reasons: %s",
+                                _blocked, getattr(cohort, "name", ""), geo_group.cluster, _remaining, _reason_str,
+                            )
+                            _manual_note = {**_base_note, "reason": _reason_str}
+                        else:
+                            log.warning(
+                                "_process_extra_platform_arm[meta]: ad set is entirely manual-declaration geos %s "
+                                "(cohort=%s geo=%s) — skipping programmatic create; Tuan to create manually. Reasons: %s",
+                                _blocked, getattr(cohort, "name", ""), geo_group.cluster, _reason_str,
+                            )
+                            manual_location_adds.append({**_base_note, "whole_adset": True, "reason": _reason_str})
+                            _lp(**_lp_kw, status="failed", error=f"manual-declaration geos {_blocked}: {_reason_str}")
+                            continue
+
+                # Parent campaign-group is created lazily (up front for non-additive;
+                # here for an additive first-launch fallback).
+                group_id = _ensure_group()
+                if group_id is None:
+                    _lp(**_lp_kw, status="failed", error="parent campaign-group creation failed")
+                    continue
+
+                _lp(**_lp_kw, status="creating")
+                sub_id = client.create_campaign(
+                    name=campaign_name,
+                    campaign_group_id=group_id,
+                    targeting=targeting,
+                    **_extra_budget_kwargs,
+                )
+                if _manual_note is not None:
+                    _manual_note["platform_campaign_id"] = sub_id
+                    manual_location_adds.append(_manual_note)
+                out["campaigns"].append(sub_id)
+                out["campaigns_by_cohort"][by_cohort_key] = sub_id
+                log.info(
+                    "_process_extra_platform_arm[%s]: ad set/group %s cohort=%s geo=%s (%d angles)",
+                    platform, sub_id, base_id, geo_group.cluster_label, len(specs),
+                )
+                _lp(**_lp_kw, status="created")
         except Exception as exc:
             log.exception(
                 "_process_extra_platform_arm[%s]: ad set creation failed cohort=%s geo=%s — skipping all angles: %s",
@@ -5428,9 +5533,22 @@ def _process_extra_platform_arm(
             else:
                 failed_specs.append(spec)
 
+        # ── Additive attach with zero new ads: NEVER touch the existing ad set.
+        # It already has its prior (live) creatives — a failed creative refresh
+        # must be a safe no-op, not a heal that archives/deletes the container.
+        if _attach_to_existing and ads_ok == 0:
+            log.warning(
+                "_process_extra_platform_arm[%s]: ADDITIVE — 0 new creatives attached to existing "
+                "ad set %s (cohort=%s geo=%s); leaving it untouched (no heal). Reasons: %s",
+                platform, sub_id, getattr(cohort, "name", "?"), geo_group.cluster_label,
+                "; ".join(dict.fromkeys(s.get("_last_error", "") for s in specs if s.get("_last_error"))) or "unknown",
+            )
+            continue
+
         # ── Verify-and-heal (piece C). If the ad set/group ended the run with
         # zero ads, retry the failed specs once; if still empty, archive the
-        # container + flag so no empty shell survives the launch.
+        # container + flag so no empty shell survives the launch. (Skipped for
+        # additive attach above — there's no fresh shell to heal.)
         if config.LAUNCH_VERIFY_ENABLED and ads_ok == 0 and failed_specs:
             log.warning(
                 "_process_extra_platform_arm[%s]: 0/%d ads attached to %s — "

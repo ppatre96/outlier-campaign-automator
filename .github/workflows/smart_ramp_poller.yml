@@ -93,7 +93,7 @@ on:
           - "true"
           - "false"
       additive:
-        description: "Additive launch (new variation): create a NEW campaign generation (v2/v3…) for each targeted cohort×geo WITHOUT archiving prior ones. All generations coexist + keep their own attribution. Use to add a fresh variation once an earlier one stopped delivering."
+        description: "Additive launch (refresh creatives): ADD fresh creatives to the ad set/campaign already LIVE for each targeted cohort×geo — no new campaign is created. The pipeline resolves the existing live ad set and attaches new ads to it (tagged as a refresh batch). Use to refresh creatives once earlier ones fatigue."
         required: false
         default: "false"
         type: choice
@@ -247,8 +247,9 @@ jobs:
           # Relaunch (replace): archive only_channel's existing campaigns before
           # creating fresh ones. Read at config import time (config.REPLACE_EXISTING).
           REPLACE_EXISTING: ${{ github.event.inputs.replace }}
-          # Additive launch: create a NEW generation (v2/v3…) alongside prior ones
-          # without archiving (config.ADDITIVE_LAUNCH). Console "Launch new variation".
+          # Additive launch: attach fresh creatives to the ad set already live for
+          # each cohort×geo — no new campaign (config.ADDITIVE_LAUNCH). Console
+          # "Refresh creatives".
           ADDITIVE_LAUNCH: ${{ github.event.inputs.additive }}
           # Per-cohort idempotency (config.SKIP_EXISTING_COHORT_CAMPAIGNS). Blank
           # on scheduled ticks → config defaults to true (blank-safe parse). A
