@@ -1906,6 +1906,182 @@ def set_recommendation_decision(
         return rec
 
 
+# ── Fatigue (creative-fatigue detection surface) ─────────────────────────────
+#
+# Populated by src/fatigue.compute_fatigue (daily + weekly). Read by the console
+# "Fatigue" tab (via @vercel/postgres) and the weekly Slack report. Kept separate
+# from ramp_recommendations so the fatigue lens + its refresh/pause approvals
+# don't pollute the general recommendations flow. Plain TEXT columns (no SQL enum)
+# so the table self-heals in CI without a manual migration step.
+
+VALID_FATIGUE_DECISIONS = {
+    "pending", "refresh_approved", "pause_approved", "rejected", "dismissed",
+}
+VALID_FATIGUE_CLASSES = {"healthy", "reaching", "reached"}
+
+_FATIGUE_COLS = (
+    "id, ramp_id, platform, campaign_id, adset_id, campaign_name, cohort_signature, "
+    "geo_cluster, locale, classification, fatigue_score, recommended_action, signals, "
+    "decision, decided_by, decided_at::text, campaign_link, generated_at::text, updated_at::text"
+)
+
+
+def _ensure_fatigue_table(cur) -> None:
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ramp_fatigue (
+            id                 BIGSERIAL PRIMARY KEY,
+            ramp_id            TEXT NOT NULL,
+            platform           TEXT NOT NULL DEFAULT 'meta',
+            campaign_id        TEXT NOT NULL DEFAULT '',
+            adset_id           TEXT NOT NULL DEFAULT '',
+            campaign_name      TEXT NOT NULL DEFAULT '',
+            cohort_signature   TEXT NOT NULL DEFAULT '',
+            geo_cluster        TEXT NOT NULL DEFAULT '',
+            locale             TEXT NOT NULL DEFAULT '',
+            classification     TEXT NOT NULL DEFAULT 'healthy',
+            fatigue_score      INT  NOT NULL DEFAULT 0,
+            recommended_action TEXT NOT NULL DEFAULT '',
+            signals            JSONB NOT NULL DEFAULT '{}'::jsonb,
+            decision           TEXT NOT NULL DEFAULT 'pending',
+            decided_by         TEXT,
+            decided_at         TIMESTAMPTZ,
+            campaign_link      TEXT NOT NULL DEFAULT '',
+            generated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (ramp_id, platform, campaign_id)
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS ramp_fatigue_ramp_idx ON ramp_fatigue (ramp_id, updated_at DESC)"
+    )
+
+
+def _row_to_fatigue(row) -> dict:
+    keys = [
+        "id", "ramp_id", "platform", "campaign_id", "adset_id", "campaign_name",
+        "cohort_signature", "geo_cluster", "locale", "classification", "fatigue_score",
+        "recommended_action", "signals", "decision", "decided_by", "decided_at",
+        "campaign_link", "generated_at", "updated_at",
+    ]
+    return dict(zip(keys, row))
+
+
+def upsert_fatigue(entry: dict) -> None:
+    """Insert/update a per-campaign fatigue row (keyed on ramp×platform×campaign).
+    On conflict, refreshes the score/classification/signals but NEVER clobbers a
+    user decision (that flows only through set_fatigue_decision) — so a re-score
+    doesn't re-nag an already-actioned campaign. Best-effort."""
+    ramp_id = entry.get("ramp_id") or ""
+    if not ramp_id:
+        return
+    classification = entry.get("classification") or "healthy"
+    if classification not in VALID_FATIGUE_CLASSES:
+        classification = "healthy"
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            _ensure_fatigue_table(cur)
+            cur.execute(
+                """
+                INSERT INTO ramp_fatigue (
+                    ramp_id, platform, campaign_id, adset_id, campaign_name,
+                    cohort_signature, geo_cluster, locale, classification,
+                    fatigue_score, recommended_action, signals, campaign_link, updated_at
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s, NOW())
+                ON CONFLICT (ramp_id, platform, campaign_id) DO UPDATE SET
+                    adset_id           = EXCLUDED.adset_id,
+                    campaign_name      = EXCLUDED.campaign_name,
+                    cohort_signature   = EXCLUDED.cohort_signature,
+                    geo_cluster        = EXCLUDED.geo_cluster,
+                    locale             = EXCLUDED.locale,
+                    classification     = EXCLUDED.classification,
+                    fatigue_score      = EXCLUDED.fatigue_score,
+                    recommended_action = EXCLUDED.recommended_action,
+                    signals            = EXCLUDED.signals,
+                    campaign_link      = EXCLUDED.campaign_link,
+                    updated_at         = NOW()
+                """,
+                (
+                    ramp_id,
+                    entry.get("platform", "meta") or "meta",
+                    entry.get("campaign_id", "") or "",
+                    entry.get("adset_id", "") or "",
+                    entry.get("campaign_name", "") or "",
+                    entry.get("cohort_signature", "") or "",
+                    entry.get("geo_cluster", "") or "",
+                    entry.get("locale", "") or "",
+                    classification,
+                    int(entry.get("fatigue_score") or 0),
+                    entry.get("recommended_action", "") or "",
+                    json.dumps(entry.get("signals") or {}),
+                    entry.get("campaign_link", "") or "",
+                ),
+            )
+            conn.commit()
+    except UIDecisionsUnavailable as exc:
+        log.debug("upsert_fatigue skipped (%s): %s", ramp_id, exc)
+
+
+def list_fatigue(ramp_id: str, *, only_fatigued: bool = False) -> list[dict]:
+    """Fatigue rows for a ramp, worst-first (reached → reaching → healthy, then
+    score desc). `only_fatigued=True` drops healthy rows (what the weekly report
+    + tab care about)."""
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            _ensure_fatigue_table(cur)
+            where = "ramp_id = %s"
+            if only_fatigued:
+                where += " AND classification IN ('reaching','reached')"
+            cur.execute(
+                f"SELECT {_FATIGUE_COLS} FROM ramp_fatigue WHERE {where} "
+                "ORDER BY CASE classification WHEN 'reached' THEN 0 WHEN 'reaching' THEN 1 "
+                "ELSE 2 END, fatigue_score DESC, updated_at DESC",
+                (ramp_id,),
+            )
+            return [_row_to_fatigue(r) for r in cur.fetchall()]
+    except UIDecisionsUnavailable as exc:
+        log.debug("list_fatigue unavailable (%s): %s", ramp_id, exc)
+        return []
+
+
+def set_fatigue_decision(
+    fatigue_id: int, decision: str, *, by_user: Optional[str] = None,
+) -> Optional[dict]:
+    """Flip a fatigue row's decision (pending → refresh_approved/pause_approved/
+    rejected/dismissed). Called by the console approval routes. Writes an audit
+    row. Returns the updated row or None if it doesn't exist."""
+    if decision not in VALID_FATIGUE_DECISIONS:
+        raise ValueError(f"invalid fatigue decision: {decision!r}")
+    with _connect() as conn, conn.cursor() as cur:
+        _ensure_fatigue_table(cur)
+        cur.execute(
+            f"UPDATE ramp_fatigue SET decision=%s, decided_by=%s, decided_at=NOW() "
+            f"WHERE id=%s RETURNING {_FATIGUE_COLS}",
+            (decision, by_user, fatigue_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            conn.rollback()
+            return None
+        rec = _row_to_fatigue(row)
+        cur.execute(
+            "INSERT INTO ramp_audit_log (ramp_id, event_type, payload, by_user) "
+            "VALUES (%s, %s, %s::jsonb, %s)",
+            (
+                rec["ramp_id"], f"fatigue_{decision}",
+                json.dumps({
+                    "fatigue_id": fatigue_id,
+                    "campaign_id": rec["campaign_id"],
+                    "classification": rec["classification"],
+                }),
+                by_user,
+            ),
+        )
+        conn.commit()
+        return rec
+
+
 def log_event(
     ramp_id: str,
     event_type: str,
