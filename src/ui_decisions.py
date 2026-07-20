@@ -842,6 +842,68 @@ def campaign_exists_for_cohort_channel(
         return False
 
 
+def resolve_live_container_id(
+    ramp_id: str, platform: str, campaign_type: str, cohort_signature: str, geo_cluster: str,
+) -> dict | None:
+    """Resolve the EXISTING platform container for a (ramp × platform ×
+    campaign_type × cohort × geo) so an ADDITIVE launch can attach new ad
+    creatives to the campaign/ad set that's already live — instead of creating a
+    fresh one (the old, wrong "new generation = new campaign" model).
+
+    Returns ``{"container_id", "parent_id", "generation"}`` for the newest row
+    with a non-empty platform_campaign_id, or ``None`` when nothing exists yet
+    (caller then falls back to a first-launch create).
+
+    - ``container_id`` — Meta AD-SET id (from a ``campaign_type='static'`` row),
+      Google ad-group, or LinkedIn/Reddit campaign. This is what new ads attach to.
+    - ``parent_id`` — the ORIGINAL (lowest-generation) Meta CAMPAIGN / Google
+      campaign id for this platform+ramp (``campaign_type='parent'`` row), or ""
+      when none. Informational in attach mode (ad attach only needs the ad set).
+    - ``generation`` — the resolved container row's generation (batch tag).
+    """
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            # Skip rows a reconcile has marked dead (Meta DELETED/ARCHIVED) so we
+            # attach to the campaign that's actually LIVE, not a healed shell. A
+            # row with no status yet (pre-reconcile) is assumed live.
+            cur.execute(
+                "SELECT platform_campaign_id, generation FROM campaigns "
+                "WHERE ramp_id = %s AND platform = %s AND campaign_type = %s "
+                "AND cohort_signature = %s AND geo_cluster = %s "
+                "AND coalesce(platform_campaign_id, '') <> '' "
+                "AND coalesce(data->>'status', '') NOT IN ('deleted', 'archived') "
+                "ORDER BY generation DESC, updated_at DESC LIMIT 1",
+                (ramp_id, platform, campaign_type, cohort_signature, geo_cluster),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            container_id = str(row[0])
+            resolved_gen = int(row[1] or 1)
+            # Original (gen 1) parent campaign — the stable, canonical container.
+            parent_id = ""
+            cur.execute(
+                "SELECT platform_campaign_id FROM campaigns "
+                "WHERE ramp_id = %s AND platform = %s AND campaign_type = 'parent' "
+                "AND coalesce(platform_campaign_id, '') <> '' "
+                "AND coalesce(data->>'status', '') NOT IN ('deleted', 'archived') "
+                "ORDER BY generation ASC, updated_at ASC LIMIT 1",
+                (ramp_id, platform),
+            )
+            prow = cur.fetchone()
+            if prow:
+                parent_id = str(prow[0])
+            return {
+                "container_id": container_id,
+                "parent_id": parent_id,
+                "generation": resolved_gen,
+            }
+    except Exception as exc:
+        log.debug("resolve_live_container_id unavailable (%s/%s/%s/%s/%s): %s",
+                  ramp_id, platform, campaign_type, cohort_signature, geo_cluster, exc)
+        return None
+
+
 # ── New-cohort detection + review/launch state (feature 010) ──────────────────
 #
 # Two orthogonal signals on ramp_decisions (never touch `status`):

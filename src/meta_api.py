@@ -382,6 +382,47 @@ class MetaClient(AdPlatformClient):
         obj = AdSet(adset_id).api_get(fields=[AdSet.Field.promoted_object])
         return dict(obj.get("promoted_object") or {})
 
+    def get_effective_status(self, object_id: str, level: str = "adset") -> str:
+        """Read a Meta object's `effective_status` (its real, cascaded delivery
+        state). `level` is "adset" (default — our `campaign_type='static'` rows
+        hold ad-set ids) or "campaign" (our `campaign_type='parent'` rows hold
+        Meta campaign ids).
+
+        Returns the uppercase status string (ACTIVE, PAUSED, DELETED, ARCHIVED,
+        ADSET_PAUSED, CAMPAIGN_PAUSED, …). A DELETED/removed object raises a
+        GraphAPIError ("does not exist / cannot be loaded") — we map that to
+        "DELETED" so callers can treat a vanished object as dead. Empty string
+        only on an unexpected/transient read error (caller decides how to treat).
+
+        Used by the reconciliation pass (scripts/reconcile_meta_status.py) and by
+        the additive attach path to confirm the target ad set is still live before
+        attaching new ads to it."""
+        self._ensure_init()
+        try:
+            if str(level).lower() == "campaign":
+                from facebook_business.adobjects.campaign import Campaign
+                obj = Campaign(object_id).api_get(fields=[Campaign.Field.effective_status])
+            else:
+                from facebook_business.adobjects.adset import AdSet
+                obj = AdSet(object_id).api_get(fields=[AdSet.Field.effective_status])
+            return str(obj.get("effective_status") or "").upper()
+        except Exception as exc:
+            # A hard-deleted / non-existent object 400s with "does not exist" or
+            # "Unsupported get request … cannot be loaded" — treat as dead.
+            msg = str(exc).lower()
+            if "does not exist" in msg or "cannot be loaded" in msg or "unsupported get request" in msg:
+                log.info("Meta get_effective_status: %s %s not found → DELETED", level, object_id)
+                return "DELETED"
+            log.warning("Meta get_effective_status(%s, %s) failed: %s", object_id, level, exc)
+            return ""
+
+    def is_live(self, object_id: str, level: str = "adset") -> bool:
+        """True when a Meta object is in a live/reusable state (not DELETED or
+        ARCHIVED). PAUSED counts as live — our campaigns launch paused on purpose
+        and additive should still attach to them."""
+        status = self.get_effective_status(object_id, level)
+        return bool(status) and status not in ("DELETED", "ARCHIVED")
+
     def repair_promoted_object(self, adset_id: str) -> bool:
         """Patch an ad set to the correct pixel-event promoted_object +
         attribution window (the form `create_campaign` now writes).

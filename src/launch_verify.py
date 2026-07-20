@@ -37,7 +37,12 @@ def _archive_meta_adset(adset_id: str) -> bool:
 
     FacebookAdsApi.init(access_token=config.META_ACCESS_TOKEN,
                         api_version=config.META_API_VERSION or "v21.0")
-    AdSet(adset_id).api_update(params={"status": "DELETED"})
+    # ARCHIVED (not DELETED): hides the empty shell from default views like a
+    # DELETE, but is REVERSIBLE and inspectable — matching the sibling archivers
+    # (_archive_google_adgroup → PAUSED, _archive_linkedin_campaign → ARCHIVED).
+    # A hard DELETE here previously removed campaigns for good when a launch came
+    # up empty (e.g. creative-gen produced no PNG), which is unrecoverable.
+    AdSet(adset_id).api_update(params={"status": "ARCHIVED"})
     return True
 
 
