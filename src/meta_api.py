@@ -423,6 +423,100 @@ class MetaClient(AdPlatformClient):
         status = self.get_effective_status(object_id, level)
         return bool(status) and status not in ("DELETED", "ARCHIVED")
 
+    def get_ad_insights_7d(self, container_id: str, container_level: str = "adset") -> list[dict]:
+        """Fetch last-7-day delivery insights, one row PER AD, for a Meta container
+        (ad set — default — or campaign). Returns a list of dicts:
+          {ad_id, ad_name, frequency, reach, impressions, clicks, ctr, spend}
+
+        `frequency` (average impressions per person over 7 days) is the canonical
+        creative-fatigue signal; the rest feed the fatigue score + weak-ad ranking.
+        Returns [] on no delivery or a read error, so the fatigue scorer degrades
+        to the CTR/CPA proxy instead of crashing."""
+        self._ensure_init()
+        try:
+            from facebook_business.adobjects.adset import AdSet
+            from facebook_business.adobjects.campaign import Campaign
+            obj = (
+                Campaign(container_id)
+                if str(container_level).lower() == "campaign"
+                else AdSet(container_id)
+            )
+            rows = obj.get_insights(
+                params={"level": "ad", "date_preset": "last_7d"},
+                fields=[
+                    "ad_id", "ad_name", "frequency", "reach",
+                    "impressions", "clicks", "ctr", "spend",
+                ],
+            )
+
+            def _num(v):
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    return None
+
+            out: list[dict] = []
+            for r in rows:
+                out.append({
+                    "ad_id":       str(r.get("ad_id") or ""),
+                    "ad_name":     r.get("ad_name") or "",
+                    "frequency":   _num(r.get("frequency")),
+                    "reach":       _num(r.get("reach")),
+                    "impressions": _num(r.get("impressions")),
+                    "clicks":      _num(r.get("clicks")),
+                    "ctr":         _num(r.get("ctr")),
+                    "spend":       _num(r.get("spend")),
+                })
+            return out
+        except Exception as exc:
+            log.warning("Meta get_ad_insights_7d(%s, %s) failed: %s", container_id, container_level, exc)
+            return []
+
+    def get_insights_window(
+        self, container_id: str, container_level: str = "adset",
+        *, since: str, until: str,
+    ) -> dict:
+        """Aggregate delivery insights for a Meta container over an explicit date
+        window (YYYY-MM-DD, inclusive). Returns a single dict:
+          {campaign_id, frequency, reach, impressions, clicks, ctr, spend}
+        Used to compute week-over-week CTR (call for this week + the prior week)
+        and the current 7-day frequency. Empty dict on no delivery / read error."""
+        self._ensure_init()
+        try:
+            from facebook_business.adobjects.adset import AdSet
+            from facebook_business.adobjects.campaign import Campaign
+            obj = (
+                Campaign(container_id)
+                if str(container_level).lower() == "campaign"
+                else AdSet(container_id)
+            )
+            rows = list(obj.get_insights(
+                params={"time_range": {"since": since, "until": until}},
+                fields=["campaign_id", "frequency", "reach", "impressions", "clicks", "ctr", "spend"],
+            ))
+            if not rows:
+                return {}
+            r = rows[0]
+
+            def _num(v):
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    return None
+
+            return {
+                "campaign_id": str(r.get("campaign_id") or ""),
+                "frequency":   _num(r.get("frequency")),
+                "reach":       _num(r.get("reach")),
+                "impressions": _num(r.get("impressions")),
+                "clicks":      _num(r.get("clicks")),
+                "ctr":         _num(r.get("ctr")),
+                "spend":       _num(r.get("spend")),
+            }
+        except Exception as exc:
+            log.warning("Meta get_insights_window(%s, %s) failed: %s", container_id, container_level, exc)
+            return {}
+
     def repair_promoted_object(self, adset_id: str) -> bool:
         """Patch an ad set to the correct pixel-event promoted_object +
         attribution window (the form `create_campaign` now writes).

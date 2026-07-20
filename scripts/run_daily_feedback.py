@@ -111,6 +111,16 @@ def main() -> int:
             recs = agent.recommend_actions(ramp_id)
             total += len(recs)
             log.info("  %s → %d recommendations", ramp_id, len(recs))
+            # Creative-fatigue scoring (Meta 7-day frequency + CTR WoW) → ramp_fatigue,
+            # read by the console "Fatigue" tab + the weekly Slack report. Isolated
+            # so a fatigue read failure never aborts the recommendations pass.
+            if getattr(config, "FATIGUE_ENABLED", True):
+                try:
+                    from src.fatigue import compute_fatigue
+                    fat = compute_fatigue(ramp_id)
+                    log.info("  %s → %d fatiguing campaign(s)", ramp_id, len(fat))
+                except Exception as exc:
+                    log.warning("fatigue scoring failed for %s: %s", ramp_id, exc)
             # Angle double-down: decide which angle wins per cohort, surface
             # scale/refresh/pause into the console "Live performance &
             # recommendations" section + post a Slack change summary. Live

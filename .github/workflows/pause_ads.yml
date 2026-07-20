@@ -1,0 +1,68 @@
+name: Pause Ads (Fatigue — remove weak creatives)
+
+# Fires when the outlier-campaign-console "Fatigue" tab approves pausing the weak
+# ads in a fatiguing campaign. Pauses only the named ad ids (leaves winners +
+# the ad set live). One-shot; no cron.
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Ad platform"
+        required: true
+        default: "meta"
+        type: choice
+        options:
+          - meta
+          - google
+          - linkedin
+          - reddit
+          - tiktok
+      ad_ids:
+        description: "Comma-separated platform-native ad ids to pause"
+        required: true
+      ramp_id:
+        description: "Ramp id (for the audit log)"
+        required: false
+        default: ""
+
+jobs:
+  pause:
+    name: Pause weak ads
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Echo inputs
+        run: |
+          echo "platform: ${{ github.event.inputs.platform }}"
+          echo "ad_ids:   ${{ github.event.inputs.ad_ids }}"
+          echo "ramp_id:  ${{ github.event.inputs.ramp_id }}"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v4
+
+      - name: Run pause_ads
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: |
+          doppler run -- python3 scripts/pause_ads.py \
+            --platform "${{ github.event.inputs.platform }}" \
+            --ad-ids "${{ github.event.inputs.ad_ids }}" \
+            --ramp-id "${{ github.event.inputs.ramp_id }}"

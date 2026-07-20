@@ -562,6 +562,25 @@ for _c in os.getenv("META_DECLARATION_REQUIRED_COUNTRIES", "").split(","):
             "declare it in Business Settings, then add the country manually"
         )
 
+# ── Creative-fatigue detection (src/fatigue.py) ──────────────────────────────
+# Powers the weekly Slack fatigue report + the console "Fatigue" tab. A campaign
+# is "reaching" fatigue on early signals and "reached" on strong ones, across:
+# Meta 7-day impression frequency (canonical), CTR week-over-week decline, and
+# CPA vs the cohort baseline. Meta-only for frequency; other channels fall back
+# to the CTR/CPA proxy.
+FATIGUE_ENABLED = os.getenv("FATIGUE_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+FATIGUE_FREQ_REACHING = float(os.getenv("FATIGUE_FREQ_REACHING", "3.0"))
+FATIGUE_FREQ_REACHED  = float(os.getenv("FATIGUE_FREQ_REACHED",  "5.0"))
+# CTR week-over-week decline as a negative fraction (e.g. -0.10 = down 10%).
+FATIGUE_CTR_WOW_REACHING = float(os.getenv("FATIGUE_CTR_WOW_REACHING", "-0.10"))
+FATIGUE_CTR_WOW_REACHED  = float(os.getenv("FATIGUE_CTR_WOW_REACHED",  "-0.20"))
+# Min spend (USD, 7d) before a campaign is eligible to be judged for fatigue.
+FATIGUE_MIN_SPEND_USD = float(os.getenv("FATIGUE_MIN_SPEND_USD", "20.0"))
+# Weak-ad selection: an ad is "weak" when its CTR is below this fraction of the
+# campaign's median ad CTR AND it has at least this many impressions.
+FATIGUE_WEAK_AD_CTR_RATIO       = float(os.getenv("FATIGUE_WEAK_AD_CTR_RATIO", "0.5"))
+FATIGUE_WEAK_AD_MIN_IMPRESSIONS = int(os.getenv("FATIGUE_WEAK_AD_MIN_IMPRESSIONS", "500"))
+
 # Meta LAL feature flags (2026-05-27). Toggles the lookalike-audience layer
 # in src/meta_lal.py. When META_USE_LAL is True, src/meta_targeting.py
 # resolve_cohort() will auto-attach 1% LAL audiences seeded from the 4
