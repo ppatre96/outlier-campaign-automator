@@ -660,13 +660,14 @@ def _process_row(
         # ── Step 8c: Gemini generation + auto QC retry loop ──
         if png_path is None and selected_variant:
             try:
-                from src.figma_creative import rewrite_variant_copy
+                from src.figma_creative import rewrite_variant_copy, repair_photo_subject
                 # max_retries comes from the function default (env-var
                 # QC_MAX_RETRIES, default 9 = 10 attempts) — Pranav rule
                 # 2026-04-29, we always want to ship a creative.
                 png_path, qc_report = generate_imagen_creative_with_qc(
                     variant=selected_variant,
                     copy_rewriter=rewrite_variant_copy,
+                    subject_repairer=repair_photo_subject,
                 )
                 log.info(
                     "Creative: cohort %d '%s' → angle %s → %s (QC: %s)",
@@ -3739,7 +3740,7 @@ def _process_static_campaigns(
 
             if png_path is None and selected_variant:
                 try:
-                    from src.figma_creative import rewrite_variant_copy
+                    from src.figma_creative import rewrite_variant_copy, repair_photo_subject
                     # Carry the resolved rate so the creative's bottom band shows
                     # the real figure (not a hardcoded range) on angles whose
                     # subheadline leads with a non-rate hook.
@@ -3747,6 +3748,7 @@ def _process_static_campaigns(
                     png_path, qc_report = generate_imagen_creative_with_qc(
                         variant=selected_variant,
                         copy_rewriter=rewrite_variant_copy,
+                        subject_repairer=repair_photo_subject,
                     )
                     if qc_report and qc_report.get("verdict") == "FAIL":
                         log.error(

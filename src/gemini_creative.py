@@ -1187,6 +1187,46 @@ def validate_photo_subject(photo_subject: str) -> None:
             )
 
 
+# Concrete professions used to repair a too-generic photo_subject. GENERALIST
+# cohorts have no single profession, so build_copy_variants() may emit a banned
+# generic role (e.g. "German knowledge worker"). Rotated by angle for variety.
+_GENERALIST_FALLBACK_PROFESSIONS = [
+    "content writer", "copy editor", "language tutor",
+    "research analyst", "translator", "technical writer",
+]
+
+# Banned generic role phrases, longest-first, swapped for a concrete profession
+# by _concretize_photo_subject. Kept in sync with _GENERIC_SUBJECT_PATTERNS.
+_GENERIC_ROLE_PHRASES = [
+    "professional individual", "professional person", "knowledge worker",
+    "domain expert", "remote worker", "scientist", "professional",
+]
+
+
+def _concretize_photo_subject(photo_subject: str, angle: str = "A") -> str:
+    """Deterministically rewrite a too-generic photo_subject into a concrete one
+    by swapping banned generic role phrases for a concrete profession, preserving
+    the surrounding gender/ethnicity/setting text. Guaranteed to return a string
+    that passes validate_photo_subject — the last-resort net when an LLM subject
+    repair is unavailable or still generic (so a GENERALIST cohort can never end
+    up with zero creatives, which previously left an empty ad set)."""
+    prof = _GENERALIST_FALLBACK_PROFESSIONS[
+        sum(ord(c) for c in (angle or "A")) % len(_GENERALIST_FALLBACK_PROFESSIONS)
+    ]
+    out = photo_subject
+    for phrase in _GENERIC_ROLE_PHRASES:
+        out = re.sub(re.escape(phrase), prof, out, flags=re.IGNORECASE)
+    # Residual generic subjects like "person working at a laptop" / "person at a
+    # laptop": swap a leading generic "person" role token.
+    out = re.sub(r"\bperson\b", prof, out, count=1, flags=re.IGNORECASE)
+    try:
+        validate_photo_subject(out)
+    except ValueError:
+        # Still generic → fully concrete fallback (loses descriptors, last resort).
+        out = f"{prof} reviewing notes on a laptop at a home desk"
+    return out
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 def generate_imagen_creative(
@@ -1355,6 +1395,7 @@ def generate_imagen_creative_with_qc(
     reference_image_path: str | Path | None = None,
     max_retries: int = _QC_MAX_RETRIES_DEFAULT,
     copy_rewriter: "callable | None" = None,
+    subject_repairer: "callable | None" = None,
     initial_prompt_suffix: str = "",
     no_reference_image: bool = False,
     skip_rules: set[str] | None = None,
@@ -1433,6 +1474,50 @@ def generate_imagen_creative_with_qc(
             }
         variant = copy_rewriter(variant, copy_violations)
         copy_retry_budget -= 1
+
+    # ── Pre-flight photo_subject validation ──
+    # A too-generic subject (common for GENERALIST cohorts whose copy emits e.g.
+    # "German knowledge worker") is a DETERMINISTIC failure: validate_photo_subject
+    # rejects it, and the retry loop below would otherwise re-call image-gen with
+    # the SAME banned subject on every attempt → no PNG → empty ad set → heal.
+    # Repair it ONCE up front (LLM repairer if provided, else a deterministic
+    # concretizer that's guaranteed to pass), then keep both the variant field and
+    # the explicit arg in sync so the generation loop uses the fix.
+    _subject = photo_subject if photo_subject else variant.get("photo_subject", "")
+    _subj_budget = 2
+    while _subject and _subj_budget > 0:
+        try:
+            validate_photo_subject(_subject)
+            break
+        except ValueError as _sv:
+            log.warning(
+                "Pre-flight photo_subject too generic (angle=%s): %r — repairing",
+                variant.get("angle"), _subject,
+            )
+            _repaired = ""
+            if subject_repairer is not None:
+                try:
+                    variant = subject_repairer(variant, [str(_sv)])
+                    _repaired = (variant.get("photo_subject") or "").strip()
+                except Exception as _rexc:
+                    log.warning("subject_repairer failed (%s) — using deterministic concretizer", _rexc)
+            if not _repaired or _repaired == _subject:
+                _repaired = _concretize_photo_subject(_subject, variant.get("angle", "A"))
+                variant = {**variant, "photo_subject": _repaired}
+            log.info("photo_subject repaired (angle=%s): %r", variant.get("angle"), _repaired)
+            _subject = _repaired
+            if photo_subject:
+                photo_subject = _repaired
+            _subj_budget -= 1
+    # Guarantee non-generic even if the budget was exhausted.
+    if _subject:
+        try:
+            validate_photo_subject(_subject)
+        except ValueError:
+            _subject = _concretize_photo_subject(_subject, variant.get("angle", "A"))
+            variant = {**variant, "photo_subject": _subject}
+            if photo_subject:
+                photo_subject = _subject
 
     prompt_suffix = initial_prompt_suffix  # seed from caller; QC failures append to it
     attach_ref   = attach_ref_initial
