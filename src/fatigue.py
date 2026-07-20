@@ -21,7 +21,12 @@ Meta-only for now (frequency has no Google/LinkedIn equivalent); extend later.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, timedelta
+
+# Smart Ramp v2 campaign names embed the locale as a BCP-47 segment, e.g.
+# "Scale-GMR-0023 | Meta | language | th-TH | th-TH | TH | 07/20/2026 | ALL".
+_LOCALE_RE = re.compile(r"\b([a-z]{2}-[A-Z]{2})\b")
 
 import config
 from src.ui_decisions import _connect, upsert_fatigue, UIDecisionsUnavailable
@@ -50,16 +55,25 @@ def _live_meta_adsets(ramp_id: str) -> list[dict]:
                 (ramp_id,),
             )
             rows = cur.fetchall()
-            return [
-                {
+            out = []
+            for r in rows:
+                campaign_name = r[1] or ""
+                locale = r[4] or ""
+                # data->>'locale' is often empty on these rows; recover the locale
+                # from the campaign name so the console refresh scopes to THIS
+                # locale (onlyLocales) instead of refreshing every locale.
+                if not locale and campaign_name:
+                    m = _LOCALE_RE.search(campaign_name)
+                    if m:
+                        locale = m.group(1)
+                out.append({
                     "adset_id": str(r[0]),
-                    "campaign_name": r[1] or "",
+                    "campaign_name": campaign_name,
                     "cohort_signature": r[2] or "",
                     "geo_cluster": r[3] or "",
-                    "locale": r[4] or "",
-                }
-                for r in rows
-            ]
+                    "locale": locale,
+                })
+            return out
     except UIDecisionsUnavailable as exc:
         log.warning("fatigue: campaigns table unavailable for %s: %s", ramp_id, exc)
         return []

@@ -225,15 +225,69 @@ _GEO_ETHNICITY_HINTS: dict[str, str] = {
 }
 
 
-def _format_geo_hint(geos: list[str] | None) -> str:
+def _cohort_nationality(cohort, icp=None) -> str:
+    """Nationality/ethnicity anchor for a LANGUAGE/LOCALE cohort (e.g. 'Thai' for
+    'Thai generalist contributors'). Such a cohort is a language community — its
+    creatives should show that nationality's people even when the ad set targets
+    anglo countries (the audience is Thai speakers, incl. the diaspora), NOT the
+    combined ethnicity of the target countries. Empty for non-locale cohorts
+    (geo-based ethnicity then applies as before). English locales return "" (no
+    ethnicity to pin)."""
+    # Path (b): cohort.facet_strength["generalist_locale"] (e.g. "th-th").
+    fs = getattr(cohort, "facet_strength", {}) or {}
+    key = str(fs.get("generalist_locale") or "").strip().lower().replace("_", "-")
+    lang = ""
+    if key:
+        try:
+            from src.locales import LOCALES as _LOCALES
+            lt = _LOCALES.get(key)
+            if lt:
+                lang = getattr(lt, "display_language", "") or ""
+        except Exception:
+            lang = ""
+    # Path (a): ICP language_pref (already a language name like "Thai", or a locale).
+    if not lang and icp is not None:
+        pref = (icp.get("language_pref", "") if isinstance(icp, dict)
+                else getattr(icp, "language_pref", "")) or ""
+        pref = str(pref).strip()
+        if pref and pref.lower() not in ("en-us", "english", "en"):
+            lang = pref
+    if lang and lang.lower() not in ("english", "en", "en-us"):
+        return lang
+    return ""
+
+
+def _format_geo_hint(geos: list[str] | None, nationality: str = "") -> str:
     """Build the geo-aware photo-subject guidance block for the LLM prompt.
 
-    Returns an empty string when no geo signal is available — the LLM falls
-    back to global mix, which is correct when targeting is genuinely global.
+    When `nationality` is set (a language/locale cohort like Thai), the ethnicity
+    is PINNED to that nationality regardless of the target geos — the geos only
+    set the SETTING. This fixes locale cohorts in anglo geo clusters (e.g. Thai
+    contributors targeting US/CA/GB/AU/NZ) getting Western faces from the
+    combined-audience path.
+
+    Returns an empty string when no signal is available — the LLM falls back to
+    global mix, which is correct when targeting is genuinely global.
     """
-    if not geos:
-        return ""
-    geos_clean = [g for g in geos if g and isinstance(g, str)]
+    geos_clean = [g for g in (geos or []) if g and isinstance(g, str)]
+
+    # Nationality pin (language/locale cohort) — takes priority over geo mix.
+    if nationality:
+        where = (
+            f" living and working in {', '.join(geos_clean)}"
+            if geos_clean else ""
+        )
+        return (
+            "\n## GEO CONTEXT — photo subject ethnicity (CRITICAL for relatability)\n"
+            f"This campaign targets **{nationality} contributors**{where}. "
+            f"The `photo_subject` for EVERY variant MUST be a {nationality} person "
+            f"(this is the {nationality}-speaking community, including the {nationality} "
+            f"diaspora abroad). Show {nationality} people EVEN when the setting is a "
+            f"{', '.join(geos_clean) or 'Western'} country — do NOT use generic Western "
+            f"or 'combined audience' faces. Vary gender / age / styling across the 3 "
+            f"angles, but keep every subject {nationality}.\n"
+        )
+
     if not geos_clean:
         return ""
 
@@ -376,9 +430,14 @@ def build_copy_variants(
         log.warning("Failed to load experiment directive: %s", exc)
 
     prompt = _build_copy_prompt(cohort.name, signals, layer_map)
-    geo_hint = _format_geo_hint(geos)
+    # Language/locale cohorts (e.g. Thai) pin the photo subject's ethnicity to the
+    # cohort nationality so anglo-geo clusters don't yield Western faces.
+    _nat = _cohort_nationality(cohort, icp)
+    geo_hint = _format_geo_hint(geos, nationality=_nat)
     if geo_hint:
         prompt += geo_hint
+    if _nat:
+        log.info("Copy gen: pinned photo_subject ethnicity to %s for cohort '%s'", _nat, cohort.name)
     if description_hint:
         prompt += (
             "\n\nSMART RAMP REQUESTER'S AUDIENCE BRIEF (the verbatim ask from the requester for this cohort) — "

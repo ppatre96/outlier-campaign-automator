@@ -159,7 +159,9 @@ def build_briefs(
         f"{description_hint}\n"
         if description_hint else ""
     )
-    geo_block = _format_geos_for_brief(geos)
+    geo_block = _format_geos_for_brief(
+        geos, nationality=_brief_nationality(cohort, icp if icp is not None else getattr(cohort, "_icp", None)),
+    )
     channel_norm = (channel or "linkedin").lower()
     if channel_norm not in _CHANNELS_SUPPORTED:
         log.warning("build_briefs: unknown channel %r — falling back to linkedin", channel)
@@ -288,7 +290,9 @@ def build_copy_from_brief(
                  len(reviewer_comment), brief.get("angle", "?"))
 
     pay_rate_block = _pay_rate_brief_block(hourly_rate)
-    geo_block = _format_geos_for_brief(geos)
+    geo_block = _format_geos_for_brief(
+        geos, nationality=_brief_nationality(cohort, getattr(cohort, "_icp", None)),
+    )
     channel_norm = (channel or "linkedin").lower()
     if channel_norm not in _CHANNELS_SUPPORTED:
         channel_norm = "linkedin"
@@ -489,11 +493,34 @@ def _pay_rate_brief_block(hourly_rate: str) -> str:
     )
 
 
-def _format_geos_for_brief(geos: list[str] | None) -> str:
-    """Concise geo block for Phase 1 + Phase 2 — just the country list."""
-    if not geos:
+def _brief_nationality(cohort, icp=None) -> str:
+    """Nationality anchor for a language/locale cohort (e.g. 'Thai'). Lazy-imports
+    the shared helper from figma_creative to avoid a circular import."""
+    try:
+        from src.figma_creative import _cohort_nationality
+        return _cohort_nationality(cohort, icp)
+    except Exception:
         return ""
-    return f"\nGEO CLUSTER (ISO countries): {', '.join(geos)}\n"
+
+
+def _format_geos_for_brief(geos: list[str] | None, nationality: str = "") -> str:
+    """Concise geo block for Phase 1 + Phase 2. For a language/locale cohort the
+    photo subject's ethnicity is PINNED to the cohort nationality (the geos only
+    set the setting) so anglo-geo clusters don't produce Western faces."""
+    geos_clean = [g for g in (geos or []) if g]
+    if nationality:
+        where = f" living/working in {', '.join(geos_clean)}" if geos_clean else ""
+        return (
+            f"\nGEO CLUSTER (ISO countries): {', '.join(geos_clean) or '(global)'}\n"
+            f"AUDIENCE ETHNICITY (MANDATORY): the audience is {nationality} contributors"
+            f"{where}. The `photo_direction`/`photo_subject` ethnicity for EVERY angle "
+            f"MUST be a {nationality} person (the {nationality}-speaking community, incl. "
+            f"the diaspora). Show {nationality} people even in a Western setting — do NOT "
+            f"use Western or 'combined audience' faces.\n"
+        )
+    if not geos_clean:
+        return ""
+    return f"\nGEO CLUSTER (ISO countries): {', '.join(geos_clean)}\n"
 
 
 def _extract_json(raw: str) -> dict:
