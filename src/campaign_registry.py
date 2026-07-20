@@ -248,7 +248,7 @@ def _channel_label(platform: str) -> str:
     return _CHANNEL_LABEL.get((platform or "").lower(), (platform or "").title())
 
 
-def _derive_campaign_link(platform: str, campaign_id: str) -> str:
+def _derive_campaign_link(platform: str, campaign_id: str, parent_id: str = "") -> str:
     """Build the platform's UI deep-link from `platform_campaign_id`.
 
     LinkedIn: strips the URN prefix (`urn:li:sponsoredCampaign:` /
@@ -272,10 +272,18 @@ def _derive_campaign_link(platform: str, campaign_id: str) -> str:
         )
     if p == "meta":
         meta_no_prefix = (_cfg.META_AD_ACCOUNT_ID or "").replace("act_", "")
-        # `campaign_id` is the AD SET id. The console rewrites this to the parent
-        # Meta Campaign id (withMetaParentLinks) so selected_campaign_ids resolves
-        # to the real campaign — a raw ad-set id here matches nothing and Meta
-        # shows ALL campaigns.
+        # `campaign_id` is the AD SET id. When we know the PARENT Meta campaign id
+        # (passed at creation), build the authoritative deep link directly:
+        # selected_campaign_ids=<parent>&selected_adset_ids=<adset> — opens the
+        # exact campaign + ad set. This removes the need for the console's
+        # name-match parent swap / a reconcile pass. Falls back to the old ad-set
+        # -in-campaigns-view link when the parent isn't known (reconcile fixes it).
+        if parent_id:
+            return (
+                f"https://business.facebook.com/adsmanager/manage/ads"
+                f"?act={meta_no_prefix}&selected_campaign_ids={parent_id}"
+                f"&selected_adset_ids={campaign_id}"
+            )
         return (
             f"https://business.facebook.com/adsmanager/manage/campaigns"
             f"?act={meta_no_prefix}&selected_campaign_ids={campaign_id}"
@@ -424,6 +432,7 @@ def log_campaign(
     experiment_id: str = "",
     utm_campaign: str = "",
     generation: int = 1,
+    meta_parent_id: str = "",
 ) -> None:
     """Append one campaign row to the registry. Safe to call from any platform arm.
 
@@ -505,7 +514,7 @@ def log_campaign(
         channel=_channel_label(platform),
         platform=platform,
         campaign_name=campaign_name,
-        campaign_link=_derive_campaign_link(platform, pcid),
+        campaign_link=_derive_campaign_link(platform, pcid, parent_id=meta_parent_id),
         platform_campaign_id=pcid,
         platform_creative_id=pcrid,
         # Legacy aliases — kept populated only for LinkedIn rows so old

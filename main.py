@@ -5168,6 +5168,7 @@ def _process_extra_platform_arm(
             #    fall through to the normal first-launch create below. ──────────
             _attach_to_existing = False
             sub_id = None
+            _meta_parent_link_id = ""  # real parent campaign id → authoritative deep link (fresh creates)
             if _additive:
                 _resolved = _resolve_container(
                     ramp_id=ramp_id or "", platform=platform, campaign_type="static",
@@ -5268,6 +5269,10 @@ def _process_extra_platform_arm(
                     targeting=targeting,
                     **_extra_budget_kwargs,
                 )
+                # We created this ad set UNDER group_id → it's the authoritative
+                # parent for the Meta deep link (no reconcile needed for new ones).
+                if platform == "meta":
+                    _meta_parent_link_id = str(group_id or "")
                 if _manual_note is not None:
                     _manual_note["platform_campaign_id"] = sub_id
                     manual_location_adds.append(_manual_note)
@@ -5488,6 +5493,7 @@ def _process_extra_platform_arm(
                     platform=platform,
                     platform_campaign_id=sub_id,
                     platform_creative_id=ad_result.creative_id or "",
+                    meta_parent_id=(_meta_parent_link_id if platform == "meta" else ""),
                     qc_verdict=qc_report_e.get("verdict", ""),
                     qc_attempts=qc_report_e.get("attempts"),
                     qc_violations=qc_report_e.get("violations"),
