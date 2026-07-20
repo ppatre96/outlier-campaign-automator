@@ -575,6 +575,15 @@ _SCRIPT_FONTS: dict[str, list[str]] = {
 _BROAD_UNICODE_FONTS = ["/Library/Fonts/Arial Unicode.ttf",
                         "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"]
 
+# RTL scripts are rendered with a SINGLE font (their Naskh/Arial-Hebrew face
+# already covers Basic Latin — see the Naskh note above). We deliberately do NOT
+# do per-run Latin fallback for them: splitting an RTL line into runs and drawing
+# them left-to-right would reverse the visual order. LTR non-Latin scripts (Thai,
+# Devanagari, Bengali, CJK, …) instead get a per-run Latin fallback so an embedded
+# Latin token like "$10/hr" renders with Inter (which has $ / digits) rather than
+# tofu boxes from a Latin-less script font (e.g. NotoSansThai on CI).
+_RTL_SCRIPTS = {"arabic", "hebrew"}
+
 # (lo, hi, script) Unicode blocks. Cyrillic/Greek/Latin are covered by Inter so
 # are intentionally absent (treated as "no special font needed").
 _SCRIPT_RANGES = [
@@ -608,15 +617,29 @@ def _load_font(size: int, bold: bool = False, text: str = ""):
     a script-specific font for non-Latin overlays (Hindi/Bengali/Thai/Arabic/CJK/
     Hangul/…) so they don't render as "?". Bold→headlines, Regular→subheadlines
     (non-Latin .ttc collections ignore weight — correct glyphs beat exact weight).
+
+    For LTR non-Latin scripts the returned font carries a `_script` tag and a
+    `_latin_fallback` Inter sibling (same size/weight). The overlay draw/measure
+    helpers (`_text_width`/`_draw_line`) use these to render each mixed-script line
+    per run — script chars with the script font, Latin/$/digits with Inter — so an
+    embedded rate like "$10/hr" never tofus even if the script font lacks Latin.
     """
     script = _detect_script(text)
     if script:
         ensure_script_font(script)   # register a fontconfig-resolved font if the hardcoded paths are absent
         for path in _SCRIPT_FONTS.get(script, []) + _BROAD_UNICODE_FONTS:
             try:
-                return _truetype(path, size)
+                sf = _truetype(path, size)
             except (IOError, OSError):
                 continue
+            if script not in _RTL_SCRIPTS:
+                # Attach a Latin sibling for per-run fallback (see _RTL_SCRIPTS).
+                try:
+                    sf._script = script
+                    sf._latin_fallback = _load_latin_font(size, bold)
+                except Exception:  # noqa: BLE001 — font objects that reject attrs just skip fallback
+                    pass
+            return sf
         # No script font resolved → we're about to fall back to Inter (Latin-only),
         # which renders every glyph of `script` as a "tofu" box. This is the
         # brand-critical failure mode (Bengali/Hindi/… overlays). Log LOUD so it's
@@ -627,6 +650,13 @@ def _load_font(size: int, bold: bool = False, text: str = ""):
             script, len(_SCRIPT_FONTS.get(script, [])) + len(_BROAD_UNICODE_FONTS), (text or "")[:60],
         )
 
+    return _load_latin_font(size, bold)
+
+
+def _load_latin_font(size: int, bold: bool = False):
+    """Load the brand Latin font (Inter → Avenir/Arial/Liberation/DejaVu → PIL
+    default). Covers Basic Latin, digits, $, /, punctuation. Used both for Latin
+    overlays and as the per-run fallback inside a non-Latin overlay line."""
     inter_paths = (
         [
             "/System/Library/Fonts/Inter.ttf",
@@ -770,6 +800,59 @@ def overlay_font_ok(text: str) -> bool:
     return ensure_script_font(script)
 
 
+def _char_in_script(ch: str, script: str) -> bool:
+    """True if `ch` belongs to `script`'s Unicode block(s). Everything else
+    (Latin letters/digits, $, /, %, spaces, punctuation) is treated as Latin and
+    rendered with the Inter sibling."""
+    cp = ord(ch)
+    for lo, hi, name in _SCRIPT_RANGES:
+        if lo <= cp <= hi:
+            return name == script
+    return False
+
+
+def _segment_runs(line: str, font):
+    """Split `line` into consecutive (text, font) runs for per-run rendering:
+    chars in `font._script` use `font`, all others use `font._latin_fallback`
+    (Inter). Returns None when `font` carries no Latin sibling — i.e. Latin-only
+    or RTL text — signalling the caller to draw/measure the whole line at once."""
+    latin = getattr(font, "_latin_fallback", None)
+    script = getattr(font, "_script", None)
+    if latin is None or not script:
+        return None
+    runs: list[list] = []
+    for ch in line:
+        f = font if _char_in_script(ch, script) else latin
+        if runs and runs[-1][1] is f:
+            runs[-1][0] += ch
+        else:
+            runs.append([ch, f])
+    return runs
+
+
+def _text_width(draw, line: str, font) -> float:
+    """Rendered width of `line`, summing per-run widths for mixed-script fonts so
+    wrapping/centering account for the Latin sibling's metrics."""
+    runs = _segment_runs(line, font)
+    if runs is None:
+        return draw.textlength(line, font=font)
+    return sum(draw.textlength(t, font=f) for t, f in runs)
+
+
+def _draw_line(draw, xy, line: str, font, fill) -> None:
+    """Draw one text line at `xy`. For a mixed-script font, draw each run with the
+    font that covers it (script font vs Inter sibling), advancing x by each run's
+    width — so an embedded Latin rate renders instead of tofu. Single font otherwise."""
+    runs = _segment_runs(line, font)
+    if runs is None:
+        draw.text(xy, line, font=font, fill=fill)
+        return
+    x, y = xy
+    for t, f in runs:
+        draw.text((x, y), t, font=f, fill=fill)
+        x += draw.textlength(t, font=f)
+
+
 def _wrap_text(text: str, font, max_width: int) -> list[str]:
     words = text.replace("\n", " \n ").split(" ")
     lines, cur = [], ""
@@ -779,7 +862,7 @@ def _wrap_text(text: str, font, max_width: int) -> list[str]:
         if word == "\n":
             lines.append(cur.strip()); cur = ""; continue
         test = (cur + " " + word).strip()
-        if draw.textlength(test, font=font) <= max_width:
+        if _text_width(draw, test, font) <= max_width:
             cur = test
         else:
             if cur: lines.append(cur.strip())
@@ -796,10 +879,12 @@ def _draw_text_left(draw, lines, font, y_top, x_left, color, line_spacing=10, ca
     y = y_top
     for line in lines:
         if canvas_width is not None:
-            x = (canvas_width - draw.textlength(line, font=font)) / 2
+            x = (canvas_width - _text_width(draw, line, font)) / 2
         else:
             x = x_left
-        draw.text((x, y), line, font=font, fill=color)
+        _draw_line(draw, (x, y), line, font, color)
+        # Line height from the primary font (the taller, script face) — width is
+        # per-run but vertical advance keys off the primary bbox.
         bbox = draw.textbbox((x, y), line, font=font)
         y += (bbox[3] - bbox[1]) + line_spacing
     return y
@@ -861,7 +946,7 @@ def _add_bottom_strip(canvas: Image.Image, bottom_text: str, strip_h: int) -> Im
     text_y  = strip_y + (strip_h - total_h) // 2
     y = text_y
     for ln in lines:
-        draw.text((pad, y), ln, font=body_font, fill=OUTLIER_BROWN)
+        _draw_line(draw, (pad, y), ln, body_font, OUTLIER_BROWN)
         y += line_h
 
     # ── Paste/draw the logo in its reserved right slot ──────────────────────────
@@ -963,7 +1048,7 @@ def _draw_text_in_zone(
     """
     y = y_top
     for line in lines:
-        draw.text((x_left, y), line, font=font, fill=color)
+        _draw_line(draw, (x_left, y), line, font, color)
         bbox = draw.textbbox((x_left, y), line, font=font)
         y += (bbox[3] - bbox[1]) + line_spacing
     return y
