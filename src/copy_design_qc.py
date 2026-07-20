@@ -662,6 +662,8 @@ SCAN PROTOCOL (execute in this order before scoring):
 (4) Look at the bottom-right Outlier logo. Is it the actual Outlier wordmark (clean, proportional brown letterforms "O-u-t-l-i-e-r") or does it look warped, cut off, tiled, or like generic bold text?
 (5) Check the subject: does the person look like a real human (authentic skin, natural asymmetry) or clearly AI-generated (plastic, uncanny, glitched)?
 (6) Read the crisp headline and subheadline OVERLAY text character by character. This is BRAND-CRITICAL for localized (non-English) creatives. FAIL if ANY character renders as an empty box (□ / ▯ / tofu), a "?"/placeholder, or a missing-glyph rectangle; FAIL if the script looks garbled, mis-shaped, or mojibake; FAIL if the overlay is clearly NOT the language/script of EXPECTED HEADLINE / EXPECTED SUBHEADLINE (e.g. expected Bengali/Hindi but boxes or Latin appear). Non-Latin scripts (Bengali, Hindi, Tamil, Arabic, etc.) MUST render as proper connected glyphs, not boxes.
+(7) Inspect all FOUR outer edges of the canvas AND the bottom white strip. Is ANY overlay text — the headline, the subheadline, the bottom-strip earnings line, or the Outlier wordmark — TOUCHING, RUNNING PAST, or CLIPPED by the canvas edge or the strip boundary? Look for a letter cut in half at an edge, a word running off the frame, a line wider than its box, or text extending past the photo/strip area. A well-formed creative keeps ALL text comfortably inside the frame with clear margin. Any clipped or overflowing text = FAIL.
+(8) Look for any rectangular BOX, frame, panel, card, speech/callout bubble, table, chart frame, sidebar, "window" chrome, or button shape rendered INTO the photograph. The ONLY rectangles that belong are: the thin white inset border around the photo, and the bottom white earnings strip. ANY other box-like graphic element — a colored rectangle, an outlined box, a floating panel, a caption box sitting behind text, a fake app/UI window, an infographic card — is a defect. (A real physical object in the scene, like an actual window frame or a picture on the wall, is fine.) Any synthetic box = FAIL.
 
 Respond with a single JSON object (JSON only, no prose, no markdown fences):
 
@@ -714,6 +716,14 @@ Respond with a single JSON object (JSON only, no prose, no markdown fences):
   "overlay_text_legible": {{
     "pass": <true iff scan step 6 found the headline + subheadline overlay to be legible, correctly-shaped glyphs in the EXPECTED language/script with NO tofu boxes / missing-glyph placeholders / garbling>,
     "detail": "FAIL with the offending text if any overlay character is a box/□/tofu/'?'/missing-glyph, or the script is garbled or not the expected language"
+  }},
+  "overlay_text_within_bounds": {{
+    "pass": <true iff scan step 7 found NO overlay text (headline / subheadline / earnings line / Outlier wordmark) clipped by or overflowing the canvas edge or the bottom-strip boundary>,
+    "detail": "<name the clipped/overflowing text element and which edge it runs off, or 'all text within frame'>"
+  }},
+  "no_graphic_boxes": {{
+    "pass": <true iff scan step 8 found NO synthetic box / frame / panel / card / callout / chart / UI-window beyond the allowed white inset border + bottom strip>,
+    "detail": "<describe any synthetic box/frame/panel found and where, or 'none'>"
   }},
   "professional_quality": {{
     "pass": true | false,
@@ -830,6 +840,10 @@ _RETRY_HINT_VARIANTS: dict[str, list[str]] = {
     "rendered_text_in_photo": [
         "Gemini rendered text/letters/logos INTO the photo. Add explicit 'ZERO TEXT in image. No words, letters, logos, wordmarks, earnings figures, or caption-like shapes anywhere'.",
         "TEXT STILL APPEARING. Tell Gemini 'I will manually delete any letterform you draw. The headline, subheadline, earnings strip, and Outlier wordmark are ALL composited in post-processing. Generate ONLY the unbranded photograph — clean of any pixel that resembles a glyph.'",
+    ],
+    "no_graphic_boxes": [
+        "A synthetic box/frame/panel was rendered into the photo. Tell Gemini 'ZERO graphic boxes, frames, panels, cards, callout bubbles, tables, charts, app/UI windows, or button shapes. ONLY a natural candid photograph — no overlaid rectangles of any kind.'",
+        "BOX STILL APPEARING. Tell Gemini 'Any rectangle that is not a real physical object in the scene (an actual window, a real picture frame on the wall) must be removed. No synthetic panels, data cards, infographic boxes, or floating UI. Plain documentary photo of the person only.'",
     ],
 }
 
@@ -977,6 +991,8 @@ def qc_creative(
         "matches_reference_person":    ("Subject differs from reference","Subject mimics the reference-image person. Omit the reference image on retry, OR explicitly specify a different gender/ethnicity than the reference."),
         "text_zone_contrast":          ("Contrast adequate",             "Text zones are too bright. Tell Gemini 'Top 30%% must be mid-tone to dark background. No white walls, no blown-out windows in text zones.'"),
         "overlay_text_legible":        ("Overlay text legible (no tofu)", "The headline/subheadline overlay has tofu boxes / missing-glyph placeholders / garbled or wrong-language script — brand-critical on localized creatives. The script font for this language is missing at render time; install it (CI: fonts-noto-core / fonts-noto) and confirm gemini_creative.overlay_font_ok() before shipping."),
+        "overlay_text_within_bounds":  ("Overlay text within frame",      "Composited overlay text is clipped/overflowing the canvas or bottom-strip edge — the copy is too long for its box. Shorten the offending field to its char limit (routes to the copywriter); the overlay must sit fully inside the frame with margin."),
+        "no_graphic_boxes":            ("No boxes/frames in photo",       "Gemini rendered a synthetic box/frame/panel/card/callout/UI-window into the photo. Add explicit 'NO boxes, frames, panels, cards, speech bubbles, tables, charts, app/UI windows, or button shapes — only the natural photograph of the person and their real environment.'"),
         # 2026-05-24 — `professional_quality` removed. Gemini grading its own
         # output against a subjective bar ("magazine-quality editorial,
         # Fortune-500 polish") generated ~30 false-fail retries per ramp on
@@ -1044,13 +1060,32 @@ def qc_creative(
             checks[label] = True
             log.debug("matches_reference_person: auto-pass (no reference image provided)")
             continue
+        # New defect checks: if the model omitted the key entirely, auto-pass
+        # rather than false-fail (we only reject when it explicitly reports the
+        # defect). The malformed-response guard above still catches a response
+        # missing MOST keys.
+        if key in ("overlay_text_within_bounds", "no_graphic_boxes") and not isinstance(
+            result.get(key), dict
+        ):
+            checks[label] = True
+            continue
         block = result.get(key, {}) if isinstance(result, dict) else {}
         passed = bool(block.get("pass", False)) if isinstance(block, dict) else False
         checks[label] = passed
         if not passed:
             detail = (block.get("detail", "") if isinstance(block, dict) else "") or "check failed"
-            violations.append(f"{label}: {detail}")
-            retry_hints.append(_pick_hint(key, retry_hint))
+            if key == "overlay_text_within_bounds":
+                # Overflow is a COMPOSITED-overlay (copy-length) defect, not a
+                # Gemini photo defect — regenerating the image with the same long
+                # copy would overflow again. Route to the copywriter to shorten so
+                # the next render fits. Folded into copy_violations (merged into
+                # `violations` + sets retry_target='copywriter' below).
+                copy_violations.append(
+                    f"[HARD] {label}: {detail} — shorten this copy so the overlay fits fully inside the frame."
+                )
+            else:
+                violations.append(f"{label}: {detail}")
+                retry_hints.append(_pick_hint(key, retry_hint))
 
     # Pixel-level edge-bleed check removed — gradient washes are now added by
     # compose_ad() programmatically, not baked into the Gemini photo.
