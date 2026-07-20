@@ -1,0 +1,63 @@
+name: Weekly Fatigue Report
+
+# Once per week: score every launched ramp for creative fatigue (Meta 7-day
+# frequency + CTR week-over-week) and post a summary to
+# #outlier-campaign-atomation-bot. Approval (add fresh creatives / pause weak
+# ads) happens in the console "Fatigue" tab — this workflow only detects +
+# notifies, it does NOT mutate live campaigns. compute_fatigue also refreshes the
+# ramp_fatigue table the console reads.
+
+on:
+  schedule:
+    - cron: "0 4 * * 1"  # 04:00 UTC Monday (just after the weekly feedback loop)
+  workflow_dispatch:
+    inputs:
+      ramp_id:
+        description: "Only score this ramp (blank = all launched)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Compute + print the report but skip the Slack post"
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  fatigue:
+    name: Weekly fatigue report
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v4
+
+      - name: Run weekly fatigue report
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.ramp_id }}" ]; then
+            ARGS="$ARGS --ramp-id ${{ github.event.inputs.ramp_id }}"
+          fi
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          echo "Running: doppler run -- python3 scripts/weekly_fatigue_report.py $ARGS"
+          doppler run -- python3 scripts/weekly_fatigue_report.py $ARGS
