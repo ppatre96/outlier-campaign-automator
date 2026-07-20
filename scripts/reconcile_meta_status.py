@@ -32,6 +32,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import config  # noqa: E402
 from src.meta_api import MetaClient  # noqa: E402
 from src.ui_decisions import _connect  # noqa: E402
 
