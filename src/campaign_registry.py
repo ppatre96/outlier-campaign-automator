@@ -272,9 +272,13 @@ def _derive_campaign_link(platform: str, campaign_id: str) -> str:
         )
     if p == "meta":
         meta_no_prefix = (_cfg.META_AD_ACCOUNT_ID or "").replace("act_", "")
+        # `campaign_id` here is the AD SET id (what the static rows store), so
+        # deep-link to the ad-sets view with selected_adset_ids — passing an ad-set
+        # id to selected_campaign_ids on the campaigns view matches nothing and
+        # Meta silently shows ALL campaigns instead of the one you created.
         return (
-            f"https://business.facebook.com/adsmanager/manage/campaigns"
-            f"?act={meta_no_prefix}&selected_campaign_ids={campaign_id}"
+            f"https://business.facebook.com/adsmanager/manage/adsets"
+            f"?act={meta_no_prefix}&selected_adset_ids={campaign_id}"
         )
     if p == "google":
         return f"https://ads.google.com/aw/campaigns?campaignId={campaign_id}"
