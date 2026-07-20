@@ -84,11 +84,44 @@ def _apply_status(platform_campaign_id: str, status: str) -> int:
         return n
 
 
+def _apply_link(platform_campaign_id: str, link: str) -> int:
+    """Write the correct Ads-Manager deep link into every Meta row with this
+    platform_campaign_id (data->>'campaign_link')."""
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE campaigns "
+            "SET data = jsonb_set(coalesce(data, '{}'::jsonb), '{campaign_link}', to_jsonb(%s::text), true), "
+            "    updated_at = NOW() "
+            "WHERE platform = 'meta' AND platform_campaign_id = %s",
+            (link, platform_campaign_id),
+        )
+        n = cur.rowcount
+        conn.commit()
+        return n
+
+
+def _adset_parent_campaign_id(client, adset_id: str) -> str:
+    """The real parent Meta campaign id for an ad set (authoritative — the
+    meta_root 'parent' registry rows don't reliably map per-cohort)."""
+    try:
+        from facebook_business.adobjects.adset import AdSet
+        o = AdSet(adset_id).api_get(fields=["campaign_id"])
+        return str(o.get("campaign_id") or "")
+    except Exception as exc:
+        log = __import__("logging").getLogger("reconcile")
+        log.warning("parent lookup failed for ad set %s: %s", adset_id, exc)
+        return ""
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--ramp", default=None, help="Limit to one ramp id (e.g. GMR-0023). Default: all ramps.")
     ap.add_argument("--dry-run", action="store_true", help="Report what would change; write nothing.")
+    ap.add_argument("--fix-links", action="store_true",
+                    help="Also rewrite each live ad set's campaign_link to its REAL parent "
+                         "campaign (selected_campaign_ids=<parent>&selected_adset_ids=<adset>).")
     args = ap.parse_args()
+    acct = (config.META_AD_ACCOUNT_ID or "").replace("act_", "")
 
     containers = _distinct_meta_containers(args.ramp)
     if not containers:
@@ -117,6 +150,20 @@ def main() -> int:
         # raw 'paused' would wrongly drop live campaigns from that view. The goal
         # here is only to stop showing/linking to DELETED/ARCHIVED campaigns.
         if not dead:
+            # Live ad set: rewrite its deep link to the REAL parent campaign so the
+            # console 'Open' opens the exact campaign (not an ad-set id / empty shell).
+            if args.fix_links and campaign_type == "static" and acct:
+                parent = _adset_parent_campaign_id(client, platform_campaign_id)
+                if parent:
+                    link = (
+                        f"https://business.facebook.com/adsmanager/manage/ads?act={acct}"
+                        f"&selected_campaign_ids={parent}&selected_adset_ids={platform_campaign_id}"
+                    )
+                    if not args.dry_run:
+                        nlinks = _apply_link(platform_campaign_id, link)
+                        print(f"  🔗 {ramp_id} static {platform_campaign_id} → parent {parent} ({nlinks} row link(s))")
+                    else:
+                        print(f"  🔗 {ramp_id} static {platform_campaign_id} → parent {parent} (dry-run link)")
             print(f"  {marker} {ramp_id} {campaign_type} {platform_campaign_id} → {status} (live; unchanged)")
             continue
         n_dead += 1
