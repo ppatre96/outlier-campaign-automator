@@ -554,7 +554,14 @@ _SCRIPT_FONTS: dict[str, list[str]] = {
                    "/usr/share/fonts/truetype/noto/NotoSansTelugu-Regular.ttf"],
     "thai":       ["/System/Library/Fonts/Supplemental/Thonburi.ttc",
                    "/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf"],
+    # Noto Naskh Arabic FIRST: unlike Noto SANS Arabic (Arabic-only, no Latin),
+    # Naskh includes Basic Latin ($, /, digits, a-z) so a mixed headline like
+    # "…بيكسبوا $7.50/hr…" renders the $ and / instead of tofu boxes. GeezaPro
+    # (macOS) also covers both. NotoSansArabic kept last as a pure-Arabic fallback.
     "arabic":     ["/System/Library/Fonts/Supplemental/GeezaPro.ttc",
+                   "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf",
+                   "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttc",
+                   "/usr/share/fonts/opentype/noto/NotoNaskhArabic-Regular.ttf",
                    "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf"],
     "hebrew":     ["/System/Library/Fonts/Supplemental/Arial Hebrew.ttc",
                    "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf"],
