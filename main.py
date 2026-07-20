@@ -5212,43 +5212,46 @@ def _process_extra_platform_arm(
             if not _attach_to_existing:
                 # ── First launch / replace / additive first-launch-fallback:
                 #    create a fresh campaign group (lazily) + ad set. ───────────
-                # Young-market workaround (Meta): drop countries Meta won't accept for
-                # a young-eligible audience under EMPLOYMENT SAC (subcode 1870249, e.g.
-                # Thailand) so the rest of the ad set still creates; Tuan adds them
-                # manually in Ads Manager. If the ad set is young-market-ONLY, skip the
-                # programmatic create entirely and flag it for manual creation.
+                # Geo-compliance workaround (Meta): some countries can't be created
+                # programmatically and need a MANUAL action — young-market age limits
+                # (subcode 1870249, e.g. Thailand) and Singapore's Universal Ads
+                # declaration (subcode 3858550). DROP them so the rest of the ad set
+                # still creates; Tuan is flagged with the per-country reason. If the ad
+                # set is ENTIRELY such countries, skip the programmatic create + flag.
                 _manual_note = None
                 if platform == "meta":
                     _geo = (targeting or {}).get("geo_locations") or {}
                     _countries = list(_geo.get("countries") or [])
-                    _young = [c for c in _countries if c in config.META_YOUNG_MARKET_COUNTRIES]
-                    if _young:
-                        _remaining = [c for c in _countries if c not in config.META_YOUNG_MARKET_COUNTRIES]
+                    _reasons = config.META_MANUAL_GEO_REASONS
+                    _blocked = [c for c in _countries if c in _reasons]
+                    if _blocked:
+                        _remaining = [c for c in _countries if c not in _reasons]
+                        _reason_str = "; ".join(f"{c}: {_reasons[c]}" for c in _blocked)
                         _base_note = {
                             "platform": platform,
                             "cohort_signature": getattr(cohort, "name", ""),
                             "geo_cluster": geo_group.cluster,
                             "geo_cluster_label": getattr(geo_group, "cluster_label", ""),
-                            "dropped_countries": _young,
+                            "dropped_countries": _blocked,
                             "campaign_name": campaign_name,
                         }
                         if _remaining:
                             targeting = dict(targeting or {})
                             targeting["geo_locations"] = {**_geo, "countries": _remaining}
                             log.warning(
-                                "_process_extra_platform_arm[meta]: dropping young-market %s from ad set "
-                                "(cohort=%s geo=%s) — creating for %s; Tuan to add %s manually (Meta 1870249)",
-                                _young, getattr(cohort, "name", ""), geo_group.cluster, _remaining, _young,
+                                "_process_extra_platform_arm[meta]: dropping manual-declaration geos %s from ad "
+                                "set (cohort=%s geo=%s) — creating for %s; Tuan to add manually. Reasons: %s",
+                                _blocked, getattr(cohort, "name", ""), geo_group.cluster, _remaining, _reason_str,
                             )
-                            _manual_note = {**_base_note, "reason": "add these countries manually in Ads Manager (Meta young-market age restriction 1870249)"}
+                            _manual_note = {**_base_note, "reason": _reason_str}
                         else:
                             log.warning(
-                                "_process_extra_platform_arm[meta]: ad set is young-market-only %s "
-                                "(cohort=%s geo=%s) — skipping programmatic create; Tuan to create manually",
-                                _young, getattr(cohort, "name", ""), geo_group.cluster,
+                                "_process_extra_platform_arm[meta]: ad set is entirely manual-declaration geos %s "
+                                "(cohort=%s geo=%s) — skipping programmatic create; Tuan to create manually. Reasons: %s",
+                                _blocked, getattr(cohort, "name", ""), geo_group.cluster, _reason_str,
                             )
-                            manual_location_adds.append({**_base_note, "whole_adset": True, "reason": "entire ad set is young-market-only — create manually in Ads Manager (Meta 1870249)"})
-                            _lp(**_lp_kw, status="failed", error=f"young-market {_young}: manual creation needed (Meta 1870249)")
+                            manual_location_adds.append({**_base_note, "whole_adset": True, "reason": _reason_str})
+                            _lp(**_lp_kw, status="failed", error=f"manual-declaration geos {_blocked}: {_reason_str}")
                             continue
 
                 # Parent campaign-group is created lazily (up front for non-additive;
