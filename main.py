@@ -4624,7 +4624,11 @@ def _process_extra_platform_arm(
             from src.copy_design_qc import qc_creative
             _hl = (variant_e or {}).get("headline", "")
             _sub = (variant_e or {}).get("subheadline", "")
-            _max_qc = max(1, int(os.getenv("QC_MAX_RETRIES", "10")))
+            # Default capped 10→5 (2026-07-20): the extra arm has its OWN QC loop
+            # separate from gemini_creative's; a Thai cohort whose creatives kept
+            # failing QC burned ~25s × 10 × 3 angles (~23-min run). 5 still recovers
+            # transient misses. Env QC_MAX_RETRIES overrides (set to 5 in Doppler prd).
+            _max_qc = max(1, int(os.getenv("QC_MAX_RETRIES", "5")))
 
             def _regen_extra_png():
                 from src.gemini_creative import generate_imagen_photo
