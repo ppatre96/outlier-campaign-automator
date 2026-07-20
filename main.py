@@ -4915,6 +4915,7 @@ def _process_extra_platform_arm(
 
     healed_empties: list[dict] = []
     keyword_drops: list[dict] = []  # Search keywords Google rejected (needs review)
+    manual_location_adds: list[dict] = []  # young-market countries Tuan must add manually (Meta 1870249)
     for (stg_id, cluster), specs in grouped.items():
         meta = g_meta[(stg_id, cluster)]
         cohort     = meta["cohort"]
@@ -5116,6 +5117,45 @@ def _process_extra_platform_arm(
                         )
                 except Exception as _exc:
                     log.warning("extra-arm: approved-negative-keyword merge failed (non-fatal): %s", _exc)
+            # Young-market workaround (Meta): drop countries Meta won't accept for
+            # a young-eligible audience under EMPLOYMENT SAC (subcode 1870249, e.g.
+            # Thailand) so the rest of the ad set still creates; Tuan adds them
+            # manually in Ads Manager. If the ad set is young-market-ONLY, skip the
+            # programmatic create entirely and flag it for manual creation.
+            _manual_note = None
+            if platform == "meta":
+                _geo = (targeting or {}).get("geo_locations") or {}
+                _countries = list(_geo.get("countries") or [])
+                _young = [c for c in _countries if c in config.META_YOUNG_MARKET_COUNTRIES]
+                if _young:
+                    _remaining = [c for c in _countries if c not in config.META_YOUNG_MARKET_COUNTRIES]
+                    _base_note = {
+                        "platform": platform,
+                        "cohort_signature": getattr(cohort, "name", ""),
+                        "geo_cluster": geo_group.cluster,
+                        "geo_cluster_label": getattr(geo_group, "cluster_label", ""),
+                        "dropped_countries": _young,
+                        "campaign_name": campaign_name,
+                    }
+                    if _remaining:
+                        targeting = dict(targeting or {})
+                        targeting["geo_locations"] = {**_geo, "countries": _remaining}
+                        log.warning(
+                            "_process_extra_platform_arm[meta]: dropping young-market %s from ad set "
+                            "(cohort=%s geo=%s) — creating for %s; Tuan to add %s manually (Meta 1870249)",
+                            _young, getattr(cohort, "name", ""), geo_group.cluster, _remaining, _young,
+                        )
+                        _manual_note = {**_base_note, "reason": "add these countries manually in Ads Manager (Meta young-market age restriction 1870249)"}
+                    else:
+                        log.warning(
+                            "_process_extra_platform_arm[meta]: ad set is young-market-only %s "
+                            "(cohort=%s geo=%s) — skipping programmatic create; Tuan to create manually",
+                            _young, getattr(cohort, "name", ""), geo_group.cluster,
+                        )
+                        manual_location_adds.append({**_base_note, "whole_adset": True, "reason": "entire ad set is young-market-only — create manually in Ads Manager (Meta 1870249)"})
+                        _lp(**_lp_kw, status="failed", error=f"young-market {_young}: manual creation needed (Meta 1870249)")
+                        continue
+
             _lp(**_lp_kw, status="creating")
             sub_id = client.create_campaign(
                 name=campaign_name,
@@ -5123,6 +5163,9 @@ def _process_extra_platform_arm(
                 targeting=targeting,
                 **_extra_budget_kwargs,
             )
+            if _manual_note is not None:
+                _manual_note["platform_campaign_id"] = sub_id
+                manual_location_adds.append(_manual_note)
             out["campaigns"].append(sub_id)
             out["campaigns_by_cohort"][by_cohort_key] = sub_id
             log.info(
@@ -5433,6 +5476,9 @@ def _process_extra_platform_arm(
     if config.LAUNCH_VERIFY_ENABLED:
         launch_verify.notify_healed(ramp_id or "", healed_empties)
         launch_verify.notify_keywords_dropped(ramp_id or "", keyword_drops)
+    # Independent of verify-and-heal: flag young-market countries Tuan must add
+    # manually (Meta 1870249). Persists to the audit log + DMs Tuan.
+    launch_verify.notify_manual_geo_add(ramp_id or "", manual_location_adds)
 
     return out
 

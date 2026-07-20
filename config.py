@@ -521,6 +521,19 @@ except Exception:
 META_FREQUENCY_CAP_IMPRESSIONS   = int(os.getenv("META_FREQUENCY_CAP_IMPRESSIONS", "3"))
 META_FREQUENCY_CAP_INTERVAL_DAYS = int(os.getenv("META_FREQUENCY_CAP_INTERVAL_DAYS", "7"))
 
+# Young-market countries where Meta rejects an ad set (subcode 1870249) when the
+# audience can include people under the local age of majority — under EMPLOYMENT
+# SAC we can't raise age_min (that hits 2909037), and even location-only is
+# rejected (confirmed for Thailand, GMR-0023 2026-07-20). Workaround: DROP these
+# countries from the programmatic ad set (create everything else) and flag Tuan
+# to add them manually in Ads Manager, where he can set age 20+ / handle policy.
+# ISO-2, comma-separated; extend via env as more such markets surface.
+META_YOUNG_MARKET_COUNTRIES = {
+    c.strip().upper()
+    for c in os.getenv("META_YOUNG_MARKET_COUNTRIES", "TH").split(",")
+    if c.strip()
+}
+
 # Meta LAL feature flags (2026-05-27). Toggles the lookalike-audience layer
 # in src/meta_lal.py. When META_USE_LAL is True, src/meta_targeting.py
 # resolve_cohort() will auto-attach 1% LAL audiences seeded from the 4

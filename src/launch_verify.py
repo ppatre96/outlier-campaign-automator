@@ -223,3 +223,42 @@ def notify_healed(ramp_id: str, healed: list[dict]) -> None:
         _send_to_all_targets(text, ramp_id=ramp_id, targets=config.SLACK_VERBOSE_TARGETS)
     except Exception as exc:
         log.warning("launch_verify: notify_healed Slack ping failed (non-fatal): %s", exc)
+
+
+def notify_manual_geo_add(ramp_id: str, notes: "list[dict]") -> None:
+    """Persist + Slack-ping Tuan about young-market countries dropped from Meta
+    ad sets (subcode 1870249) that must be added manually in Ads Manager. Writes
+    one `launch_manual_geo_add` audit row per note (console Needs-review reads
+    it) and fires ONE Slack DM tagging Tuan. Best-effort — never blocks launch."""
+    if not notes:
+        return
+    try:
+        from src.ui_decisions import log_event
+        for n in notes:
+            log_event(ramp_id or "", "launch_manual_geo_add", n)
+    except Exception as exc:
+        log.debug("launch_verify: manual-geo-add log_event skipped: %s", exc)
+    tuan = getattr(config, "SLACK_TUAN_USER_ID", "") or ""
+    lines = [
+        (f"<@{tuan}> " if tuan else "")
+        + f"⚠️ Meta manual step for {ramp_id}: {len(notes)} ad set(s) need a country "
+        "added by hand — Meta blocks it programmatically under EMPLOYMENT SAC "
+        "(young-market age rule, subcode 1870249):",
+    ]
+    for n in notes:
+        _c = ", ".join(n.get("dropped_countries") or [])
+        _scope = "create WHOLE ad set manually" if n.get("whole_adset") else f"add {_c}"
+        _cid = f" (campaign {n.get('platform_campaign_id')})" if n.get("platform_campaign_id") else ""
+        lines.append(
+            f"  • {n.get('cohort_signature')} · "
+            f"{n.get('geo_cluster_label') or n.get('geo_cluster')} — {_scope}{_cid}"
+        )
+    text = "\n".join(lines)
+    try:
+        from src.smart_ramp_notifier import _send_to_all_targets
+        targets = ([("user", tuan)] if tuan else []) + list(
+            getattr(config, "SLACK_VERBOSE_TARGETS", [])
+        )
+        _send_to_all_targets(text, ramp_id=ramp_id, targets=targets)
+    except Exception as exc:
+        log.warning("launch_verify: notify_manual_geo_add Slack ping failed (non-fatal): %s", exc)
