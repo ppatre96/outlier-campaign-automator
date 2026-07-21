@@ -423,6 +423,22 @@ class MetaClient(AdPlatformClient):
         status = self.get_effective_status(object_id, level)
         return bool(status) and status not in ("DELETED", "ARCHIVED")
 
+    def get_adset_parent_campaign_id(self, adset_id: str) -> str:
+        """The parent Meta CAMPAIGN id for an ad set — the authoritative id for the
+        Ads-Manager deep link (selected_campaign_ids=<parent>&selected_adset_ids=
+        <adset>). Additive attaches to an EXISTING ad set, so it must look the
+        parent up here (unlike a fresh create, which already knows its group_id).
+        Best-effort: returns '' on any read error so the caller falls back to the
+        reconcile-fixable link."""
+        self._ensure_init()
+        try:
+            from facebook_business.adobjects.adset import AdSet
+            obj = AdSet(str(adset_id)).api_get(fields=["campaign_id"])
+            return str(obj.get("campaign_id") or "")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Meta get_adset_parent_campaign_id(%s) failed: %s", adset_id, str(exc)[:200])
+            return ""
+
     def get_ad_insights_7d(self, container_id: str, container_level: str = "adset") -> list[dict]:
         """Fetch last-7-day delivery insights, one row PER AD, for a Meta container
         (ad set — default — or campaign). Returns a list of dicts:

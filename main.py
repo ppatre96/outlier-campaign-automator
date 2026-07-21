@@ -5188,6 +5188,14 @@ def _process_extra_platform_arm(
                     if _live:
                         _attach_to_existing = True
                         sub_id = _cid
+                        # Additive attaches to an EXISTING ad set, so resolve its
+                        # real parent campaign id → authoritative deep link at log
+                        # time (mirrors the fresh-create path's group_id). Without
+                        # this the link falls back to the broken ad-set-in-campaigns
+                        # -view form and the console can't name-match a meta_root
+                        # parent, so the launch-status link renders empty.
+                        if platform == "meta" and hasattr(client, "get_adset_parent_campaign_id"):
+                            _meta_parent_link_id = client.get_adset_parent_campaign_id(sub_id)
                         _lp(**_lp_kw, status="creating")
                         out["campaigns"].append(sub_id)
                         out["campaigns_by_cohort"][by_cohort_key] = sub_id

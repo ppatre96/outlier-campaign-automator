@@ -435,5 +435,52 @@ def build_daily_metrics(window_days: int = 90) -> dict:
         reddit_rep[ramp] = _Identity(ramp, "reddit", name, key)
     summary["funnel_rows"] = _backfill_funnel_daily(window_days, by_utm, by_id, reddit_rep)
 
+    _alert_funnel_anomaly()
+
     log.info("build_daily_metrics done (window=%dd): %s", window_days, summary)
     return summary
+
+
+def _alert_funnel_anomaly(lookback_days: int = 7) -> None:
+    """Alert when the funnel flatlines while delivery keeps flowing — the exact
+    signature of a stale funnel source (e.g. `VIEW.APPLICATION_CONVERSION` lag)
+    that otherwise writes 0 sign-ups/activations SILENTLY, so the Analytics tab
+    shows zeros with no error (a "success" run with bad data). Compares the last
+    `lookback_days` COMPLETE days (excludes today, which is partial): if delivery
+    is high but sign-ups are 0 across ALL campaigns, Slack the team. Best-effort —
+    never raises into the metrics run. Gate: config.FUNNEL_ANOMALY_ALERT_ENABLED."""
+    if not getattr(config, "FUNNEL_ANOMALY_ALERT_ENABLED", True):
+        return
+    try:
+        from src.ui_decisions import _connect
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT coalesce(sum(impressions),0), coalesce(sum(signups),0), "
+                "       count(DISTINCT metric_date) FILTER (WHERE impressions > 0 AND signups = 0) "
+                "FROM campaign_daily_metrics "
+                "WHERE metric_date >= (CURRENT_DATE - %s) AND metric_date < CURRENT_DATE",
+                (int(lookback_days),),
+            )
+            row = cur.fetchone() or (0, 0, 0)
+        impr, signups, zero_days = int(row[0] or 0), int(row[1] or 0), int(row[2] or 0)
+        min_impr = int(getattr(config, "FUNNEL_ANOMALY_MIN_IMPRESSIONS", 500_000))
+        if impr >= min_impr and signups == 0:
+            msg = (
+                f":rotating_light: *Funnel data anomaly (GMR metrics)* — the last "
+                f"{lookback_days} complete days have *{impr:,} impressions* but "
+                f"*0 sign-ups* across all campaigns ({zero_days} day(s) with delivery "
+                f"yet zero funnel). Delivery is healthy, so this is almost certainly the "
+                f"funnel source `SCALE_PROD.VIEW.APPLICATION_CONVERSION` being stale/"
+                f"lagging — the console Analytics tab will show 0 sign-ups/activations "
+                f"until it catches up. Action: confirm the view's freshness with the data "
+                f"team, then re-run `build_daily_metrics(window_days=30)` (idempotent)."
+            )
+            from src.smart_ramp_notifier import _send_to_all_targets
+            _send_to_all_targets(msg, ramp_id="")
+            log.warning("funnel anomaly ALERT sent: last %dd impr=%d signups=0 zero_days=%d",
+                        lookback_days, impr, zero_days)
+        else:
+            log.info("funnel anomaly check OK: last %dd impr=%d signups=%d zero_days=%d",
+                     lookback_days, impr, signups, zero_days)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("funnel anomaly check failed (non-fatal): %s", exc)
