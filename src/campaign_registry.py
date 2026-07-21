@@ -179,6 +179,12 @@ COLUMNS = [
     # key (ramp_id, platform, campaign_type, cohort_signature, geo_cluster, angle,
     # generation).
     "generation",
+    # ── 2026-07-21 addition (APPEND ONLY) ─────────────────────────────────────
+    # Email of the user who triggered the launch/refresh that created this row.
+    # Threaded from the console session → dispatchPipeline (launched_by input) →
+    # config.LAUNCHED_BY. Empty on scheduled/automated runs and on rows created
+    # before this column existed. Powers the console launch-timeline "by <user>".
+    "launched_by",
 ]
 
 
@@ -237,6 +243,7 @@ class CampaignEntry:
     opens:                  int | None = None  # LinkedIn InMail: messages opened
     utm_campaign:           str = ""           # exact utm_campaign stamped on the ad URL — the funnel join key (issue #75)
     generation:             int = 1            # additive-launch variation: 1, then 2/3/… on each additive relaunch (part of the campaigns unique key)
+    launched_by:            str = ""           # email of the user who triggered this launch/refresh (config.LAUNCHED_BY); empty on automated runs
 
 
 # Internal lower-case platform key → user-facing channel label shown in Sheet.
@@ -246,6 +253,18 @@ _CHANNEL_LABEL = {"linkedin": "LinkedIn", "meta": "Meta", "google": "Google",
 
 def _channel_label(platform: str) -> str:
     return _CHANNEL_LABEL.get((platform or "").lower(), (platform or "").title())
+
+
+def _launched_by() -> str:
+    """Email of the user who triggered this run, threaded from the console session
+    via config.LAUNCHED_BY (a workflow_dispatch input). Empty on scheduled/cron/
+    automated runs. Stamped onto each campaign row so the console can show who
+    launched it, per-campaign, instead of guessing from channel_locks."""
+    try:
+        import config as _cfg
+        return (getattr(_cfg, "LAUNCHED_BY", "") or "").strip()
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _derive_campaign_link(platform: str, campaign_id: str, parent_id: str = "") -> str:
@@ -540,6 +559,9 @@ def log_campaign(
         # the stamped value for every non-relaunched row.
         utm_campaign=utm_campaign or campaign_name,
         generation=int(generation or 1),
+        # Who triggered this launch/refresh — threaded from the console session
+        # via config.LAUNCHED_BY (empty on scheduled/automated runs).
+        launched_by=_launched_by(),
     )
     # Hold the registry lock across the load-mutate-save window. _load and
     # _save also acquire the (re-entrant) lock internally; this ensures the

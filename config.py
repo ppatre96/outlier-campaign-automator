@@ -255,6 +255,11 @@ REPLACE_EXISTING     = os.getenv("REPLACE_EXISTING", "").strip().lower() in ("1"
 # earlier one has spent its budget / stopped delivering. Bypasses the
 # skip-existing idempotency guard for this run only.
 ADDITIVE_LAUNCH      = os.getenv("ADDITIVE_LAUNCH", "").strip().lower() in ("1", "true", "yes")
+# Email of the user who triggered this run, threaded from the console session via
+# the smart_ramp_poller `launched_by` workflow input. Stamped onto every campaign
+# row (data.launched_by) so the console launch-timeline shows who launched each
+# campaign. Empty on scheduled/cron runs.
+LAUNCHED_BY          = os.getenv("LAUNCHED_BY", "").strip()
 # Unified launcher (console): prep the scoped cohort BEFORE launching it in the
 # same run, so a not-yet-prepped cohort can be launched in one action. Requires
 # ONLY_COHORT + a channel. Prep is additive/idempotent (ON_CONFLICT).
