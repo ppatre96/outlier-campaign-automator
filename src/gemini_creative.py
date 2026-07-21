@@ -1425,7 +1425,12 @@ def generate_imagen_creative(
     )
     log.info("Imagen photo received (%dx%d)", bg_image.width, bg_image.height)
 
-    bottom_text = derive_bottom_text(subheadline, variant.get("advertised_rate", ""))
+    # Bottom-band line: prefer the localized banner the copywriter produced
+    # (localize_variant stamps variant['banner_line'] in the target language,
+    # keeping the $X/hr rate in English). Falls back to the English template for
+    # non-localized (English-locale / LinkedIn) creatives.
+    bottom_text = (variant.get("banner_line") or "").strip() \
+        or derive_bottom_text(subheadline, variant.get("advertised_rate", ""))
 
     ad_image = compose_ad(
         bg_image=bg_image,

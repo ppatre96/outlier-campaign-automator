@@ -125,6 +125,21 @@ def localize_variant(variant: dict, locale) -> dict:
     lang = getattr(locale, "display_language", "") or str(locale)
     present = {f: (variant.get(f) or "").strip() for f in _LOCALIZABLE_FIELDS}
     present = {f: v for f, v in present.items() if v}
+    # Bottom-band descriptive line: derive the English banner from the (still-
+    # English) subheadline + rate via the same rate-safe helper the compositor uses
+    # (never invents a rate), then translate it alongside the copy in this ONE call.
+    # The $X/hr pay-rate token stays English (_KEEP_ENGLISH_RULE). Compositor reads
+    # variant['banner_line']; without this the band stayed hardcoded English while
+    # the rest of the creative was localized.
+    try:
+        from src.gemini_creative import derive_bottom_text
+        _en_banner = derive_bottom_text(
+            variant.get("subheadline", ""), variant.get("advertised_rate", "")
+        ).strip()
+    except Exception:  # noqa: BLE001 — never block localization on the banner
+        _en_banner = ""
+    if _en_banner:
+        present["banner_line"] = _en_banner
     if not present:
         return variant
 
