@@ -116,6 +116,10 @@ on:
         options:
           - "true"
           - "false"
+      launched_by:
+        description: "Email of the user who triggered this launch (console session). Stamped onto each campaign row (config.LAUNCHED_BY → data.launched_by) so the console launch-timeline shows who launched it. Blank on scheduled ticks."
+        required: false
+        default: ""
 
 jobs:
   poll:
@@ -251,6 +255,10 @@ jobs:
           # each cohort×geo — no new campaign (config.ADDITIVE_LAUNCH). Console
           # "Refresh creatives".
           ADDITIVE_LAUNCH: ${{ github.event.inputs.additive }}
+          # Email of the user who triggered this launch (config.LAUNCHED_BY) —
+          # threaded from the console session so each campaign row records who
+          # launched it. Empty on scheduled ticks.
+          LAUNCHED_BY: ${{ github.event.inputs.launched_by }}
           # Per-cohort idempotency (config.SKIP_EXISTING_COHORT_CAMPAIGNS). Blank
           # on scheduled ticks → config defaults to true (blank-safe parse). A
           # manual dispatch can pass "false" to create NEW campaigns alongside
