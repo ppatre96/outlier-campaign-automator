@@ -513,8 +513,15 @@ def _make_gradient_overlay(width: int, height: int, angle: str) -> Image.Image:
     overlay[:, :, 3] = np.maximum(overlay[:, :, 3], teal_alpha)
 
     # ── Dark bands for text readability ───────────────────────────────────────
+    # Top headline zone: dark band + the pink wash both add density, so the top
+    # reads well. The BOTTOM subheadline had only a weak band (max 0.24, ~0.11 at
+    # the text) and the teal wash there is LIGHT (adds no contrast) — so white
+    # subheadline text washed out over mid-tone photos (unreadable on mobile).
+    # Strengthen the bottom scrim: a smooth caption gradient from ~0.55h to the
+    # bottom edge, reaching the subheadline zone (~0.84–0.94h) at ~0.36–0.48 black
+    # and ~0.62 at the very bottom — enough contrast without a hard bar.
     top_dark    = np.clip(1.0 - y_grid / 0.28, 0, 1) ** 1.5 * 0.28
-    bottom_dark = np.clip((y_grid - 0.72) / 0.20, 0, 1) ** 1.5 * 0.24
+    bottom_dark = np.clip((y_grid - 0.55) / 0.45, 0, 1) ** 1.25 * 0.62
     dark        = np.maximum(top_dark, bottom_dark)
     # Dark band is black (RGB=0) overlaid using its own alpha
     dark_layer  = np.zeros((height, width, 4), dtype=np.float32)
