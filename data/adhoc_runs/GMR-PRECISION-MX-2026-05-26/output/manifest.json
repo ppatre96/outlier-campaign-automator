@@ -1,0 +1,126 @@
+{
+  "ramp_id": "GMR-PRECISION-MX-2026-05-26",
+  "channel": "meta",
+  "cohort": "Precision Operator MX",
+  "geo": "CDMX, Mexico City metro",
+  "targeting_type": "zip_code_SAC",
+  "zip_count": 2662,
+  "cdmx_zips_drive_path": "GMR-PRECISION-MX-2026-05-26/meta/CDMX/cdmx_zips.json",
+  "aspect": "4:5 (1080x1350)",
+  "language": "Mexican Spanish",
+  "cta_note": "Use SIGN_UP or APPLY_NOW in Meta Ads Manager (Meta CTA enum — not LinkedIn enum)",
+  "meta_sac_targeting": {
+    "geo_type": "zip_code",
+    "country": "MX",
+    "postal_codes": [
+      "01000",
+      "01010",
+      "01020",
+      "01030",
+      "01040",
+      "01049",
+      "01050",
+      "01060",
+      "01070",
+      "01080"
+    ],
+    "postal_codes_note": "First 10 of 2662 total. Full list at cdmx_zips.json in Drive.",
+    "age_min": 21,
+    "age_max": 40,
+    "placement": "feed",
+    "platforms": [
+      "facebook",
+      "instagram"
+    ],
+    "objective": "OUTCOME_LEADS",
+    "note_for_diego": "Apply full CDMX zip list from cdmx_zips.json as a Location SAC. Age 21-40. No interest targeting — SAC zip coverage is the targeting. Budget: $100/day. Optimization: LINK_CLICKS to start, switch to OFFSITE_CONVERSIONS once pixel fires."
+  },
+  "video": {
+    "reel_v1_drive_url": "https://drive.google.com/file/d/1fZVhLOs32SlJMCsRSJInR77MFKZ9YAYh/view?usp=drivesdk",
+    "reel_v2_drive_url": "https://drive.google.com/file/d/1RHufNQd1oaMTRQrAUj7eyo4RUafHJ6Ie/view?usp=drivesdk",
+    "reel_v2_changes": "branded end card (gradient+logo+headline+CTA pill) + Lyria audio bed",
+    "duration_s": 26,
+    "clips": {
+      "A": "https://drive.google.com/file/d/1JSCbb50y03R69eZhd-yTgHtp57OTHm-u/view",
+      "B": "https://drive.google.com/file/d/1X2E4ukzpdRf4IAc3VKmd4fO0JsoVjcqy/view",
+      "C": "https://drive.google.com/file/d/1Pso12_TwyVPfepb7IfOwTj3DV5o34mPS/view"
+    },
+    "end_card": {
+      "drive_url_still_preview": "https://drive.google.com/file/d/1KzK5qNdiCy0mBRvexBa8KPU_ITEXdxUi/view?usp=drivesdk",
+      "duration_s": 2,
+      "assets_used": {
+        "font_headline": "Inter Bold (96pt) via src.gemini_creative._load_font",
+        "font_cta": "Inter Regular (52pt) via src.gemini_creative._load_font",
+        "logo_svg": "assets/outlier logo.svg",
+        "logo_tint": "white #FFFFFF (dark background; brand brown #3D1A00 is illegible on dark)",
+        "logo_width_px": 280,
+        "gradient_angle": "C (pink top-right + teal-green bottom-left)",
+        "gradient_source": "custom vivid overlay in render_end_card.py (boosted from _make_gradient_overlay base)",
+        "headline_color": "#FFFFFF",
+        "cta_pill_bg": "#3D1A00",
+        "cta_pill_text_color": "#FFFFFF",
+        "vignette": true,
+        "logo_shadow": true,
+        "text_shadow": true
+      },
+      "headline": "Notas lo que otros ignoran",
+      "cta": "Regístrate en Outlier"
+    },
+    "audio": {
+      "source": "Lyria via Gemini API",
+      "model": "models/lyria-3-clip-preview",
+      "prompt": "soft lo-fi instrumental beat, calm focused mood, mellow piano melody with subtle hi-hat, gentle rhodes chords, no vocals, 90 BPM, peaceful and competent, suitable for professional ad background",
+      "duration_s": 27.43,
+      "mix_db": -18,
+      "volume_filter": "0.126",
+      "fade_in_s": 0.5,
+      "fade_out_start_s": 24.5,
+      "fade_out_duration_s": 1.5,
+      "codec": "aac",
+      "sample_rate_hz": 44100,
+      "channels": "stereo",
+      "cost_usd": 0.0
+    },
+    "ffmpeg_command_end_card_png_to_mp4": "ffmpeg -y -loop 1 -framerate 24 -i end_card_v3.png -t 2 -vf 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1' -c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p end_card.mp4",
+    "ffmpeg_command_stitch": "ffmpeg -y -f concat -safe 0 -i concat.txt -c copy reel_no_audio.mp4",
+    "ffmpeg_command_audio_mix": "ffmpeg -y -i reel_no_audio.mp4 -i lyria_beat.mp3 -filter_complex '[1:a]atrim=end=26,volume=0.126,afade=t=in:st=0:d=0.5,afade=t=out:st=24.5:d=1.5[a]' -map 0:v -map '[a]' -c:v copy -c:a aac -b:a 192k -shortest reel_v2.mp4"
+  },
+  "variants": {
+    "A": {
+      "drive_url": "https://drive.google.com/file/d/1DxoKdB_5Ez4cY66dzWaATD3XZAjzR0TF/view?usp=drivesdk",
+      "copy": {
+        "headline": "Hecho bien desde la primera vez",
+        "subheadline": "Tareas que valoran tu nivel de detalle",
+        "intro_text": "En Outlier, tu precisión tiene valor real. Tareas estructuradas donde hacerlo bien importa más que hacerlo rápido.",
+        "ad_headline": "Gana con Outlier haciendo lo que ya sabes hacer bien",
+        "ad_description": "+$500M USD pagados a colaboradores. Pautas claras, pago confiable.",
+        "cta_button": "SIGN_UP"
+      },
+      "photo_subject": "Mexican Mestizo man, 29-33, calm focused expression reviewing a handwritten structured checklist in a small spiral notebook at a tidy home-office desk, natural morning window light from the left, laptop open in background with data visible on screen, shallow depth of field, quiet confidence, no clutter, urban CDMX apartment setting suggested by warm concrete wall behind him"
+    },
+    "B": {
+      "drive_url": "https://drive.google.com/file/d/14Uaay1gtiRBOlx492VhpPkW_-NV2WfdC/view?usp=drivesdk",
+      "copy": {
+        "headline": "Siempre sabrás qué se espera",
+        "subheadline": "Sin adivinar. Sin ambigüedad. Solo claridad.",
+        "intro_text": "Outlier te da pautas del proyecto detalladas antes de empezar. Sin sorpresas, solo estándares claros y pago confiable.",
+        "ad_headline": "Outlier: pautas claras, progreso medible, pago real",
+        "ad_description": "Plataforma con +$500M USD en pagos. Únete a quienes trabajan con estándares.",
+        "cta_button": "SIGN_UP"
+      },
+      "photo_subject": "Mexican Indigenous-heritage woman, 26-31, composed and methodical expression, sitting at a neatly organized co-working desk with color-coded folders and labeled file tabs visible, pen in hand reviewing a structured project document, clean lines and organized stationery, soft natural light, calm professional atmosphere, CDMX urban co-working space with large windows in background, shallow depth of field"
+    },
+    "C": {
+      "drive_url": "https://drive.google.com/file/d/1ej0Qi5_JFdF8g5_1HdFEkn8RigKS_8QQ/view?usp=drivesdk",
+      "copy": {
+        "headline": "Notas lo que otros ignoran",
+        "subheadline": "Aquí eso marca la diferencia.",
+        "intro_text": "Si eres de los que detecta el error antes de que escale, Outlier tiene tareas diseñadas para tu nivel de atención.",
+        "ad_headline": "Tu atención al detalle merece una oportunidad a la altura",
+        "ad_description": "Pautas claras, pago confiable. +$500M USD pagados a colaboradores globales.",
+        "cta_button": "SIGN_UP"
+      },
+      "photo_subject": "Mexican Mestizo man, 27-32, close-up shot, calm expression of quiet satisfaction while carefully examining text on a laptop screen, index finger lightly pointing to a specific line on screen indicating a subtle detail catch, organized minimal desk with a single mechanical pencil and small sticky-note pad visible, warm natural side light from window, shallow depth of field, home office with neutral tones, focused and self-assured mood"
+    }
+  }
+}

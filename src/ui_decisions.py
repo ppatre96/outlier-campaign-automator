@@ -1080,7 +1080,9 @@ def supersede_campaign_rows(
         return 0
 
 
-_DAILY_METRIC_COLS = ("impressions", "clicks", "spend_usd", "signups", "screening_passes", "activations")
+_DAILY_METRIC_COLS = ("impressions", "clicks", "spend_usd", "signups",
+                      "screening_passes", "skill_grants",
+                      "ocp_completes", "activations")
 
 _DAILY_METRICS_DDL = """
 CREATE TABLE IF NOT EXISTS campaign_daily_metrics (
@@ -1094,11 +1096,21 @@ CREATE TABLE IF NOT EXISTS campaign_daily_metrics (
     spend_usd        NUMERIC NOT NULL DEFAULT 0,
     signups          INTEGER NOT NULL DEFAULT 0,
     screening_passes INTEGER NOT NULL DEFAULT 0,
+    skill_grants     INTEGER NOT NULL DEFAULT 0,
+    ocp_completes    INTEGER NOT NULL DEFAULT 0,
     activations      INTEGER NOT NULL DEFAULT 0,
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (ramp_id, platform, campaign_key, metric_date)
 )
 """
+
+# Additive ADD COLUMN IF NOT EXISTS migration — CREATE TABLE IF NOT EXISTS is a
+# no-op on the existing prod table, so new columns must be ALTER'd in or the
+# INSERT referencing them errors (and is best-effort-swallowed → silent zeros).
+_DAILY_METRICS_MIGRATE = "\n".join(
+    f"ALTER TABLE campaign_daily_metrics ADD COLUMN IF NOT EXISTS {c} INTEGER NOT NULL DEFAULT 0;"
+    for c in ("skill_grants", "ocp_completes")
+)
 
 
 def upsert_daily_metrics_batch(rows: list[dict], metric_cols: list[str]) -> int:
@@ -1140,6 +1152,7 @@ def upsert_daily_metrics_batch(rows: list[dict], metric_cols: list[str]) -> int:
     try:
         with _connect() as conn, conn.cursor() as cur:
             cur.execute(_DAILY_METRICS_DDL)
+            cur.execute(_DAILY_METRICS_MIGRATE)
             cur.executemany(
                 f"INSERT INTO campaign_daily_metrics ({', '.join(insert_cols)}) "
                 f"VALUES ({placeholders}) "
