@@ -591,9 +591,21 @@ SELECT
     {key_expr}                                                         AS ad_key,
     COUNT(DISTINCT ac.EMAIL)                                           AS applications,
     COUNT(DISTINCT CASE WHEN UPPER(g.RESULT) = 'PASS' THEN ac.EMAIL END) AS screening_passes,
+    COUNT(DISTINCT CASE WHEN wse.WORKER IS NOT NULL THEN ac.EMAIL END) AS skill_grants,
+    COUNT(DISTINCT CASE WHEN cesf.FIRST_OCP_ENDED_IN_SUCCESS = TRUE THEN ac.EMAIL END) AS ocp_completes,
     COUNT(DISTINCT CASE WHEN ac.ACTIVATION_DAY IS NOT NULL THEN ac.EMAIL END) AS activations
 FROM SCALE_PROD.VIEW.APPLICATION_CONVERSION ac
 LEFT JOIN PUBLIC.GROWTHRESUMESCREENINGRESULTS g ON ac.EMAIL = g.CANDIDATE_EMAIL
+LEFT JOIN SCALE_PROD.VIEW.CONTRIBUTOR_EARLY_SUCCESS_FUNNEL cesf ON cesf.USER_ID = ac.USER_ID
+-- Verified worker-skill grants: a contributor is counted if they have ≥1 skill
+-- entry granted (STATUS='verified') on/after their signup day. The join fans out
+-- (one row per worker × skill) but every metric uses COUNT(DISTINCT ac.EMAIL),
+-- so the fan-out is harmless (same as the GROWTHRESUMESCREENINGRESULTS join).
+LEFT JOIN GENAI_POSTGRES.WORKER_SKILL_ENTRY wse
+       ON wse.WORKER = ac.USER_ID
+      AND wse.STATUS = 'verified'
+      AND wse.OVERALL_STATUS NOT IN ('unranked', 'selfReported')
+      AND wse.CREATED_DATE::DATE >= ac.SIGNUP_DAY
 WHERE ({source_filter})
   AND ac.UTM_MEDIUM IN ('paid', 'cpc')
   AND {key_notnull}
@@ -1041,9 +1053,11 @@ class RedashClient:
     def query_campaign_funnel_daily(self, channel: str, days_back: int = 90) -> pd.DataFrame:
         """Day-grained funnel for a channel — one row per (ad_key × metric_date).
         Powers the Analytics dashboard's DoD trend charts + historical backfill.
-        Columns: metric_date, ad_key, applications, screening_passes, activations.
+        Columns: metric_date, ad_key, applications, screening_passes,
+        skill_grants, ocp_completes, activations.
         Returns empty for unknown channels."""
-        _expected = ["metric_date", "ad_key", "applications", "screening_passes", "activations"]
+        _expected = ["metric_date", "ad_key", "applications", "screening_passes",
+                     "skill_grants", "ocp_completes", "activations"]
         cfg = _CHANNEL_FUNNEL.get((channel or "").lower())
         if not cfg:
             log.info("query_campaign_funnel_daily: no funnel config for channel=%r — skipping", channel)

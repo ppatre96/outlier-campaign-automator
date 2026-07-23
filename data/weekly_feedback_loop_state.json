@@ -1,4 +1,6 @@
 {
-  "last_success_ts": "2026-05-18T16:00:26.762863+00:00",
-  "runs_this_week": 4
+  "last_success_ts": "2026-07-20T03:41:36.717047+00:00",
+  "runs_this_week": 6,
+  "last_failure_ts": "2026-07-13T05:58:14.663088+00:00",
+  "last_failure_reason": "{\"funnel\": \"ConnectionError: HTTPSConnectionPool(host='redash.scale.com', port=443): Max retries exceeded with url: /api/queries?api_key=9W4SOwp0VJzrQCJFrZ4sD4HdPtDnCQOnL744fafP (Caused by NameResolutionError(\\\"HTTPSConnection(host='redash.scale.com', port=443): Failed to resolve 'redash.scale.com' ([Errno 8] nodename nor servname provided, or not known)\\\"))\"}"
 }

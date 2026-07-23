@@ -140,9 +140,14 @@ def _backfill_funnel_daily(window_days, by_utm, by_id, reddit_rep) -> int:
                 "metric_date": r.get("metric_date"),
                 "signups": int(r.get("applications") or 0),
                 "screening_passes": int(r.get("screening_passes") or 0),
+                "skill_grants": int(r.get("skill_grants") or 0),
+                "ocp_completes": int(r.get("ocp_completes") or 0),
                 "activations": int(r.get("activations") or 0),
             })
-    written = upsert_daily_metrics_batch(batch, ["signups", "screening_passes", "activations"])
+    written = upsert_daily_metrics_batch(
+        batch,
+        ["signups", "screening_passes", "skill_grants", "ocp_completes", "activations"],
+    )
     log.info("daily funnel: wrote %d (campaign × day) rows", written)
     return written
 
