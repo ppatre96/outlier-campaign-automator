@@ -1,0 +1,54 @@
+name: Sizing Analysis
+
+# Fires when the outlier-campaign-console "Run sizing" button triggers
+# workflow_dispatch with an analysis_id. The row's input (job post / project /
+# CB IDs) is read from the sizing_analyses table; this run mines the ICP +
+# measures per-channel audience and persists them (no launch), then flips the
+# row's status.
+#
+# One-shot; no cron. One invocation runs exactly one sizing analysis.
+
+on:
+  workflow_dispatch:
+    inputs:
+      analysis_id:
+        description: "Sizing analysis id (SZ-...) — its input lives in the sizing_analyses row"
+        required: true
+
+jobs:
+  size:
+    name: Run sizing analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Echo inputs (for run log)
+        run: echo "analysis_id: ${{ github.event.inputs.analysis_id }}"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v4
+
+      - name: Run sizing analysis
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: |
+          doppler run -- python3 scripts/run_sizing_analysis.py \
+            --analysis-id "${{ github.event.inputs.analysis_id }}"
