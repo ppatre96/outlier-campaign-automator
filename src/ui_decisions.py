@@ -523,6 +523,119 @@ def upsert_cohort_icp(
                   ramp_id, cohort_signature, exc)
 
 
+# ── Sizing Analysis (ad-hoc audience sizing + ICP, no launch) ────────────────
+# A sizing analysis is an ad-hoc "size up a campaign" run: mine the ICP (job
+# post / project / qualified CB IDs) + measure per-channel audience, WITHOUT
+# launching. Results reuse cohort_audience / cohort_icp / cohort_targeting keyed
+# by ramp_id = the synthetic analysis id, so the console renders them exactly
+# like a ramp's sizing. This table holds the list + input + status.
+
+_SIZING_ANALYSES_DDL = """
+CREATE TABLE IF NOT EXISTS sizing_analyses (
+    id           TEXT PRIMARY KEY,
+    input_type   TEXT NOT NULL,          -- 'job_post' | 'project' | 'cb_ids'
+    input_text   TEXT DEFAULT '',        -- job-post JD text
+    project_id   TEXT DEFAULT '',        -- project id (input_type='project')
+    cb_ids       TEXT DEFAULT '',        -- comma/newline contributor ids (input_type='cb_ids')
+    geos         TEXT DEFAULT '',        -- comma ISO-2 / locale; '' = broad fallback
+    platforms    TEXT DEFAULT '',        -- comma channels; '' = config.ENABLED_PLATFORMS
+    label        TEXT DEFAULT '',
+    status       TEXT NOT NULL DEFAULT 'running',   -- running | done | failed
+    error        TEXT DEFAULT '',
+    created_by   TEXT DEFAULT '',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+"""
+
+_SIZING_COLS = ("id", "input_type", "input_text", "project_id", "cb_ids",
+                "geos", "platforms", "label", "status", "error", "created_by",
+                "created_at", "updated_at")
+
+
+def _row_to_sizing(row) -> dict:
+    return dict(zip(_SIZING_COLS, row))
+
+
+def create_sizing_analysis(
+    *,
+    analysis_id: str,
+    input_type: str,
+    input_text: str = "",
+    project_id: str = "",
+    cb_ids: str = "",
+    geos: str = "",
+    platforms: str = "",
+    label: str = "",
+    created_by: str = "",
+) -> None:
+    """Insert a sizing-analysis row (status 'running'). Best-effort."""
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(_SIZING_ANALYSES_DDL)
+            cur.execute(
+                """
+                INSERT INTO sizing_analyses (
+                    id, input_type, input_text, project_id, cb_ids,
+                    geos, platforms, label, status, created_by
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'running',%s)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (analysis_id, input_type, input_text, project_id, cb_ids,
+                 geos, platforms, label, created_by),
+            )
+            conn.commit()
+    except UIDecisionsUnavailable as exc:
+        log.debug("create_sizing_analysis skipped (%s): %s", analysis_id, exc)
+
+
+def get_sizing_analysis(analysis_id: str) -> Optional[dict]:
+    """Fetch one sizing-analysis row as a dict, or None."""
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(_SIZING_ANALYSES_DDL)
+            cur.execute(
+                f"SELECT {', '.join(_SIZING_COLS)} FROM sizing_analyses WHERE id = %s",
+                (analysis_id,),
+            )
+            row = cur.fetchone()
+            return _row_to_sizing(row) if row else None
+    except UIDecisionsUnavailable as exc:
+        log.debug("get_sizing_analysis skipped (%s): %s", analysis_id, exc)
+        return None
+
+
+def list_sizing_analyses(limit: int = 200) -> list[dict]:
+    """List sizing analyses newest-first. Best-effort → []."""
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(_SIZING_ANALYSES_DDL)
+            cur.execute(
+                f"SELECT {', '.join(_SIZING_COLS)} FROM sizing_analyses "
+                f"ORDER BY created_at DESC LIMIT %s",
+                (int(limit),),
+            )
+            return [_row_to_sizing(r) for r in cur.fetchall()]
+    except UIDecisionsUnavailable as exc:
+        log.debug("list_sizing_analyses skipped: %s", exc)
+        return []
+
+
+def set_sizing_analysis_status(analysis_id: str, status: str, *, error: str = "") -> None:
+    """Flip a sizing analysis to done/failed (+ error). Best-effort."""
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(_SIZING_ANALYSES_DDL)
+            cur.execute(
+                "UPDATE sizing_analyses SET status = %s, error = %s, updated_at = NOW() "
+                "WHERE id = %s",
+                (status, error, analysis_id),
+            )
+            conn.commit()
+    except UIDecisionsUnavailable as exc:
+        log.debug("set_sizing_analysis_status skipped (%s): %s", analysis_id, exc)
+
+
 def upsert_campaign(entry: dict) -> None:
     """Persist one Campaign Registry row to Postgres so the console can render
     Briefs & Campaigns WITHOUT depending on the Google Sheet.
