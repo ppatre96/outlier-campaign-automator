@@ -73,6 +73,75 @@ def test_falls_back_to_the_metric_composite_without_a_tier_column():
     assert "c4" in picked  # highest QMS survives the above-median cut
 
 
+def test_broad_skills_are_not_targetable():
+    """LinkedIn ORs the skills facet, so one generic skill balloons the audience
+    to everybody. Reuses Stage A's BROAD_SOLO_FEATURES."""
+    from src.sizing_analysis import _is_broad_skill
+
+    for generic in ("Research", "Training", "Leadership", "Customer Service", "Excel"):
+        assert _is_broad_skill(generic), generic
+    for specific in ("Tax Preparation", "Equity Research", "Financial Modeling"):
+        assert not _is_broad_skill(specific), specific
+
+
+def test_icp_exclusions_become_negative_title_facets():
+    from src.sizing_analysis import _apply_icp_exclusions
+
+    class _Icp:
+        exclude_titles = ["Tax Attorney", "Bookkeeper", "Financial Advisor"]
+
+    class _Cohort:
+        name = "c"
+        # The cohort targets Financial Advisor, so it must not also exclude it.
+        rules = [("job_titles_norm__financial_advisor", 1), ("skills__tax_preparation", 1)]
+        exclude_add = [("titles", "Sales Analyst")]
+
+    cohort = _Cohort()
+    _apply_icp_exclusions(cohort, _Icp())
+    values = [v for f, v in cohort.exclude_add if f == "titles"]
+    assert "Tax Attorney" in values and "Bookkeeper" in values
+    assert "Sales Analyst" in values, "pre-existing family exclusions must survive"
+    # The ICP wins over a weak-frequency positive rule: the targeted title is
+    # dropped from the rules AND excluded.
+    assert cohort.rules == [("skills__tax_preparation", 1)]
+    assert "Financial Advisor" in values
+
+
+def test_never_drops_the_last_positive_rule():
+    """A cohort with no rules can't be targeted at all, so the conflicting rule
+    survives and the exclusion is skipped instead."""
+    from src.sizing_analysis import _apply_icp_exclusions
+
+    class _Icp:
+        exclude_titles = ["Financial Advisor"]
+
+    class _Cohort:
+        name = "c"
+        rules = [("job_titles_norm__financial_advisor", 1)]
+        exclude_add: list = []
+
+    cohort = _Cohort()
+    _apply_icp_exclusions(cohort, _Icp())
+    assert cohort.rules == [("job_titles_norm__financial_advisor", 1)]
+    assert cohort.exclude_add == []
+
+
+def test_apply_icp_exclusions_is_a_noop_without_titles():
+    from src.sizing_analysis import _apply_icp_exclusions
+
+    class _Icp:
+        exclude_titles: list = []
+
+    class _Cohort:
+        name = "c"
+        rules = [("skills__x", 1)]
+        exclude_add = [("titles", "Kept")]
+
+    cohort = _Cohort()
+    _apply_icp_exclusions(cohort, _Icp())
+    assert cohort.exclude_add == [("titles", "Kept")]
+
+
 def test_rules_rank_key_orders_hfc_then_activity_then_volume():
     hfc = _row("a", "Strong", is_hfc="TRUE", activity_bucket="Online >60D", total_tasks=1)
     active = _row("b", "Strong", is_hfc="FALSE", activity_bucket="Active L30D", total_tasks=1)

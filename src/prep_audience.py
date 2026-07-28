@@ -123,7 +123,20 @@ def measure_audience_for_cohort(
                         _li_collapsed = linkedin_targeting_collapsed(cohort, _facets)
                         _facets["profileLocations"] = geo_urns
                     if not _li_collapsed:
-                        live = li_client.get_audience_count(_facets)
+                        # Apply the cohort's own negative facets to the estimate.
+                        # A campaign created from this cohort excludes them, so a
+                        # count that ignores them overstates reachable audience.
+                        # Baseline config.DEFAULT_EXCLUDE_FACETS are NOT included
+                        # here — only the per-cohort exclude_add.
+                        _excl: dict = {}
+                        _excl_pairs = getattr(cohort, "exclude_add", None) or []
+                        if _excl_pairs:
+                            try:
+                                _excl = urn_resolver.resolve_facet_pairs(_excl_pairs)
+                            except Exception as exc:  # noqa: BLE001
+                                log.warning("exclude facet resolution failed for cohort=%s: %s",
+                                            getattr(cohort, "name", "?"), exc)
+                        live = li_client.get_audience_count(_facets, _excl or None)
                         if live and live > 0:
                             size = live
                             log.info(
@@ -165,6 +178,12 @@ def measure_audience_for_cohort(
             }
         else:
             li_facets = {"rules": [str(feat) for feat, _val in (getattr(cohort, "rules", None) or [])]}
+            # Surface the negative facets the estimate was measured against, so
+            # the console can show what was subtracted rather than leaving the
+            # ICP's "do not source" list looking purely advisory.
+            _ex = [v for f, v in (getattr(cohort, "exclude_add", None) or []) if f == "titles"]
+            if _ex:
+                li_facets["excluded_titles"] = _ex
         results.append(ChannelAudience(
             platform="linkedin", audience_size=size,
             status=status, geos_used=est_geos,
