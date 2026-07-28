@@ -2587,7 +2587,8 @@ def _resolve_cold_start_cohort(
         locale_hint = (f"en-{location.upper()[:2]}" if location and len(location) >= 2 else None)
         for cohort in cohorts:
             try:
-                icp_obj = enrich_icp(cohort, resume_sample=[], locale_hint=locale_hint)
+                icp_obj = enrich_icp(cohort, resume_sample=[], locale_hint=locale_hint,
+                                     geos=row_geos)
                 cohort._icp = icp_obj
                 upsert_cohort_icp(
                     ramp_id=ramp_id, cohort_id=cohort._stg_id,
@@ -3182,7 +3183,7 @@ def _resolve_cohorts(
 
     if ramp_id_for_icp and selected:
         try:
-            from src.icp_enrichment import enrich as enrich_icp
+            from src.icp_enrichment import enrich as enrich_icp, resume_evidence
             from src.ui_decisions import upsert_cohort_icp
             for cohort in selected:
                 # Sample df_bin rows matching this cohort's rules. df_bin has
@@ -3196,9 +3197,13 @@ def _resolve_cohorts(
                 sample_rows: list[dict] = []
                 if mask is not None and "user_id" in df_bin.columns:
                     matched_ids = df_bin.loc[mask, "user_id"].dropna().astype(str).tolist()[:10]
-                    if matched_ids and hasattr(snowflake, "fetch_resume_summary"):
+                    if matched_ids:
+                        # fetch_signal_columns (title/field/skills/company/edu) is
+                        # the method RedashClient actually exposes — the older
+                        # fetch_resume_summary name never existed, which is why
+                        # ICPs used to fall back to the canned heuristic.
                         try:
-                            sample_df = snowflake.fetch_resume_summary(matched_ids)
+                            sample_df = snowflake.fetch_signal_columns(matched_ids)
                             if sample_df is not None and not sample_df.empty:
                                 sample_rows = sample_df.to_dict(orient="records")
                         except Exception as exc:
@@ -3206,7 +3211,11 @@ def _resolve_cohorts(
                 locale_hint = None
                 if location:
                     locale_hint = f"en-{location.upper()[:2]}" if len(location) >= 2 else None
-                icp = enrich_icp(cohort, resume_sample=sample_rows, locale_hint=locale_hint)
+                icp = enrich_icp(
+                    cohort, resume_sample=sample_rows, locale_hint=locale_hint,
+                    evidence=resume_evidence(sample_rows),
+                    geos=list((row or {}).get("included_geos") or []),
+                )
                 cohort._icp = icp  # stash on the cohort for downstream consumers (brief agent)
                 upsert_cohort_icp(
                     ramp_id=ramp_id_for_icp,

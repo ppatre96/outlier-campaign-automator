@@ -26,7 +26,12 @@ jobs:
 
     steps:
       - name: Echo inputs (for run log)
-        run: echo "analysis_id: ${{ github.event.inputs.analysis_id }}"
+        # Block scalar, not a plain one: `run: echo "analysis_id: ..."` is
+        # invalid YAML (a plain scalar can't contain ": "), which made GitHub
+        # fail to parse this workflow entirely — every workflow_dispatch came
+        # back 422 Unprocessable Entity.
+        run: |
+          echo "analysis_id: ${{ github.event.inputs.analysis_id }}"
 
       - name: Checkout
         uses: actions/checkout@v4
