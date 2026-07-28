@@ -41,6 +41,14 @@ def _slug(v: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", (v or "").strip().lower()).strip("_")
 
 
+def _is_broad_skill(value: str) -> bool:
+    """True for skills too generic to target on (Stage A's BROAD_SOLO_FEATURES).
+    Kept as one shared list so the sizing mine and Stage A can't drift apart."""
+    from src.analysis import BROAD_SOLO_FEATURES
+
+    return _slug(value) in BROAD_SOLO_FEATURES
+
+
 def _build_clients():
     """Construct the shared clients _resolve_cohorts / sizing need, mirroring
     run_launch_for_ramp (main.py). Requires a LinkedIn token for Stage C + the
@@ -120,6 +128,57 @@ def build_cohorts_from_specs(specs: list[dict]) -> list:
     return cohorts
 
 
+def _apply_icp_exclusions(cohort, icp) -> None:
+    """Add the ICP's `exclude_titles` to the cohort as negative title facets.
+
+    Without this the ICP's prose said "do not source attorneys or account
+    executives" while the resolved targeting happily included both, because the
+    exclusion list existed only as text. `exclude_add` is (facet, value) pairs;
+    UrnResolver fuzzy-matches them and drops whatever LinkedIn doesn't know, so
+    an unresolvable title is harmless.
+
+    When the mine targets a title the ICP wants excluded, the ICP wins and the
+    POSITIVE rule is dropped: such a title got in on weak frequency (2 of 30 for
+    "Account Executive" on the finance sheet) while the ICP judged it against the
+    whole resume sample. Including and excluding the same title would also zero
+    out that facet on LinkedIn. The last positive rule is never dropped — a
+    cohort with no rules can't be targeted at all."""
+    titles = [t.strip() for t in (getattr(icp, "exclude_titles", None) or []) if t.strip()]
+    if not titles:
+        return
+    excluded_slugs = {_slug(t) for t in titles}
+
+    rules = list(getattr(cohort, "rules", None) or [])
+    kept: list = []
+    for feat, val in rules:
+        prefix, _, slug = str(feat).partition("__")
+        conflicts = bool(val) and prefix == "job_titles_norm" and slug in excluded_slugs
+        # Keep it anyway if dropping would leave the cohort with nothing.
+        if conflicts and len(kept) + 1 < len(rules):
+            log.info("_apply_icp_exclusions: dropping targeted title rule %r — the ICP excludes it",
+                     feat)
+            continue
+        kept.append((feat, val))
+    cohort.rules = kept
+
+    still_targeted = {slug for feat, val in kept if val
+                      for prefix, _, slug in [str(feat).partition("__")]
+                      if prefix == "job_titles_norm"}
+    existing = list(getattr(cohort, "exclude_add", None) or [])
+    seen = {(f, v.lower()) for f, v in existing}
+    for t in titles:
+        if _slug(t) in still_targeted:
+            log.warning("_apply_icp_exclusions: %r is targeted by the only remaining rule — "
+                        "not excluding it", t)
+            continue
+        if ("titles", t.lower()) not in seen:
+            seen.add(("titles", t.lower()))
+            existing.append(("titles", t))
+    cohort.exclude_add = existing
+    log.info("_apply_icp_exclusions: cohort %s excludes %d title(s): %s",
+             getattr(cohort, "name", "?"), len(existing), [v for _, v in existing])
+
+
 def _size_and_persist(
     analysis_id: str, cohorts: list, geos: list[str], *, li_client, urn_res,
     resume_sample: list[dict] | None = None, evidence: dict | None = None,
@@ -141,6 +200,20 @@ def _size_and_persist(
         enabled = ["linkedin", "meta", "google"]
 
     for cohort in cohorts:
+        # ICP FIRST, then measure. The ICP names the profiles we would refuse,
+        # and those become negative facets — so the sized audience has to be
+        # measured after they're applied, or the number describes targeting we
+        # would never actually run.
+        icp = None
+        try:
+            icp = enrich_icp(
+                cohort, resume_sample=resume_sample, locale_hint=None,
+                evidence=evidence, geos=geos,
+            )
+            _apply_icp_exclusions(cohort, icp)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("_size_and_persist: ICP enrich failed for %s: %s", cohort.name, exc)
+
         rows = measure_audience_for_cohort(
             cohort,
             included_geos=geos,
@@ -160,17 +233,11 @@ def _size_and_persist(
                 ramp_id=analysis_id, cohort_id=cid, cohort_signature=cohort.name,
                 platform=ca.platform, facets=ca.facets,
             )
-        try:
-            icp = enrich_icp(
-                cohort, resume_sample=resume_sample, locale_hint=None,
-                evidence=evidence, geos=geos,
-            )
+        if icp is not None:
             upsert_cohort_icp(
                 ramp_id=analysis_id, cohort_id=cid, cohort_signature=cohort.name,
                 icp_dict=icp.to_dict(),
             )
-        except Exception as exc:  # noqa: BLE001
-            log.warning("_size_and_persist: ICP enrich failed for %s: %s", cohort.name, exc)
         log.info("sizing %s: cohort %s → %s", analysis_id, cohort.name,
                  " ".join(f"{r.platform}={r.audience_size}({r.status})" for r in rows))
     return len(cohorts)
@@ -276,20 +343,38 @@ def _mine_and_size(analysis_id, user_ids, geos, label, *, snowflake, li_client, 
     rows = df.to_dict(orient="records")
     # One frequency mine, two consumers: the cohort's targeting rules (below)
     # and the ICP prompt (so every requirement it states is auditable as
-    # "shared by k of n"). See icp_enrichment.resume_evidence.
-    evidence = resume_evidence(rows)
+    # "shared by k of n"). See icp_enrichment.resume_evidence. top_n is deep
+    # because the broad-skill filter below discards from the head.
+    evidence = resume_evidence(rows, top_n=25)
 
     # "Common parameters" = the most-shared resume features. Require a feature to
     # be shared by ≥2 contributors (drop singletons) and take the top by
     # frequency — robust across diverse sets where no single feature hits a large
     # fraction.
     thresh = 2
-    def _common(bucket: str, take: int) -> list[str]:
-        return [name for name, count in (evidence.get(bucket) or []) if count >= thresh][:take]
+
+    def _common(bucket: str, take: int, *, drop_broad: bool = False) -> list[str]:
+        out = []
+        for name, count in (evidence.get(bucket) or []):
+            if count < thresh:
+                continue
+            if drop_broad and _is_broad_skill(name):
+                log.info("_mine_and_size: dropping broad skill %r (%d of %d) from targeting",
+                         name, count, n)
+                continue
+            out.append(name)
+            if len(out) >= take:
+                break
+        return out
 
     spec = {
         "label": label,
-        "required_skills": _common("top_skills", 5),
+        # Frequency alone surfaces generic professional skills on a mixed set
+        # ("Research", "Training", "Leadership" were the top 3 on a finance
+        # sheet). LinkedIn ORs the skills facet, so ONE such skill balloons the
+        # audience to everybody. Stage A guards against exactly this with
+        # BROAD_SOLO_FEATURES; reuse that list rather than keeping a second one.
+        "required_skills": _common("top_skills", 5, drop_broad=True),
         "job_titles": _common("top_titles", 3),
         "fields_of_study": _common("top_fields", 3),
         "degrees": [],

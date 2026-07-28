@@ -82,6 +82,7 @@ these keys:
   ],
   "strong_signals":     ["3-6 certifications, designations, or tenure markers of a strong candidate"],
   "exclusions":         ["3-6 adjacent profiles we should NOT source, and the one clause of why"],
+  "exclude_titles":     ["3-8 SPECIFIC titles to exclude from ad targeting, drawn from your exclusions"],
   "top_motivations":    ["3-5 motivations they care about as Outlier contributors"],
   "content_prefs":      ["3-5 content formats / tones that resonate"],
   "creative_liberty":   "high" | "medium" | "low",
@@ -112,6 +113,11 @@ detail):
   profession that merely works nearby belongs in `exclusions`, not `titles`.
 - Write each exclusion as one sentence: the profile, a colon, then why it
   fails the core requirement. No dashes.
+- `exclude_titles` turns those exclusions into ad targeting. Each entry must be
+  a real title someone would put on LinkedIn ("Tax Attorney", "Estate Planning
+  Attorney", "Bookkeeper", "Account Executive"), NOT a description of a
+  category ("people without licences"). Only list a title you would genuinely
+  refuse, since it is subtracted from the reachable audience.
 - Last pass before you return: read every title back against your exclusions.
   Never list a title you also exclude. When a requirement sits right next to
   an excluded profession, put the boundary in the bucket name itself, e.g.
@@ -162,6 +168,7 @@ class CohortIcp:
     core_requirements:  list[dict] = field(default_factory=list)
     strong_signals:     list[str] = field(default_factory=list)
     exclusions:         list[str] = field(default_factory=list)
+    exclude_titles:     list[str] = field(default_factory=list)
     evidence:           dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -180,6 +187,7 @@ class CohortIcp:
             "core_requirements":  self.core_requirements,
             "strong_signals":     self.strong_signals,
             "exclusions":         self.exclusions,
+            "exclude_titles":     self.exclude_titles,
             "evidence":           self.evidence,
         }
 
@@ -301,6 +309,7 @@ def enrich(
     icp.summary           = str(parsed.get("summary", "") or "")[:800]
     icp.strong_signals    = _to_string_list(parsed.get("strong_signals"), max_item_len=160)
     icp.exclusions        = _to_string_list(parsed.get("exclusions"), max_item_len=200)
+    icp.exclude_titles    = _to_string_list(parsed.get("exclude_titles"), max_n=8, max_item_len=60)
     # Keep the rules-derived location/requirements when the model omits them —
     # a half-filled spec reads as broken, and geos are ours to know anyway.
     icp.location          = str(parsed.get("location", "") or "")[:160] or icp.location

@@ -477,6 +477,7 @@ ALTER TABLE cohort_icp
     ADD COLUMN IF NOT EXISTS core_requirements JSONB NOT NULL DEFAULT '[]'::jsonb,
     ADD COLUMN IF NOT EXISTS strong_signals    JSONB NOT NULL DEFAULT '[]'::jsonb,
     ADD COLUMN IF NOT EXISTS exclusions        JSONB NOT NULL DEFAULT '[]'::jsonb,
+    ADD COLUMN IF NOT EXISTS exclude_titles    JSONB NOT NULL DEFAULT '[]'::jsonb,
     ADD COLUMN IF NOT EXISTS evidence          JSONB NOT NULL DEFAULT '{}'::jsonb
 """
 
@@ -510,9 +511,9 @@ def upsert_cohort_icp(
                     creative_liberty, language_pref, decision_drivers,
                     skill_priorities, sample_size_n, model_version,
                     summary, location, core_requirements, strong_signals,
-                    exclusions, evidence
+                    exclusions, exclude_titles, evidence
                 ) VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s::jsonb, %s::jsonb, %s, %s,
-                          %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb)
+                          %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb)
                 ON CONFLICT (ramp_id, cohort_signature) DO UPDATE SET
                     cohort_id          = EXCLUDED.cohort_id,
                     cohort_description = EXCLUDED.cohort_description,
@@ -529,6 +530,7 @@ def upsert_cohort_icp(
                     core_requirements  = EXCLUDED.core_requirements,
                     strong_signals     = EXCLUDED.strong_signals,
                     exclusions         = EXCLUDED.exclusions,
+                    exclude_titles     = EXCLUDED.exclude_titles,
                     evidence           = EXCLUDED.evidence,
                     updated_at         = NOW()
                 """,
@@ -548,6 +550,7 @@ def upsert_cohort_icp(
                     json.dumps(icp_dict.get("core_requirements", []) or []),
                     json.dumps(icp_dict.get("strong_signals", []) or []),
                     json.dumps(icp_dict.get("exclusions", []) or []),
+                    json.dumps(icp_dict.get("exclude_titles", []) or []),
                     json.dumps(icp_dict.get("evidence", {}) or {}),
                 ),
             )
