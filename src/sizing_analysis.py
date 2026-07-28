@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import statistics
 from collections import Counter
 
 import config
@@ -196,6 +197,9 @@ def compute_sizing_analysis(analysis_id: str) -> dict:
         elif input_type == "cb_ids":
             result = _run_cb_ids(analysis_id, _parse_list(rec.get("cb_ids") or ""), geos,
                                  snowflake, li_client, urn_res)
+        elif input_type == "quality_sheet":
+            result = _run_quality_sheet(analysis_id, (rec.get("input_text") or "").strip(), geos,
+                                        sheets, snowflake, li_client, urn_res)
         else:
             raise ValueError(f"unknown input_type {input_type!r}")
         ui_decisions.set_sizing_analysis_status(analysis_id, "done")
@@ -245,16 +249,15 @@ def _run_job_post(analysis_id, jd_text, geos, li_client, urn_res) -> dict:
     return {"mode": "job_post", "cohorts": n}
 
 
-def _run_cb_ids(analysis_id, cb_ids, geos, snowflake, li_client, urn_res) -> dict:
-    """Contributor-IDs path — mine the common parameters among the supplied
-    qualified CBs (modal resume skills/titles/fields) into one cohort, size it.
-
-    This is the ad-hoc analog of the project Stage A/B mine: with an explicit
-    "these are the good CBs" set, the whole set IS the positive class, so the
-    common parameters are the most-shared resume features across them."""
-    if not cb_ids:
-        raise ValueError("cb_ids sizing requires at least one contributor id")
-    df = snowflake.fetch_signal_columns(cb_ids)
+def _mine_and_size(analysis_id, user_ids, geos, label, *, snowflake, li_client, urn_res) -> dict:
+    """Fetch resume features for a set of qualified contributors, mine the common
+    parameters (modal skills/titles/fields shared by ≥30% of them) into one
+    cohort, and size it. Shared by the cb_ids and quality_sheet paths — with an
+    explicit "these are the good CBs" set, the whole set IS the positive class."""
+    ids = [u for u in dict.fromkeys(user_ids) if u]  # dedupe, preserve order
+    if not ids:
+        raise ValueError("no contributor ids to analyze")
+    df = snowflake.fetch_signal_columns(ids)
     n = len(df)
     if n == 0:
         raise ValueError("no resume features found for the supplied contributor ids")
@@ -274,22 +277,122 @@ def _run_cb_ids(analysis_id, cb_ids, geos, snowflake, li_client, urn_res) -> dic
         if f:
             field_c[f] += 1
 
-    # "Common" = shared by a meaningful share of the qualified set.
-    thresh = max(2, int(round(0.30 * n)))
+    # "Common parameters" = the most-shared resume features. Require a feature to
+    # be shared by ≥2 contributors (drop singletons) and take the top by
+    # frequency — robust across diverse sets where no single feature hits a large
+    # fraction.
+    thresh = 2
     spec = {
-        "label": "Qualified contributors ICP",
+        "label": label,
         "required_skills": [s for s, c in skill_c.most_common(8) if c >= thresh][:5],
         "job_titles": [t for t, c in title_c.most_common(5) if c >= thresh][:3],
         "fields_of_study": [f for f, c in field_c.most_common(5) if c >= thresh][:3],
         "degrees": [],
         "geos": geos,
     }
-    log.info("sizing %s cb_ids: n=%d thresh=%d spec=%s", analysis_id, n, thresh, spec)
+    log.info("sizing %s: n=%d spec=%s", analysis_id, n, spec)
     cohorts = build_cohorts_from_specs([spec])
     if not cohorts:
         raise ValueError(
-            f"no common parameters shared by ≥{thresh} of {n} contributors — "
-            "try a more homogeneous CB set"
+            f"no resume feature is shared by ≥2 of {n} contributors — the set is "
+            "too heterogeneous to derive a common ICP"
         )
     written = _size_and_persist(analysis_id, cohorts, geos, li_client=li_client, urn_res=urn_res)
-    return {"mode": "cb_ids", "cohorts": written, "n_contributors": n}
+    return {"cohorts": written, "n_contributors": n}
+
+
+def _run_cb_ids(analysis_id, cb_ids, geos, snowflake, li_client, urn_res) -> dict:
+    """Contributor-IDs path — mine the common parameters among the supplied
+    qualified CBs, size the resulting cohort."""
+    if not cb_ids:
+        raise ValueError("cb_ids sizing requires at least one contributor id")
+    return {"mode": "cb_ids", **_mine_and_size(
+        analysis_id, cb_ids, geos, "Qualified contributors ICP",
+        snowflake=snowflake, li_client=li_client, urn_res=urn_res,
+    )}
+
+
+_SHEET_ID_RE = re.compile(r"/spreadsheets/d/([A-Za-z0-9_-]+)")
+_SHEET_GID_RE = re.compile(r"[#&?]gid=(\d+)")
+
+# Quality columns M–S of the contributor quality sheet: higher = better for the
+# POS metrics, higher = worse for the NEG metrics. total_tasks is a volume gate.
+_QUALITY_POS = ["QMS", "PROMOTION_RATE", "WORKFORCES_MADE", "num_high_qual_tags"]
+_QUALITY_NEG = ["QUALITY_DISABLE_RATE", "FAILURE_RATE"]
+_QUALITY_MIN_TASKS = 20
+
+
+def _num(v):
+    try:
+        return float(str(v).replace("%", "").replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _select_high_quality_ids(records: list[dict]) -> list[str]:
+    """Pick the high-quality contributors from a quality sheet using the M–S
+    metric columns (NOT the quality_tier label): gate on task volume, then take
+    those with an above-median composite z-score. Falls back to quality_tier
+    'Strong' if the metric columns are too sparse to score."""
+    def uid(r):
+        return str(r.get("user_id") or r.get("CBID") or "").strip()
+
+    eligible = [r for r in records if uid(r) and (_num(r.get("total_tasks")) or 0) >= _QUALITY_MIN_TASKS]
+    if len(eligible) < 4:
+        return [uid(r) for r in records if uid(r) and str(r.get("quality_tier", "")).strip().lower() == "strong"]
+
+    stats: dict = {}
+    for col in _QUALITY_POS + _QUALITY_NEG:
+        vals = [_num(r.get(col)) for r in eligible if _num(r.get(col)) is not None]
+        if len(vals) >= 2:
+            stats[col] = (statistics.mean(vals), statistics.pstdev(vals) or 1.0)
+
+    def score(r):
+        total, k = 0.0, 0
+        for col in _QUALITY_POS:
+            st, v = stats.get(col), _num(r.get(col))
+            if st and v is not None:
+                total += (v - st[0]) / st[1]; k += 1
+        for col in _QUALITY_NEG:
+            st, v = stats.get(col), _num(r.get(col))
+            if st and v is not None:
+                total -= (v - st[0]) / st[1]; k += 1
+        return total / k if k else 0.0
+
+    scored = sorted(((score(r), uid(r)) for r in eligible), reverse=True)
+    cutoff = max(1, len(scored) // 2)  # top ~half (above-median composite)
+    return [u for _, u in scored[:cutoff] if u]
+
+
+def _run_quality_sheet(analysis_id, sheet_url, geos, sheets, snowflake, li_client, urn_res) -> dict:
+    """Contributor-quality-sheet path — read a project lead's quality sheet
+    (Google Sheet URL, shared with our service account), select the high-quality
+    contributors via the M–S metric columns, and mine THEIR common resume
+    parameters (subdomain-agnostic)."""
+    m = _SHEET_ID_RE.search(sheet_url or "")
+    if not m:
+        raise ValueError("could not parse a Google Sheet id from the URL")
+    sheet_id = m.group(1)
+    gid_m = _SHEET_GID_RE.search(sheet_url or "")
+    try:
+        ss = sheets._gc.open_by_key(sheet_id)
+        ws = ss.get_worksheet_by_id(int(gid_m.group(1))) if gid_m else ss.get_worksheet(0)
+        records = ws.get_all_records()
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(
+            f"could not read the sheet ({type(exc).__name__}) — is it shared with "
+            "outlier-sheets-agent@outlier-campaign-agent.iam.gserviceaccount.com?"
+        ) from exc
+    if not records:
+        raise ValueError("the sheet has no data rows")
+
+    ids = _select_high_quality_ids(records)
+    log.info("sizing %s quality_sheet: %d rows → %d high-quality contributors",
+             analysis_id, len(records), len(ids))
+    if not ids:
+        raise ValueError("no high-quality contributors found in the sheet")
+    out = _mine_and_size(
+        analysis_id, ids, geos, "High-quality contributors ICP",
+        snowflake=snowflake, li_client=li_client, urn_res=urn_res,
+    )
+    return {"mode": "quality_sheet", "sheet_rows": len(records), "high_quality": len(ids), **out}
