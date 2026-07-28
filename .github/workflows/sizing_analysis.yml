@@ -51,6 +51,15 @@ jobs:
       - name: Install Doppler CLI
         uses: dopplerhq/cli-action@v4
 
+      # Without this, SheetsClient falls back to NullSheetsClient and the
+      # quality_sheet input mode cannot read the project lead's sheet at all
+      # (it also reads LINKEDIN_TOKEN out of the config Sheet). Same step as
+      # launch.yml / make_creatives.yml.
+      - name: Write Google credentials
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: doppler run -- bash -c 'echo "$GOOGLE_CREDENTIALS_JSON" > credentials.json'
+
       - name: Run sizing analysis
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}

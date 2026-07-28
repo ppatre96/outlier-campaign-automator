@@ -84,6 +84,23 @@ def test_enrich_without_sample_returns_readable_spec_from_rules():
     assert any("accounting" in r["description"] for r in icp.core_requirements)
 
 
+def test_quality_sheet_names_missing_credentials_not_sheet_sharing():
+    """A NullSheetsClient (no credentials.json) has no _gc. Reporting that as a
+    sharing problem sent a real CI failure investigation to the wrong place."""
+    import pytest
+
+    from src.sizing_analysis import _run_quality_sheet
+
+    class _NullSheets:  # mirrors NullSheetsClient: no _gc attribute
+        pass
+
+    with pytest.raises(ValueError, match="Google credentials are not configured"):
+        _run_quality_sheet(
+            "SZ-test", "https://docs.google.com/spreadsheets/d/abc123/edit", ["US"],
+            _NullSheets(), None, None, None,
+        )
+
+
 def test_to_requirements_coerces_loose_shapes():
     assert _to_requirements(None) == []
     assert _to_requirements("not a list") == []
