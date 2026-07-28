@@ -467,6 +467,20 @@ def upsert_cohort_targeting(
                   ramp_id, cohort_signature, platform, exc)
 
 
+# Sourcing-spec columns (016) — the readable "who to source, who not to" half
+# of the ICP. Additive ADD COLUMN IF NOT EXISTS so older DBs self-heal on the
+# first upsert, same as cohort_audience.forecast.
+_COHORT_ICP_SPEC_COLS = """
+ALTER TABLE cohort_icp
+    ADD COLUMN IF NOT EXISTS summary           TEXT,
+    ADD COLUMN IF NOT EXISTS location          TEXT,
+    ADD COLUMN IF NOT EXISTS core_requirements JSONB NOT NULL DEFAULT '[]'::jsonb,
+    ADD COLUMN IF NOT EXISTS strong_signals    JSONB NOT NULL DEFAULT '[]'::jsonb,
+    ADD COLUMN IF NOT EXISTS exclusions        JSONB NOT NULL DEFAULT '[]'::jsonb,
+    ADD COLUMN IF NOT EXISTS evidence          JSONB NOT NULL DEFAULT '{}'::jsonb
+"""
+
+
 def upsert_cohort_icp(
     *,
     ramp_id: str,
@@ -476,21 +490,29 @@ def upsert_cohort_icp(
 ) -> None:
     """Phase 6 — persist the LLM-enriched ICP for a (ramp × cohort).
 
-    `icp_dict` is the output of icp_enrichment.CohortIcp.to_dict().
+    `icp_dict` is the output of icp_enrichment.CohortIcp.to_dict() — including
+    the sourcing-spec block (summary / location / core_requirements /
+    strong_signals / exclusions / evidence) added 2026-07-28.
+
     Idempotent on (ramp_id, cohort_signature). Best-effort: swallows
     UIDecisionsUnavailable so enrichment outages don't block cohort
     selection.
     """
     try:
         with _connect() as conn, conn.cursor() as cur:
+            # Idempotent adds for the sourcing-spec columns (table predates them).
+            cur.execute(_COHORT_ICP_SPEC_COLS)
             cur.execute(
                 """
                 INSERT INTO cohort_icp (
                     ramp_id, cohort_id, cohort_signature,
                     cohort_description, top_motivations, content_prefs,
                     creative_liberty, language_pref, decision_drivers,
-                    skill_priorities, sample_size_n, model_version
-                ) VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s::jsonb, %s::jsonb, %s, %s)
+                    skill_priorities, sample_size_n, model_version,
+                    summary, location, core_requirements, strong_signals,
+                    exclusions, evidence
+                ) VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s::jsonb, %s::jsonb, %s, %s,
+                          %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb)
                 ON CONFLICT (ramp_id, cohort_signature) DO UPDATE SET
                     cohort_id          = EXCLUDED.cohort_id,
                     cohort_description = EXCLUDED.cohort_description,
@@ -502,6 +524,12 @@ def upsert_cohort_icp(
                     skill_priorities   = EXCLUDED.skill_priorities,
                     sample_size_n      = EXCLUDED.sample_size_n,
                     model_version      = EXCLUDED.model_version,
+                    summary            = EXCLUDED.summary,
+                    location           = EXCLUDED.location,
+                    core_requirements  = EXCLUDED.core_requirements,
+                    strong_signals     = EXCLUDED.strong_signals,
+                    exclusions         = EXCLUDED.exclusions,
+                    evidence           = EXCLUDED.evidence,
                     updated_at         = NOW()
                 """,
                 (
@@ -515,6 +543,12 @@ def upsert_cohort_icp(
                     json.dumps(icp_dict.get("skill_priorities", []) or []),
                     icp_dict.get("sample_size_n"),
                     icp_dict.get("model_version", ""),
+                    icp_dict.get("summary", ""),
+                    icp_dict.get("location", ""),
+                    json.dumps(icp_dict.get("core_requirements", []) or []),
+                    json.dumps(icp_dict.get("strong_signals", []) or []),
+                    json.dumps(icp_dict.get("exclusions", []) or []),
+                    json.dumps(icp_dict.get("evidence", {}) or {}),
                 ),
             )
             conn.commit()

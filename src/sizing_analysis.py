@@ -23,7 +23,6 @@ import logging
 import os
 import re
 import statistics
-from collections import Counter
 
 import config
 from src import ui_decisions
@@ -121,9 +120,16 @@ def build_cohorts_from_specs(specs: list[dict]) -> list:
     return cohorts
 
 
-def _size_and_persist(analysis_id: str, cohorts: list, geos: list[str], *, li_client, urn_res) -> int:
-    """Per-channel audience + heuristic ICP for each cohort, persisted under
-    ramp_id=analysis_id (mirrors the audience/ICP block in _resolve_cohorts)."""
+def _size_and_persist(
+    analysis_id: str, cohorts: list, geos: list[str], *, li_client, urn_res,
+    resume_sample: list[dict] | None = None, evidence: dict | None = None,
+) -> int:
+    """Per-channel audience + ICP for each cohort, persisted under
+    ramp_id=analysis_id (mirrors the audience/ICP block in _resolve_cohorts).
+
+    `resume_sample` / `evidence` come from the contributor mine (cb_ids and
+    quality_sheet paths). Passing them is what makes the ICP a grounded
+    sourcing spec instead of the canned no-sample heuristic."""
     from src.prep_audience import measure_audience_for_cohort
     from src.icp_enrichment import enrich as enrich_icp
     from src.ui_decisions import (
@@ -155,7 +161,10 @@ def _size_and_persist(analysis_id: str, cohorts: list, geos: list[str], *, li_cl
                 platform=ca.platform, facets=ca.facets,
             )
         try:
-            icp = enrich_icp(cohort, resume_sample=None, locale_hint=None)
+            icp = enrich_icp(
+                cohort, resume_sample=resume_sample, locale_hint=None,
+                evidence=evidence, geos=geos,
+            )
             upsert_cohort_icp(
                 ramp_id=analysis_id, cohort_id=cid, cohort_signature=cohort.name,
                 icp_dict=icp.to_dict(),
@@ -251,9 +260,11 @@ def _run_job_post(analysis_id, jd_text, geos, li_client, urn_res) -> dict:
 
 def _mine_and_size(analysis_id, user_ids, geos, label, *, snowflake, li_client, urn_res) -> dict:
     """Fetch resume features for a set of qualified contributors, mine the common
-    parameters (modal skills/titles/fields shared by ≥30% of them) into one
+    parameters (skills/titles/fields shared by ≥2 of them) into one
     cohort, and size it. Shared by the cb_ids and quality_sheet paths — with an
     explicit "these are the good CBs" set, the whole set IS the positive class."""
+    from src.icp_enrichment import resume_evidence
+
     ids = [u for u in dict.fromkeys(user_ids) if u]  # dedupe, preserve order
     if not ids:
         raise ValueError("no contributor ids to analyze")
@@ -262,31 +273,25 @@ def _mine_and_size(analysis_id, user_ids, geos, label, *, snowflake, li_client, 
     if n == 0:
         raise ValueError("no resume features found for the supplied contributor ids")
 
-    skill_c: Counter = Counter()
-    title_c: Counter = Counter()
-    field_c: Counter = Counter()
-    for _, r in df.iterrows():
-        for s in re.split(r"[;,/|]", str(r.get("resume_job_skills") or "")):
-            s = s.strip()
-            if s:
-                skill_c[s] += 1
-        t = str(r.get("resume_job_title") or "").strip()
-        if t:
-            title_c[t] += 1
-        f = str(r.get("resume_field") or "").strip()
-        if f:
-            field_c[f] += 1
+    rows = df.to_dict(orient="records")
+    # One frequency mine, two consumers: the cohort's targeting rules (below)
+    # and the ICP prompt (so every requirement it states is auditable as
+    # "shared by k of n"). See icp_enrichment.resume_evidence.
+    evidence = resume_evidence(rows)
 
     # "Common parameters" = the most-shared resume features. Require a feature to
     # be shared by ≥2 contributors (drop singletons) and take the top by
     # frequency — robust across diverse sets where no single feature hits a large
     # fraction.
     thresh = 2
+    def _common(bucket: str, take: int) -> list[str]:
+        return [name for name, count in (evidence.get(bucket) or []) if count >= thresh][:take]
+
     spec = {
         "label": label,
-        "required_skills": [s for s, c in skill_c.most_common(8) if c >= thresh][:5],
-        "job_titles": [t for t, c in title_c.most_common(5) if c >= thresh][:3],
-        "fields_of_study": [f for f, c in field_c.most_common(5) if c >= thresh][:3],
+        "required_skills": _common("top_skills", 5),
+        "job_titles": _common("top_titles", 3),
+        "fields_of_study": _common("top_fields", 3),
         "degrees": [],
         "geos": geos,
     }
@@ -297,7 +302,10 @@ def _mine_and_size(analysis_id, user_ids, geos, label, *, snowflake, li_client, 
             f"no resume feature is shared by ≥2 of {n} contributors — the set is "
             "too heterogeneous to derive a common ICP"
         )
-    written = _size_and_persist(analysis_id, cohorts, geos, li_client=li_client, urn_res=urn_res)
+    written = _size_and_persist(
+        analysis_id, cohorts, geos, li_client=li_client, urn_res=urn_res,
+        resume_sample=rows, evidence=evidence,
+    )
     return {"cohorts": written, "n_contributors": n}
 
 
