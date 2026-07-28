@@ -382,8 +382,19 @@ def _run_quality_sheet(analysis_id, sheet_url, geos, sheets, snowflake, li_clien
         raise ValueError("could not parse a Google Sheet id from the URL")
     sheet_id = m.group(1)
     gid_m = _SHEET_GID_RE.search(sheet_url or "")
+    # Distinguish "we have no Google client at all" from "the sheet isn't shared
+    # with us". SheetsClient degrades to NullSheetsClient (no _gc) when
+    # credentials.json is absent, and blaming that on sheet permissions sends
+    # the reader looking in entirely the wrong place.
+    gc = getattr(sheets, "_gc", None)
+    if gc is None:
+        raise ValueError(
+            "Google credentials are not configured, so the sheet cannot be read "
+            "(SheetsClient fell back to NullSheetsClient). In CI the 'Write Google "
+            "credentials' step must run before this; locally you need credentials.json."
+        )
     try:
-        ss = sheets._gc.open_by_key(sheet_id)
+        ss = gc.open_by_key(sheet_id)
         ws = ss.get_worksheet_by_id(int(gid_m.group(1))) if gid_m else ss.get_worksheet(0)
         records = ws.get_all_records()
     except Exception as exc:  # noqa: BLE001
