@@ -324,10 +324,41 @@ _SHEET_ID_RE = re.compile(r"/spreadsheets/d/([A-Za-z0-9_-]+)")
 _SHEET_GID_RE = re.compile(r"[#&?]gid=(\d+)")
 
 # Quality columns M–S of the contributor quality sheet: higher = better for the
-# POS metrics, higher = worse for the NEG metrics. total_tasks is a volume gate.
+# POS metrics, higher = worse for the NEG metrics. Only used by the FALLBACK
+# path (a sheet with no quality_tier column) — see _select_high_quality_ids.
 _QUALITY_POS = ["QMS", "PROMOTION_RATE", "WORKFORCES_MADE", "num_high_qual_tags"]
 _QUALITY_NEG = ["QUALITY_DISABLE_RATE", "FAILURE_RATE"]
 _QUALITY_MIN_TASKS = 20
+
+# ── Quality tiers, per the quality sheet's own "Rules" tab ────────────────────
+# The sheet's `quality_tier` column IS the authoritative label: it is computed
+# from Snowflake by the project lead's documented tier logic. Verified against
+# sheet 1SK3j… — recomputing the ADEL Strong rule (WORKFORCES_MADE>=2 OR
+# promotion_pct>33 OR (QMS>=4 AND total_tasks>15) OR (QMS>=3.5 AND
+# total_tasks>=100) OR (HQ_tag_pct>70 AND total_tasks>=5)) reproduces its 21
+# Strong labels exactly. So read the label; never re-derive it, and never gate on
+# a task count of our own invention — two of those five clauses qualify a CB at
+# ANY task count, so a flat volume gate drops CBs the rules call Strong.
+#
+# The Rules tab documents two label vocabularies (different leads), so match
+# whichever the sheet uses. Positives are listed best-first.
+_TIER_POSITIVES = {
+    "adel":   ["strong", "average"],
+    "jimena": ["very good", "good", "average"],
+}
+# Never mine these: no signal to judge on, or an explicit red flag. "Mixed
+# signal" is per the rules "needs human review", so it stays out too.
+_TIER_EXCLUDED = {
+    "weak", "not enough data", "low quality", "limited signal", "mixed signal",
+}
+# Walk down the tier ranking until the mine has at least this many resumes —
+# a frequency mine over ~20 CBs produces mostly 1-of-N singletons. The top tier
+# is always taken in full; lower tiers contribute only up to this target, in the
+# Rules tab's ranking order (HFC, then activity, then total_tasks desc).
+_ICP_MINE_TARGET = 30
+# Rules tab RANKING ORDER item 3: Active L30D > Online L30D > Online 30-60D >
+# Online >60D / none.
+_ACTIVITY_ORDER = ["active l30d", "online l30d", "online 30-60d", "online >60d"]
 
 
 def _num(v):
@@ -337,13 +368,67 @@ def _num(v):
         return None
 
 
+def _uid(r: dict) -> str:
+    return str(r.get("user_id") or r.get("CBID") or "").strip()
+
+
+def _rules_rank_key(r: dict) -> tuple:
+    """Rules tab RANKING ORDER within a tier: HFC first, then activity bucket,
+    then total_tasks descending."""
+    hfc = 0 if str(r.get("is_hfc", "")).strip().lower() in ("true", "yes", "1", "hfc") else 1
+    bucket = str(r.get("activity_bucket", "")).strip().lower()
+    act = _ACTIVITY_ORDER.index(bucket) if bucket in _ACTIVITY_ORDER else len(_ACTIVITY_ORDER)
+    return (hfc, act, -(_num(r.get("total_tasks")) or 0))
+
+
 def _select_high_quality_ids(records: list[dict]) -> list[str]:
-    """Pick the high-quality contributors from a quality sheet using the M–S
-    metric columns (NOT the quality_tier label): gate on task volume, then take
-    those with an above-median composite z-score. Falls back to quality_tier
-    'Strong' if the metric columns are too sparse to score."""
+    """Pick the contributors to mine the ICP from, using the sheet's own
+    `quality_tier` column and the Rules tab's ranking order.
+
+    Takes the whole top tier, then walks down the positive tiers (never into the
+    excluded ones) in ranking order until _ICP_MINE_TARGET resumes are in hand.
+    Falls back to the metric composite ONLY when the sheet has no usable
+    quality_tier column at all.
+    """
+    tiers = [str(r.get("quality_tier", "")).strip().lower() for r in records if _uid(r)]
+    # Match on the POSITIVE labels only. _TIER_EXCLUDED is shared across
+    # vocabularies, so counting it here made the first vocabulary win for every
+    # sheet that had any excluded row — and then select nothing, because its
+    # positive labels were absent.
+    hits = {name: sum(1 for t in tiers if t in positives)
+            for name, positives in _TIER_POSITIVES.items()}
+    vocab = max(hits, key=lambda k: hits[k]) if any(hits.values()) else None
+    if vocab is None:
+        log.warning("_select_high_quality_ids: no recognized quality_tier labels "
+                    "(saw %s) — falling back to the metric composite",
+                    sorted({t for t in tiers if t})[:6])
+        return _select_by_metric_composite(records)
+
+    picked: list[str] = []
+    for tier in _TIER_POSITIVES[vocab]:
+        rows = sorted((r for r in records if _uid(r)
+                       and str(r.get("quality_tier", "")).strip().lower() == tier),
+                      key=_rules_rank_key)
+        if not rows:
+            continue
+        if not picked:
+            take = rows  # top tier is taken in full, however small
+        elif len(picked) >= _ICP_MINE_TARGET:
+            break
+        else:
+            take = rows[: _ICP_MINE_TARGET - len(picked)]
+        log.info("_select_high_quality_ids: tier %r → %d of %d available",
+                 tier, len(take), len(rows))
+        picked += [_uid(r) for r in take]
+    return list(dict.fromkeys(picked))
+
+
+def _select_by_metric_composite(records: list[dict]) -> list[str]:
+    """Fallback for sheets with no quality_tier column: gate on task volume,
+    then take the above-median composite z-score over the M–S metric columns.
+    A proxy for the tier logic, so only used when the label is absent."""
     def uid(r):
-        return str(r.get("user_id") or r.get("CBID") or "").strip()
+        return _uid(r)
 
     eligible = [r for r in records if uid(r) and (_num(r.get("total_tasks")) or 0) >= _QUALITY_MIN_TASKS]
     if len(eligible) < 4:
