@@ -205,9 +205,11 @@ HARD rules:
   and a card is shown at 312x312, where that is unreadable. Count them.
 - One idea per card, and each card must advance the story from the previous.
 - Plain sentence case. No em dashes, no hashtags, no ALL CAPS, no emoji.
-- Never use these words: job, role, position, training, required, bonus,
-  compensation, interview, assign. Say: opportunity, task, project guidelines,
-  strongly encouraged, reward, payment, screening, match.
+- At most 6 words per headline. The overlay renders 2 lines; 7 words wraps to 3
+  and collides with the subject.
+- NEVER use any of these words (Outlier's banned vocabulary, checked in code and
+  rejected): {banned}. Say instead: opportunity, task, project guidelines,
+  strongly encouraged, reward, payment, screening, match, flexible hours.
 - Use the real rate when one is supplied. Never invent a number or a claim.
 - Card 4 is the ask. Keep it a concrete next step, not hype.
 """
@@ -228,8 +230,10 @@ def build_card_copy(
     saved.
     """
     plan = CARD_PLAN[:n_cards]
+    fallback = _fallback_cards(copy_variant, plan, advertised_rate)
     try:
         from src.claude_client import call_claude
+        from src.copy_design_qc import _BANNED_VOCABULARY
 
         rate = advertised_rate or copy_variant.get("advertised_rate", "") or ""
         user_msg = (
@@ -246,19 +250,34 @@ def build_card_copy(
         )
         raw = call_claude(
             messages=[{"role": "user", "content": user_msg}],
-            system=_CARD_COPY_SYSTEM,
+            # replace, NOT .format — this prompt contains literal JSON braces
+            # ({"cards": [...]}) and .format() raises KeyError on them, which
+            # silently forced every card set onto the fallback.
+            system=_CARD_COPY_SYSTEM.replace("{banned}", ", ".join(_BANNED_VOCABULARY[:24])),
             cache_system=True,
             max_tokens=600,
         )
         cards = _parse_cards(raw, len(plan))
         if cards:
-            return [_fit_headline(c) for c in cards]
+            out = []
+            for i, c in enumerate(_fit_headline(c) for c in cards):
+                bad = _banned_violations(c)
+                if bad:
+                    # Substitute rather than ship it: the copy checks downstream
+                    # do not gate the carousel (regen cannot fix copy), so a
+                    # banned word here would reach a live ad.
+                    log.warning("build_card_copy: card %d rejected (%s) — using fallback",
+                                i + 1, "; ".join(bad)[:160])
+                    out.append(fallback[i] if i < len(fallback) else "")
+                else:
+                    out.append(c)
+            return [o for o in out if o]
         log.warning("build_card_copy: could not parse LLM cards — using fallback. Raw: %s",
                     (raw or "")[:200])
     except Exception as exc:  # noqa: BLE001
         log.warning("build_card_copy: LLM call failed (%s) — using fallback", exc)
 
-    return _fallback_cards(copy_variant, plan, advertised_rate)
+    return fallback
 
 
 def _parse_cards(raw: str, want: int) -> list[str]:
@@ -286,15 +305,35 @@ def _first_json_object(s: str) -> str:
 
 
 def _fit_headline(text: str) -> str:
-    """Trim to the 40-char target on a word boundary — a truncated word reads as
-    a bug, and 40 keeps the overlay to two lines at 312x312 display size."""
+    """Trim to the overlay's budget: 40 chars AND 6 words.
+
+    Chars alone weren't enough — "Apply and get matched to a project" is 34 chars
+    but 7 words, and the compositor wrapped it to 3 lines, which then collided
+    with the subject and burned three QC regens on a live run.
+    """
+    from src.copy_design_qc import HEADLINE_MAX_WORDS
+
     t = re.sub(r"\s+", " ", (text or "")).strip().rstrip(".")
-    if len(t) <= CARD_HEADLINE_TARGET:
-        return t
-    cut = t[:CARD_HEADLINE_TARGET]
-    if " " in cut:
-        cut = cut[: cut.rindex(" ")]
-    return _drop_dangling_word(cut.rstrip(" ,;:—-"))
+    words = t.split()
+    if len(words) > HEADLINE_MAX_WORDS:
+        t = " ".join(words[:HEADLINE_MAX_WORDS])
+    if len(t) > CARD_HEADLINE_TARGET:
+        t = t[:CARD_HEADLINE_TARGET]
+        if " " in t:
+            t = t[: t.rindex(" ")]
+    return _drop_dangling_word(t.rstrip(" ,;:—-"))
+
+
+def _banned_violations(text: str) -> list[str]:
+    """Outlier's banned-vocabulary scan, from the ONE canonical list in
+    copy_design_qc — a hand-copied subset in the prompt above is what let
+    "Earn $40/hr, work when you want" reach a live campaign."""
+    try:
+        from src.copy_design_qc import scan_brand_voice
+
+        return scan_brand_voice(text, "headline")
+    except Exception:  # noqa: BLE001 — never block card copy on the scanner
+        return []
 
 
 # Words that read as broken when truncation leaves them at the end
@@ -317,10 +356,12 @@ def _fallback_cards(copy_variant: dict, plan: list[dict], advertised_rate: str) 
     """Deterministic narrative from the copy fields we already have."""
     rate = advertised_rate or copy_variant.get("advertised_rate", "") or ""
     seeds = {
-        "headline":        copy_variant.get("headline", "") or "Put your expertise to work on AI",
+        "headline":        copy_variant.get("headline", "") or "Your expertise, applied to AI",
         "subheadline":     copy_variant.get("subheadline", "") or copy_variant.get("ad_description", "")
                            or "Review and improve AI answers in your field",
-        "advertised_rate": (f"{rate}, on your own schedule" if rate
+        # NB: "schedule" and "work" are both banned vocabulary — keep this
+        # fallback clean, it is what ships when the LLM is unavailable.
+        "advertised_rate": (f"Earn {rate}, flexible hours" if rate
                             else "Flexible hours, paid per task"),
         "cta":             "See if you qualify",
     }
