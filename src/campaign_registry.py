@@ -476,11 +476,20 @@ def log_campaign(
         "urn:li:sponsoredCampaign:42",
         "urn:li:sponsoredCreative:99",
     }
-    if smart_ramp_id in _BANNED_RAMP_IDS:
+    # Pattern guard, added 2026-07-30 after a local carousel harness wrote 3
+    # "GMR-TEST" rows into the production registry + the team's Sheet. The
+    # exact-match set above didn't catch it, and `sheets=None` was no defence
+    # because log_campaign holds its OWN module-global SheetsClient. Real ramp
+    # ids are GMR-<digits>, so anything announcing itself as a test isn't one.
+    _TEST_MARKERS = ("test", "dummy", "fake", "sample", "example", "foobar")
+    _rid = (smart_ramp_id or "").strip().lower()
+    if smart_ramp_id in _BANNED_RAMP_IDS or any(m in _rid for m in _TEST_MARKERS):
         raise ValueError(
             f"log_campaign refusing to write: smart_ramp_id={smart_ramp_id!r} "
-            f"is a known test-fixture value (see feedback_campaign_registry_singleton_leak "
-            "in memory). If this is a real call, use a real GMR-XXXX id."
+            f"looks like a test fixture (see feedback_campaign_registry_singleton_leak "
+            "in memory). If this is a real call, use a real GMR-XXXX id; if it's a "
+            "harness, stub src.campaign_registry.log_campaign — passing sheets=None "
+            "does NOT stop the write, log_campaign has its own SheetsClient."
         )
     _suspect_urn = linkedin_campaign_urn or creative_urn or platform_campaign_id
     if _suspect_urn in _BANNED_URNS:
