@@ -230,7 +230,16 @@ DEFAULT_EXCLUDE_URNS_RAW: dict[str, list[str]] = {
 # The pipeline OWNS Google Search creation (Responsive Search Ads + keywords) —
 # `google_search` is on by default (2026-06-08); a console "google" launch fires
 # both Display + Search. (Do NOT also build Search by hand — that duplicates.)
-ENABLED_PLATFORMS    = os.getenv("ENABLED_PLATFORMS", "linkedin,meta,google,google_search")
+# `linkedin_carousel` is the LinkedIn Carousel Ads arm (2026-07-30): its own
+# campaign per (cohort × geo × angle) at format=CAROUSEL, each with a 4-card
+# narrative. Separate channel rather than a flag on `linkedin` because LinkedIn
+# fixes a campaign's format at creation, so carousel needs its own campaigns.
+ENABLED_PLATFORMS    = os.getenv("ENABLED_PLATFORMS", "linkedin,linkedin_carousel,meta,google,google_search")
+
+# Cards per carousel. LinkedIn allows 2-10; 4 is the narrative we write
+# (hook → tasks → payment and flexibility → how to start). Each card is one
+# Gemini photo, so this multiplies creative cost per (cohort × geo × angle).
+LINKEDIN_CAROUSEL_CARDS = max(2, min(10, int(os.getenv("LINKEDIN_CAROUSEL_CARDS", "4"))))
 
 # Per-channel manual launch (feature #3). When set (e.g. "linkedin"|"meta"|
 # "google") by the console's per-channel launch trigger, this run restricts to

@@ -78,6 +78,25 @@ LINKEDIN_CONSTRAINTS = PlatformConstraints(
 )
 
 
+# LinkedIn Carousel Ads — 2-10 cards, one shared 1:1 ratio, and a 45-char
+# headline PER CARD (the API's media.title). The per-card headline is why this
+# is a separate constraint set: LinkedIn single-image allows 70. Intro text
+# (the post commentary) maxes at 255 with 150 the safe length.
+# See src/linkedin_carousel for the full spec set and its sources.
+LINKEDIN_CAROUSEL_CONSTRAINTS = PlatformConstraints(
+    name="linkedin_carousel",
+    headline_max_chars=45,
+    description_max_chars=200,
+    primary_text_max_chars=255,
+    cta_max_chars=20,
+    image_aspects=((1, 1),),
+    headline_count=1,
+    description_count=1,
+    supports_inmail=False,
+    supports_special_ad_category=False,
+)
+
+
 META_CONSTRAINTS = PlatformConstraints(
     name="meta",
     headline_max_chars=40,
@@ -172,6 +191,7 @@ TIKTOK_CONSTRAINTS = PlatformConstraints(
 
 PLATFORM_CONSTRAINTS: dict[str, PlatformConstraints] = {
     "linkedin":      LINKEDIN_CONSTRAINTS,
+    "linkedin_carousel": LINKEDIN_CAROUSEL_CONSTRAINTS,
     "meta":          META_CONSTRAINTS,
     "google":        GOOGLE_CONSTRAINTS,
     "google_search": GOOGLE_SEARCH_CONSTRAINTS,
