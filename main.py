@@ -4461,7 +4461,10 @@ def _process_carousel_campaigns(
 
             cards: list = []
             card_failed = False
-            for slot, headline in enumerate(headlines, 1):
+            for slot, card_copy in enumerate(headlines, 1):
+                # overlay renders ON the image; caption is LinkedIn's media.title
+                # shown directly beneath it, so they must differ.
+                headline = card_copy.overlay
                 card_variant = card_photo_variant(variant, slot, headline)
                 png = _render_carousel_card(
                     card_variant, angle_label, aspect, combo=combo, slot=slot,
@@ -4470,7 +4473,7 @@ def _process_carousel_campaigns(
                     card_failed = True
                     break
                 cards.append(CarouselCard(
-                    png_path=png, headline=headline,
+                    png_path=png, headline=(card_copy.caption or headline),
                     landing_page=_card_utm(f"-card{slot}"),
                     # Alt text is an accessibility requirement, not decoration —
                     # screen readers get the card's own message.
@@ -4538,7 +4541,7 @@ def _process_carousel_campaigns(
                     platform_creative_id=(ad_result.creative_urn or "").rsplit(":", 1)[-1],
                     campaign_name=campaign_name,
                     cohort_geo=_cohort_geo_label(cohort, geo_group),
-                    headline=" | ".join(headlines),
+                    headline=" | ".join(c.overlay for c in headlines),
                     subheadline=variant.get("subheadline", ""),
                     photo_subject=variant.get("photo_subject", ""),
                     creative_image_path=str(cards[0].png_path) if cards else "",
