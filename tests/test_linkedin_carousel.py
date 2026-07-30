@@ -243,3 +243,20 @@ def test_card_photo_variant_keeps_the_profession_and_varies_the_frame():
     assert v1["headline"] == "Card one"
     assert v1["subheadline"] == "", "card images carry only their own headline"
     assert base["headline"] == "orig", "must not mutate the caller's variant"
+
+
+# ── Registry leak guard ──────────────────────────────────────────────────────
+
+def test_registry_refuses_obvious_test_ramp_ids():
+    """Regression: a local carousel harness wrote 3 "GMR-TEST" rows into the
+    production registry AND the team's Sheet. `sheets=None` was no defence —
+    log_campaign holds its own module-global SheetsClient."""
+    from src.campaign_registry import log_campaign
+
+    for rid in ("GMR-TEST", "gmr-test", "my-dummy-ramp", "SAMPLE-1", "flow"):
+        with pytest.raises(ValueError, match="test fixture|test-fixture"):
+            log_campaign(
+                smart_ramp_id=rid, cohort_id="c", cohort_signature="s",
+                geo_cluster="anglo", geo_cluster_label="US", geos=["US"],
+                angle="A", campaign_type="carousel", advertised_rate="$40/hr",
+            )
