@@ -4581,10 +4581,19 @@ def _render_carousel_card(card_variant: dict, angle_label: str, aspect, *, combo
                   combo, slot, "; ".join(violations))
         return None
 
-    def _render():
-        bg = generate_imagen_photo(card_variant, aspect=aspect)
+    # After half the attempts, drop this slot's framing hint and fall back to the
+    # angle's plain photo_subject — the exact prompt the static arm ships every
+    # run, so it reliably clears QC. Losing one card's distinct framing is far
+    # better than losing the whole carousel, which is what happened on a live run
+    # when slot 2's hint kept producing text baked into the photo.
+    plain_variant = dict(card_variant)
+    plain_variant["photo_subject"] = (card_variant.get("photo_subject") or "").split(",")[0].strip()
+
+    def _render(use_plain: bool = False):
+        v = plain_variant if (use_plain and plain_variant["photo_subject"]) else card_variant
+        bg = generate_imagen_photo(v, aspect=aspect)
         return compose_ad_for_platform(
-            bg_image=bg, copy_variant=card_variant,
+            bg_image=bg, copy_variant=v,
             platform="linkedin_carousel", angle=angle_label, aspect=aspect,
         )
 
@@ -4627,9 +4636,13 @@ def _render_carousel_card(card_variant: dict, angle_label: str, aspect, *, combo
         log.warning("_process_carousel_campaigns: %s card %d QC FAIL (attempt %d/%d): %s",
                     combo, slot, attempt + 1, max_qc, "; ".join(critical)[:300])
         if attempt < max_qc - 1:
-            png = _render()
-    log.error("_process_carousel_campaigns: %s card %d still failing QC after %d attempts",
-              combo, slot, max_qc)
+            _plain = attempt + 1 >= max(1, max_qc // 2)
+            if _plain:
+                log.info("_process_carousel_campaigns: %s card %d — dropping the slot framing "
+                         "hint, retrying on the plain angle subject", combo, slot)
+            png = _render(use_plain=_plain)
+    log.error("_process_carousel_campaigns: %s card %d still failing QC after %d attempts "
+              "(including plain-subject fallbacks)", combo, slot, max_qc)
     return None
 
 

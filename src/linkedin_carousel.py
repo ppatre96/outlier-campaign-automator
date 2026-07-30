@@ -372,11 +372,18 @@ def _fallback_cards(copy_variant: dict, plan: list[dict], advertised_rate: str) 
 
 # Per-slot photo direction, so four cards in one carousel don't look like the
 # same frame four times. Appended to the angle's own photo_subject.
+# Rules learned from a live run where card 2 failed QC five times and the whole
+# carousel was (correctly) skipped:
+#   - never describe screen CONTENT ("reviewing text on screen") — Gemini renders
+#     literal text, and QC bans any text baked into the photo. It also invented
+#     lettering on a lapel pin when pushed toward detail.
+#   - keep the subject centred with clear headroom; the headline overlays the top
+#     of the card, and QC fails when hair touches the text box.
 _CARD_PHOTO_HINT = {
-    1: "a confident head-and-shoulders portrait at their workplace, looking at camera",
-    2: "the same kind of professional working at a laptop, reviewing text on screen, side angle",
-    3: "relaxed at a home desk with a laptop, natural window light, working comfortably",
-    4: "closing the laptop or stepping away, calm and satisfied, wider framing",
+    1: "a confident head-and-shoulders portrait at their workplace, centred, looking at camera, clear space above the head",
+    2: "seated at a desk with a closed notebook and pen, hands resting on the desk, centred, clear space above the head",
+    3: "relaxed at a home desk in natural window light, centred, clear space above the head",
+    4: "standing by a window with a calm, satisfied expression, wider framing, centred, clear space above the head",
 }
 
 
