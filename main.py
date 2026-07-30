@@ -4440,15 +4440,24 @@ def _process_carousel_campaigns(
                 ramp_id=ramp_id,
                 cohort_id=cohort_id_override or getattr(cohort, "id", None) or "",
             )
-            utm_url = build_utm_url(
-                base_url=base_lp, platform="linkedin",
-                campaign_name=campaign_name,
-                pod=(naming_meta or {}).get("pod"),
-                domain=(naming_meta or {}).get("domain"),
-                locale=(naming_meta or {}).get("locale"),
-                language=((naming_meta or {}).get("campaign_state") or {}).get("linkedin", {}).get("liAdLanguage") or "EN",
-                utm_content=f"{cohort._stg_id}-carousel-{angle_label}",
-            ) if base_lp else (destination_url_override or config.LINKEDIN_DESTINATION or "")
+            # Per-card UTMs. LinkedIn gives every card its own landing page, so
+            # stamping one utm_content across all four would make the cards
+            # indistinguishable in attribution — we could see the carousel
+            # working but never which card in the story earned the click.
+            def _card_utm(suffix: str) -> str:
+                if not base_lp:
+                    return destination_url_override or config.LINKEDIN_DESTINATION or ""
+                return build_utm_url(
+                    base_url=base_lp, platform="linkedin",
+                    campaign_name=campaign_name,
+                    pod=(naming_meta or {}).get("pod"),
+                    domain=(naming_meta or {}).get("domain"),
+                    locale=(naming_meta or {}).get("locale"),
+                    language=((naming_meta or {}).get("campaign_state") or {}).get("linkedin", {}).get("liAdLanguage") or "EN",
+                    utm_content=f"{cohort._stg_id}-carousel-{angle_label}{suffix}",
+                )
+
+            utm_url = _card_utm("")   # post-level fallback destination
 
             cards: list = []
             card_failed = False
@@ -4462,7 +4471,7 @@ def _process_carousel_campaigns(
                     break
                 cards.append(CarouselCard(
                     png_path=png, headline=headline,
-                    landing_page=utm_url,
+                    landing_page=_card_utm(f"-card{slot}"),
                     # Alt text is an accessibility requirement, not decoration —
                     # screen readers get the card's own message.
                     alt_text=f"Outlier opportunity for {getattr(cohort, 'name', 'professionals')}: {headline}",

@@ -260,3 +260,39 @@ def test_registry_refuses_obvious_test_ramp_ids():
                 geo_cluster="anglo", geo_cluster_label="US", geos=["US"],
                 angle="A", campaign_type="carousel", advertised_rate="$40/hr",
             )
+
+
+# ── Brand voice + overlay budget (both caught on a live run) ──────────────────
+
+def test_headline_respects_the_overlay_word_cap():
+    """34 chars but 7 words: the compositor wrapped it to 3 lines, which
+    collided with the subject and burned 3 QC regens live."""
+    from src.linkedin_carousel import _fit_headline
+
+    out = _fit_headline("Apply and get matched to a project")
+    assert len(out.split()) <= 6, out
+
+
+def test_banned_vocabulary_is_substituted_not_shipped(monkeypatch):
+    """"Earn $40/hr, work when you want" reached a live carousel — 'work' is on
+    Outlier's banned list, and the downstream copy checks don't gate carousels."""
+    monkeypatch.setattr(
+        "src.claude_client.call_claude",
+        lambda **kw: '{"cards": ["Earn $40/hr, work when you want", "Clean two",'
+                     ' "Clean three", "Clean four"]}',
+    )
+    cards = build_card_copy({"headline": "Fallback one", "subheadline": "Fallback two"},
+                            n_cards=4, advertised_rate="$40/hr")
+    assert "work" not in " ".join(cards).lower()
+    assert len(cards) == 4
+
+
+def test_deterministic_fallback_is_brand_clean():
+    """The fallback ships when the LLM is down, so it must pass the same scan.
+    The first version used "on your own schedule" — 'schedule' is banned."""
+    from src.linkedin_carousel import CARD_PLAN, _banned_violations, _fallback_cards
+
+    cards = _fallback_cards({"headline": "Tax pros shaping AI",
+                             "subheadline": "Review model answers"}, CARD_PLAN, "$40/hr")
+    for c in cards:
+        assert not _banned_violations(c), c
