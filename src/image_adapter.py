@@ -71,6 +71,9 @@ _PRIMARY_ASPECT: dict[str, tuple[int, int]] = {
     "ig":       (4, 5),      # IG Feed 1080×1350 (Drive-folder alias of meta)
     "tiktok":   (9, 16),     # TikTok in-feed / Carousel slide 1080×1920
     "reddit":   (1, 1),      # Reddit feed promoted image 1200×1200 (new channel 2026-06-11)
+    # LinkedIn carousel cards MUST all share one ratio; 1:1 is LinkedIn's
+    # recommendation (1080×1080, displayed at 312×312). See src/linkedin_carousel.
+    "linkedin_carousel": (1, 1),
 }
 
 # Pixel dimensions for each aspect — sized for sharpness on the platform's

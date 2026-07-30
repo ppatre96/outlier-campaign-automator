@@ -4324,6 +4324,322 @@ def _process_static_campaigns(
     }
 
 
+def _process_carousel_campaigns(
+    *,
+    campaign_specs: list[dict],
+    li_client,
+    urn_res,
+    sheets,
+    ramp_id: str | None = None,
+    cohort_id_override: str | None = None,
+    destination_url_override: str | None = None,
+    naming_meta: dict | None = None,
+    daily_budget_cents: int | None = None,
+    family_exclude_pairs: list | None = None,
+    data_driven_exclude_pairs: list | None = None,
+) -> dict:
+    """LinkedIn Carousel arm — one CAROUSEL campaign per (cohort × geo × angle),
+    each carrying a `config.LINKEDIN_CAROUSEL_CARDS`-card narrative.
+
+    Why its own campaign per angle rather than 3 creatives on one campaign like
+    the static arm: LinkedIn fixes `format` at campaign creation and a carousel
+    creative can only attach to a CAROUSEL campaign, so carousel can't share the
+    static campaigns. One campaign per angle then keeps each 4-card story
+    independently reportable, which is the point of testing three of them.
+
+    Reuses the static arm's (cohort × geo × angle) plan for cohorts, geos and
+    copy, but generates its OWN card photos: cards are 1:1 and each card needs a
+    distinct frame, so the static 1:1 PNG can't be reused as-is.
+
+    Per (cohort × geo × angle) failures are isolated. See src/linkedin_carousel
+    for the specs every card is validated against before upload.
+    """
+    from src.campaign_registry import log_campaign as _reg_log
+    from src.gemini_creative import generate_imagen_photo
+    from src.image_adapter import compose_ad_for_platform, primary_aspect
+    from src.linkedin_carousel import (
+        CAMPAIGN_FORMAT, CarouselCard, CarouselSpecError,
+        build_card_copy, card_photo_variant,
+    )
+    from src.linkedin_targeting_guard import linkedin_targeting_collapsed
+    from src.utm_builder import build_utm_url, resolve_base_lp_url
+
+    out: dict = {"campaigns": [], "campaigns_by_cohort": {}, "creative_paths": {}}
+    if not campaign_specs:
+        return out
+
+    n_cards = config.LINKEDIN_CAROUSEL_CARDS
+    aspect = primary_aspect("linkedin_carousel")
+    shared_exclude_urns = _merge_urn_dicts(
+        urn_res.resolve_default_excludes(),
+        urn_res.resolve_facet_pairs(
+            list(family_exclude_pairs or []) + list(data_driven_exclude_pairs or [])
+        ),
+    )
+
+    for spec in campaign_specs:
+        cohort = spec["cohort"]
+        geo_group = spec["geo_group"]
+        group_geos = spec.get("group_geos") or []
+        angle_label = spec.get("angle_label", "A")
+        angle_idx = spec.get("angle_idx", 0)
+        variants = spec.get("variants") or []
+        variant = variants[angle_idx] if angle_idx < len(variants) else {}
+        combo = f"cohort={getattr(cohort, 'name', '?')} geo={geo_group.cluster_label} angle={angle_label}"
+
+        try:
+            facet_urns = urn_res.resolve_cohort_rules(cohort.rules)
+            if group_geos:
+                facet_urns = _apply_geo_overrides(facet_urns, group_geos, urn_res)
+            facet_urns = _apply_generalist_language_skill(facet_urns, cohort)
+            # Same guard as the static arm: a collapsed facet set would buy the
+            # whole country. Never ship that as a carousel either.
+            if linkedin_targeting_collapsed(cohort, facet_urns):
+                log.warning("_process_carousel_campaigns: %s targeting collapsed to geo-only — skipped", combo)
+                continue
+
+            if naming_meta is not None:
+                from src.campaign_name import build_campaign_name
+                campaign_name = build_campaign_name(
+                    ramp_id=ramp_id or "",
+                    submitted_at=naming_meta.get("submitted_at", ""),
+                    cohort=cohort,
+                    geo_group=geo_group,
+                    platform="linkedin_carousel",
+                    campaign_type="carousel",
+                    pod=naming_meta.get("pod"),
+                    domain=naming_meta.get("domain"),
+                    locale=naming_meta.get("locale"),
+                    included_geos=naming_meta.get("included_geos"),
+                    campaign_state=naming_meta.get("campaign_state"),
+                )
+                campaign_name = f"{campaign_name} | {angle_label}"
+            else:
+                campaign_name = f"{cohort._stg_name} carousel {angle_label}"
+
+            cohort_exclude_urns = _subtract_urn_dicts(
+                _merge_urn_dicts(
+                    shared_exclude_urns,
+                    urn_res.resolve_facet_pairs(getattr(cohort, "exclude_add", []) or []),
+                ),
+                urn_res.resolve_facet_pairs(getattr(cohort, "exclude_remove", []) or []),
+            )
+
+            # ── Card copy + card photos ──────────────────────────────────────
+            headlines = build_card_copy(
+                variant, n_cards=n_cards,
+                advertised_rate=getattr(geo_group, "advertised_rate", "") or "",
+                cohort_label=getattr(cohort, "name", ""),
+            )
+            base_lp = resolve_base_lp_url(
+                campaign_state=(naming_meta or {}).get("campaign_state"),
+                platform="linkedin",
+                fallback=destination_url_override or config.LINKEDIN_DESTINATION,
+                matched_domain=(naming_meta or {}).get("domain"),
+                sheets_client=sheets,
+                ramp_id=ramp_id,
+                cohort_id=cohort_id_override or getattr(cohort, "id", None) or "",
+            )
+            utm_url = build_utm_url(
+                base_url=base_lp, platform="linkedin",
+                campaign_name=campaign_name,
+                pod=(naming_meta or {}).get("pod"),
+                domain=(naming_meta or {}).get("domain"),
+                locale=(naming_meta or {}).get("locale"),
+                language=((naming_meta or {}).get("campaign_state") or {}).get("linkedin", {}).get("liAdLanguage") or "EN",
+                utm_content=f"{cohort._stg_id}-carousel-{angle_label}",
+            ) if base_lp else (destination_url_override or config.LINKEDIN_DESTINATION or "")
+
+            cards: list = []
+            card_failed = False
+            for slot, headline in enumerate(headlines, 1):
+                card_variant = card_photo_variant(variant, slot, headline)
+                png = _render_carousel_card(
+                    card_variant, angle_label, aspect, combo=combo, slot=slot,
+                )
+                if png is None:
+                    card_failed = True
+                    break
+                cards.append(CarouselCard(
+                    png_path=png, headline=headline,
+                    landing_page=utm_url,
+                    # Alt text is an accessibility requirement, not decoration —
+                    # screen readers get the card's own message.
+                    alt_text=f"Outlier opportunity for {getattr(cohort, 'name', 'professionals')}: {headline}",
+                ))
+            if card_failed:
+                # Skip the WHOLE carousel, not just the bad card. The four cards
+                # are one argument read in order, and cards can't be edited after
+                # the ad is saved — a carousel missing its payment card would be
+                # permanent.
+                log.error("_process_carousel_campaigns: %s — a card could not be produced; "
+                          "skipping the whole carousel rather than shipping a broken story", combo)
+                continue
+            log.info("_process_carousel_campaigns: %s → %d cards rendered", combo, len(cards))
+
+            # ── Campaign (format=CAROUSEL, immutable after create) ───────────
+            _budget_kwargs = ({"daily_budget_cents": daily_budget_cents}
+                              if daily_budget_cents is not None else {})
+            campaign_urn = li_client.create_campaign(
+                name=campaign_name,
+                campaign_group_urn=_carousel_group_urn(li_client, ramp_id, group_geos),
+                facet_urns=facet_urns,
+                exclude_facet_urns=cohort_exclude_urns,
+                campaign_state=getattr(cohort, "campaign_state", None),
+                conversion_id=_linkedin_pod_conversion_id((naming_meta or {}).get("pod")),
+                ad_format=CAMPAIGN_FORMAT,
+                **_budget_kwargs,
+            )
+            out["campaigns"].append(campaign_urn)
+
+            for card in cards:
+                card.image_urn = li_client.upload_image(card.png_path)
+
+            ad_result = li_client.create_carousel_ad(
+                campaign_urn=campaign_urn,
+                cards=cards,
+                intro_text=variant.get("intro_text", "") or variant.get("subheadline", ""),
+                content_landing_page=utm_url,
+                ad_name=f"{campaign_name} | carousel",
+            )
+            if ad_result.status != "ok":
+                log.warning("_process_carousel_campaigns: %s creative not attached (%s): %s",
+                            combo, ad_result.status, ad_result.error_message)
+                continue
+
+            base_id = cohort_id_override or getattr(cohort, "id", None) or cohort._stg_id
+            out["campaigns_by_cohort"][f"{base_id}_{geo_group.campaign_suffix}_{angle_label}"] = campaign_urn
+            out["creative_paths"][f"{base_id}_{angle_label}"] = ad_result.creative_urn
+            log.info("_process_carousel_campaigns: %s → campaign %s creative %s",
+                     combo, campaign_urn, ad_result.creative_urn)
+
+            try:
+                _reg_log(
+                    smart_ramp_id=ramp_id or "",
+                    cohort_id=base_id,
+                    cohort_signature=getattr(cohort, "name", ""),
+                    geo_cluster=geo_group.cluster,
+                    geo_cluster_label=geo_group.cluster_label,
+                    geos=group_geos,
+                    angle=angle_label,
+                    campaign_type="carousel",
+                    advertised_rate=getattr(geo_group, "advertised_rate", "") or "",
+                    platform="linkedin_carousel",
+                    platform_campaign_id=campaign_urn.rsplit(":", 1)[-1],
+                    platform_creative_id=(ad_result.creative_urn or "").rsplit(":", 1)[-1],
+                    campaign_name=campaign_name,
+                    cohort_geo=_cohort_geo_label(cohort, geo_group),
+                    headline=" | ".join(headlines),
+                    subheadline=variant.get("subheadline", ""),
+                    photo_subject=variant.get("photo_subject", ""),
+                    creative_image_path=str(cards[0].png_path) if cards else "",
+                    utm_campaign=campaign_name,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("_process_carousel_campaigns: registry log failed for %s: %s", combo, exc)
+
+        except CarouselSpecError as exc:
+            # Fail-closed spec violation — the cards were never uploaded. Loud,
+            # because cards can't be edited after an ad is saved.
+            log.error("_process_carousel_campaigns: %s FAILED LinkedIn carousel specs — "
+                      "no ad created: %s", combo, exc)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("_process_carousel_campaigns: %s failed — other combos preserved: %s",
+                          combo, exc)
+    return out
+
+
+def _render_carousel_card(card_variant: dict, angle_label: str, aspect, *, combo: str, slot: int):
+    """Render one carousel card, or None if it can't be shipped.
+
+    Carousel cards are freshly generated images, so they get the same treatment
+    the extra-platform arms give their regenerated photos:
+      1. check_overlay_renderable — fail-closed font guard. Shipping tofu boxes
+         is worse than shipping no ad, and a card can't be fixed after saving.
+      2. qc_creative with regeneration retries (behind EXTRA_ARM_VISION_QC),
+         which catches baked-in text, overlay overflow and rendered boxes.
+    """
+    from pathlib import Path as _Path
+
+    from src.copy_design_qc import check_overlay_renderable
+    from src.gemini_creative import generate_imagen_photo
+    from src.image_adapter import compose_ad_for_platform
+
+    ok, violations = check_overlay_renderable(card_variant)
+    if not ok:
+        log.error("_process_carousel_campaigns: %s card %d — no font for the localized "
+                  "headline; refusing to ship tofu. Install the script font. %s",
+                  combo, slot, "; ".join(violations))
+        return None
+
+    def _render():
+        bg = generate_imagen_photo(card_variant, aspect=aspect)
+        return compose_ad_for_platform(
+            bg_image=bg, copy_variant=card_variant,
+            platform="linkedin_carousel", angle=angle_label, aspect=aspect,
+        )
+
+    png = _render()
+    if not getattr(config, "EXTRA_ARM_VISION_QC", False):
+        return png
+
+    from src.copy_design_qc import qc_creative
+
+    max_qc = max(1, int(os.getenv("QC_MAX_RETRIES", "5")))
+    for attempt in range(max_qc):
+        if not png or not _Path(str(png)).exists():
+            return None
+        try:
+            report = qc_creative(
+                creative_path=png, reference_path=None,
+                headline=card_variant.get("headline", ""),
+                subheadline="",           # cards carry only their headline
+                attempt_index=attempt,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("_process_carousel_campaigns: %s card %d QC errored (%s) — "
+                        "shipping the card rather than dropping the carousel over QC "
+                        "infrastructure", combo, slot, exc)
+            return png
+        # Gate on IMAGE-side defects only, exactly as the extra-platform arms do.
+        # Copy-length notes come from the single-image overlay rules (40 chars /
+        # 6 words); carousel's own limit is 45 and build_card_copy already
+        # enforces it, and regenerating a photo can never fix copy anyway — so
+        # gating on those would burn every retry and drop every carousel.
+        if getattr(report, "copy_violations", None):
+            log.warning("_process_carousel_campaigns: %s card %d QC copy notes (not gated): %s",
+                        combo, slot, report.copy_violations)
+        critical = [v for v in (getattr(report, "violations", []) or [])
+                    if any(k in v.lower() for k in (
+                        "rendered text", "text in photo", "tofu", "legible", "logo",
+                        "subject", "overlap", "contrast", "photo fills"))]
+        if not critical:
+            return png
+        log.warning("_process_carousel_campaigns: %s card %d QC FAIL (attempt %d/%d): %s",
+                    combo, slot, attempt + 1, max_qc, "; ".join(critical)[:300])
+        if attempt < max_qc - 1:
+            png = _render()
+    log.error("_process_carousel_campaigns: %s card %d still failing QC after %d attempts",
+              combo, slot, max_qc)
+    return None
+
+
+# One carousel campaign group per RAMP, created lazily on that ramp's first
+# campaign. Keyed by ramp_id, not a bare singleton: one process launches several
+# ramps, and an unkeyed cache would file ramp B's carousels under ramp A's group.
+_CAROUSEL_GROUP_CACHE: dict[str, str] = {}
+
+
+def _carousel_group_urn(li_client, ramp_id: str | None, geos: list[str] | None) -> str:
+    """Campaign group for this ramp's carousel arm, created once per ramp."""
+    key = ramp_id or "agent"
+    urn = _CAROUSEL_GROUP_CACHE.get(key)
+    if not urn:
+        urn = li_client.create_campaign_group(f"{key} carousel", geos=list(geos or []))
+        _CAROUSEL_GROUP_CACHE[key] = urn
+    return urn
+
+
 def _process_extra_platform_arm(
     *,
     platform: str,
@@ -6221,7 +6537,11 @@ def _process_row_both_modes(
     extra_platform_results: dict[str, dict] = {}
     if "static" in modes and not dry_run:
         from src.ad_platform import enabled_platforms
-        platforms = [p for p in enabled_platforms() if p != "linkedin"]
+        # linkedin_carousel is handled by its own arm below — it uses li_client
+        # and needs a CAROUSEL-format campaign, so it has no AdPlatformClient
+        # and must not enter the generic extras fan-out.
+        platforms = [p for p in enabled_platforms()
+                     if p not in ("linkedin", "linkedin_carousel")]
         # Phase 2 — `channels` decision-row override filters the extras list.
         if channels is not None:
             allowed_extras = {c for c in channels if c != "linkedin"}
@@ -6266,6 +6586,37 @@ def _process_row_both_modes(
                         "_process_row_both_modes: %s arm aborted — other arms preserved",
                         platform_name,
                     )
+
+    # ── LinkedIn Carousel arm ────────────────────────────────────────────────
+    # Separate from the extras fan-out: carousel needs li_client and a
+    # CAROUSEL-format campaign of its own (LinkedIn fixes format at creation).
+    if "static" in modes and not dry_run:
+        from src.ad_platform import enabled_platforms
+        _carousel_on = "linkedin_carousel" in enabled_platforms() and (
+            channels is None or "linkedin_carousel" in channels
+        )
+        _specs = (static_result or {}).get("campaign_specs") or []
+        if _carousel_on and _specs:
+            try:
+                extra_platform_results["linkedin_carousel"] = _process_carousel_campaigns(
+                    campaign_specs=_specs,
+                    li_client=li_client,
+                    urn_res=urn_res,
+                    sheets=sheets,
+                    ramp_id=ramp_id,
+                    cohort_id_override=cohort_id_override,
+                    destination_url_override=destination_url_override,
+                    naming_meta=naming_meta,
+                    daily_budget_cents=(budgets or {}).get("linkedin_carousel"),
+                    family_exclude_pairs=resolved.family_exclude_pairs,
+                    data_driven_exclude_pairs=resolved.data_driven_exclude_pairs,
+                )
+            except Exception:
+                log.exception(
+                    "_process_row_both_modes: carousel arm aborted — other arms preserved"
+                )
+        elif _specs and not _carousel_on:
+            log.info("_process_row_both_modes: linkedin_carousel not enabled for this run")
 
     # Aggregate the per-cohort view.
     per_cohort = []

@@ -725,10 +725,19 @@ class LinkedInClient(AdPlatformClient):
         exclude_facet_urns: dict[str, list[str]] | None = None,
         campaign_state: dict | None = None,
         conversion_id: int | None = None,
+        ad_format: str | None = None,
     ) -> str:
         """
         Create a Sponsored Content campaign with the given targeting.
         Returns the campaign URN. Name auto-prefixed with "agent_".
+
+        `ad_format` sets the campaign-level `format` (e.g. "CAROUSEL"). LinkedIn
+        cannot change a campaign's format after creation — carousel, video and
+        dynamic campaigns MUST declare it here or the creative attach fails.
+        Omitted → LinkedIn defaults to the single-image Sponsored Update, which
+        is what every existing caller expects. WEBSITE_CONVERSION (our objective
+        below) is valid with CAROUSEL and requires conversion tracking, which
+        this method already attaches.
 
         `conversion_id` overrides the conversion attached for optimization. When
         None, the configured default (`LINKEDIN_CONVERSION_ID`) is attached.
@@ -772,6 +781,8 @@ class LinkedInClient(AdPlatformClient):
             "politicalIntent":        "NOT_POLITICAL",
             "runSchedule":            {"start": _now_ms()},
         }
+        if ad_format:
+            payload["format"] = ad_format
         resp = self._req("POST", self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/adCampaigns"), json=payload)
         self._raise_for_status(resp, "createCampaign")
         campaign_id = resp.headers.get("x-linkedin-id") or _id_from_location(resp)
@@ -1091,6 +1102,161 @@ class LinkedInClient(AdPlatformClient):
                 error_class=type(exc).__name__,
                 error_message=msg,
             )
+
+    def create_carousel_ad(
+        self,
+        campaign_urn: str,
+        cards: list,
+        intro_text: str,
+        *,
+        content_landing_page: str | None = None,
+        ad_name: str = "",
+    ) -> ImageAdResult:
+        """
+        Create a Carousel Ad creative and attach it to a campaign.
+
+        `cards` is a list of src.linkedin_carousel.CarouselCard with `image_urn`
+        already populated (upload each PNG via upload_image first). The parent
+        campaign MUST have been created with ad_format="CAROUSEL" — LinkedIn
+        can't change a campaign's format later, and attaching a carousel post to
+        a single-image campaign fails.
+
+        Same result contract as create_image_ad: never raises for the
+        LINKEDIN_ORG_ID / DSC-403 cases (returns status="local_fallback" so the
+        caller can keep the PNGs and continue).
+        """
+        from src.linkedin_carousel import validate_cards
+
+        try:
+            # Fail closed before the post exists: carousel cards cannot be
+            # edited once an ad is saved, so a bad card costs a delete-and-
+            # rebuild rather than an edit.
+            validate_cards(cards)
+            urn = self._create_carousel_ad_impl(
+                campaign_urn=campaign_urn,
+                cards=cards,
+                intro_text=intro_text,
+                content_landing_page=content_landing_page,
+                ad_name=ad_name,
+            )
+            return ImageAdResult(creative_urn=urn, status="ok")
+        except RuntimeError as exc:
+            msg = str(exc)
+            if "LINKEDIN_ORG_ID" in msg or "LINKEDIN_MEMBER_URN" in msg:
+                return ImageAdResult(status="local_fallback", error_class="RuntimeError",
+                                     error_message=msg)
+            return ImageAdResult(status="error", error_class="RuntimeError", error_message=msg)
+        except Exception as exc:
+            msg = str(exc)
+            if "403" in msg or "FORBIDDEN" in msg.upper():
+                return ImageAdResult(status="local_fallback", error_class=type(exc).__name__,
+                                     error_message=msg)
+            return ImageAdResult(status="error", error_class=type(exc).__name__,
+                                 error_message=msg)
+
+    def _create_carousel_ad_impl(
+        self,
+        campaign_urn: str,
+        cards: list,
+        intro_text: str,
+        content_landing_page: str | None = None,
+        ad_name: str = "",
+    ) -> str:
+        """
+        Inner raise-based carousel implementation. Returns the adCreative URN.
+
+        Flow is the DSC one the single-image arm uses (see
+        _create_image_ad_impl for the full 403 history), differing only in the
+        post body:
+          content.carousel.cards[] = [{media:{id,title,altText}, landingPage}]
+        instead of content.article. `contentLandingPage` is the post-level
+        fallback destination for taps outside a card.
+
+        Per LinkedIn: "Carousel posts must be sponsored and are not intended to
+        be a regular post" — hence feedDistribution NONE + adContext, same as
+        our single-image dark posts.
+        """
+        from src.linkedin_carousel import clamp_intro_text
+
+        if not config.LINKEDIN_ORG_ID:
+            raise RuntimeError(
+                "LINKEDIN_ORG_ID is not set. DSC carousel posts must use an "
+                "organization URN as author — set LINKEDIN_ORG_ID in Doppler to "
+                "the Outlier company page numeric ID."
+            )
+        org_urn = f"urn:li:organization:{config.LINKEDIN_ORG_ID}"
+        dest = content_landing_page or config.LINKEDIN_DESTINATION
+
+        api_cards = [c.as_api_card() for c in cards]
+        missing = [i for i, c in enumerate(api_cards, 1) if not c["media"].get("id")]
+        if missing:
+            raise RuntimeError(
+                f"carousel cards {missing} have no image URN — upload each card "
+                "PNG via upload_image before creating the ad"
+            )
+
+        post_payload = {
+            "author":         org_urn,
+            "commentary":     clamp_intro_text(intro_text),
+            "visibility":     "PUBLIC",
+            "lifecycleState": "PUBLISHED",
+            "isReshareDisabledByAuthor": False,
+            "adContext": {
+                "dscAdAccount": f"urn:li:sponsoredAccount:{config.LINKEDIN_AD_ACCOUNT_ID}",
+                "dscStatus":    "ACTIVE",
+            },
+            "distribution": {
+                "feedDistribution":               "NONE",
+                "targetEntities":                 [],
+                "thirdPartyDistributionChannels": [],
+            },
+            "content":            {"carousel": {"cards": api_cards}},
+            "contentLandingPage": dest,
+        }
+        resp = requests.post(
+            "https://api.linkedin.com/rest/posts",
+            json=post_payload,
+            headers={
+                "Authorization":             f"Bearer {self._token}",
+                "LinkedIn-Version":          config.LINKEDIN_VERSION,
+                "X-Restli-Protocol-Version": "2.0.0",
+                "Content-Type":              "application/json",
+            },
+        )
+        self._raise_for_status(resp, "createDscCarouselPost")
+        post_id_or_urn = resp.headers.get("x-restli-id") or _id_from_location(resp)
+        # Carousel posts come back as ugcPost URNs in LinkedIn's own docs, while
+        # our single-image posts return share URNs. Pass through whatever URN
+        # LinkedIn gives us and only prefix a bare numeric id.
+        post_urn = (
+            post_id_or_urn
+            if post_id_or_urn and post_id_or_urn.startswith("urn:li:")
+            else f"urn:li:share:{post_id_or_urn}"
+        )
+        log.info("Created DSC carousel post %s (%d cards)", post_urn, len(api_cards))
+
+        # Creative references the post. DRAFT to match the campaign — see
+        # feedback_linkedin_draft_default: the pipeline never self-activates.
+        payload = {
+            "campaign":       campaign_urn,
+            "intendedStatus": "DRAFT",
+            "content":        {"reference": post_urn},
+        }
+        if ad_name and ad_name.strip():
+            payload["name"] = ad_name.strip()[:255]
+        cresp = self._req(
+            "POST", self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/creatives"), json=payload
+        )
+        self._raise_for_status(cresp, "createCarouselCreative")
+        raw = unquote(
+            cresp.headers.get("x-restli-id")
+            or cresp.headers.get("x-linkedin-id")
+            or _id_from_location(cresp)
+            or ""
+        )
+        urn = raw if raw.startswith("urn:li:") else f"urn:li:sponsoredCreative:{raw}"
+        log.info("Created carousel adCreative %s", urn)
+        return urn
 
     def _create_image_ad_impl(
         self,
