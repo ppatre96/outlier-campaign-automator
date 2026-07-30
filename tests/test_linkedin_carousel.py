@@ -195,9 +195,10 @@ def test_card_copy_falls_back_to_a_narrative_within_the_limit(monkeypatch):
         n_cards=4,
     )
     assert len(cards) == 4
-    assert all(0 < len(c) <= CARD_HEADLINE_MAX for c in cards), cards
-    assert all(not c.endswith(("-", ",", ";")) for c in cards)
-    assert "$40/hr" in cards[2]
+    overlays = [c.overlay for c in cards]
+    assert all(0 < len(c) <= CARD_HEADLINE_MAX for c in overlays), overlays
+    assert all(not c.endswith(("-", ",", ";")) for c in overlays)
+    assert "$40/hr" in overlays[2]
 
 
 def test_card_copy_parses_llm_json(monkeypatch):
@@ -205,7 +206,8 @@ def test_card_copy_parses_llm_json(monkeypatch):
         "src.claude_client.call_claude",
         lambda **kw: '```json\n{"cards": ["One", "Two", "Three", "Four"]}\n```',
     )
-    assert build_card_copy({}, n_cards=4) == ["One", "Two", "Three", "Four"]
+    cards = build_card_copy({}, n_cards=4)
+    assert [c.overlay for c in cards] == ["One", "Two", "Three", "Four"]
 
 
 def test_card_copy_trims_an_overlong_llm_headline(monkeypatch):
@@ -214,7 +216,7 @@ def test_card_copy_trims_an_overlong_llm_headline(monkeypatch):
         lambda **kw: '{"cards": ["' + "long words " * 10 + '", "b", "c", "d"]}',
     )
     cards = build_card_copy({}, n_cards=4)
-    assert len(cards[0]) <= CARD_HEADLINE_MAX
+    assert len(cards[0].overlay) <= CARD_HEADLINE_MAX
 
 
 def test_trimmed_headline_never_ends_on_a_dangling_word(monkeypatch):
@@ -224,7 +226,7 @@ def test_trimmed_headline_never_ends_on_a_dangling_word(monkeypatch):
         lambda **kw: '{"cards": ["Review AI answers to 1040 questions and filings today",'
                      ' "Built for tax pros and their clients everywhere now", "c", "d"]}',
     )
-    cards = build_card_copy({}, n_cards=4)
+    cards = [c.overlay for c in build_card_copy({}, n_cards=4)]
     for c in cards:
         last = c.split()[-1].lower()
         assert last not in {"and", "or", "to", "for", "the", "your", "their"}, c
@@ -283,7 +285,8 @@ def test_banned_vocabulary_is_substituted_not_shipped(monkeypatch):
     )
     cards = build_card_copy({"headline": "Fallback one", "subheadline": "Fallback two"},
                             n_cards=4, advertised_rate="$40/hr")
-    assert "work" not in " ".join(cards).lower()
+    joined = " ".join(c.overlay + " " + c.caption for c in cards).lower()
+    assert "work" not in joined
     assert len(cards) == 4
 
 
@@ -295,4 +298,88 @@ def test_deterministic_fallback_is_brand_clean():
     cards = _fallback_cards({"headline": "Tax pros shaping AI",
                              "subheadline": "Review model answers"}, CARD_PLAN, "$40/hr")
     for c in cards:
-        assert not _banned_violations(c), c
+        assert not _banned_violations(c.overlay), c.overlay
+        assert not _banned_violations(c.caption), c.caption
+
+
+# ── Review feedback 2026-07-31 ───────────────────────────────────────────────
+
+def test_caption_never_duplicates_the_on_image_overlay(monkeypatch):
+    """LinkedIn renders media.title directly under the card image. Shipping the
+    same string in both made every card say itself twice."""
+    monkeypatch.setattr(
+        "src.claude_client.call_claude",
+        lambda **kw: '{"cards": [{"overlay": "Tax pros shaping AI", "caption": "tax pros shaping ai!"},'
+                     ' {"overlay": "Two", "caption": "Distinct two"},'
+                     ' {"overlay": "Three", "caption": "Distinct three"},'
+                     ' {"overlay": "Four", "caption": "Distinct four"}]}',
+    )
+    cards = build_card_copy({"headline": "H", "subheadline": "S"}, n_cards=4, advertised_rate="$40/hr")
+    from src.linkedin_carousel import _same_text
+
+    for c in cards:
+        assert not _same_text(c.overlay, c.caption), (c.overlay, c.caption)
+
+
+def test_task_counts_are_rejected_everywhere():
+    """Pranav 2026-07-31: never state a number of tasks. One contributor won't do
+    them all, so the number is meaningless at best."""
+    from src.copy_design_qc import scan_brand_voice
+
+    for bad in ("Complete 11 tasks to unlock payment", "Finish x tasks", "Ten tasks a day",
+                "hundreds of tasks available", "1,000 tasks waiting", "5 more tasks this week"):
+        assert any("quantifies tasks" in v for v in scan_brand_voice(bad, "headline")), bad
+    # Not a workload: "per task" is allowed, and 1040 is a tax form.
+    for ok in ("Flexible hours, paid per task", "Review AI answers to 1040 questions",
+               "Tasks in your area of expertise"):
+        assert not any("quantifies tasks" in v for v in scan_brand_voice(ok, "headline")), ok
+
+
+def test_carousel_post_sets_a_cta_label(tmp_path, monkeypatch):
+    """Missing contentCallToActionLabel is the likeliest reason a carousel
+    previewed desktop-only; the single-image arm has always set it."""
+    import config
+    from src.linkedin_api import LinkedInClient
+
+    monkeypatch.setattr(config, "LINKEDIN_ORG_ID", "12345", raising=False)
+    captured = {}
+
+    class _R:
+        status_code = 201
+        headers = {"x-restli-id": "urn:li:ugcPost:1"}
+        text = ""
+
+        def json(self):
+            return {}
+
+    def _post(url, json=None, headers=None, **k):
+        captured.update(json or {})
+        return _R()
+
+    monkeypatch.setattr("requests.post", _post)
+    client = LinkedInClient("t")
+    monkeypatch.setattr(client, "_req", lambda *a, **k: _R())
+    monkeypatch.setattr(client, "_raise_for_status", lambda r, l: None)
+    cards = _cards(tmp_path, 2)
+    for c in cards:
+        c.image_urn = "urn:li:image:X"
+    client.create_carousel_ad(campaign_urn="urn:li:sponsoredCampaign:1", cards=cards,
+                              intro_text="hi")
+    assert captured.get("contentCallToActionLabel"), captured.keys()
+
+
+def test_overlay_bans_the_brand_name_but_caption_does_not(monkeypatch):
+    """The wordmark is composited on the image, so on-image text must not say
+    "Outlier" — but the caption isn't on the image and may name the brand.
+    Getting the field mapping backwards drops either the brand protection or
+    every good caption."""
+    monkeypatch.setattr(
+        "src.claude_client.call_claude",
+        lambda **kw: '{"cards": [{"overlay": "Apply at Outlier today", "caption": "Outlier pairs pros with AI"},'
+                     ' {"overlay": "Two", "caption": "Cap two"},'
+                     ' {"overlay": "Three", "caption": "Cap three"},'
+                     ' {"overlay": "Four", "caption": "Cap four"}]}',
+    )
+    cards = build_card_copy({"headline": "Seed one"}, n_cards=4, advertised_rate="$40/hr")
+    assert "outlier" not in cards[0].overlay.lower(), cards[0].overlay
+    assert cards[0].caption == "Outlier pairs pros with AI", cards[0].caption

@@ -1213,6 +1213,16 @@ class LinkedInClient(AdPlatformClient):
             "content":            {"carousel": {"cards": api_cards}},
             "contentLandingPage": dest,
         }
+        # CTA button. The single-image path has always set this; carousel didn't,
+        # and LinkedIn documents a CTA for carousel (45-char limit). Mobile feed
+        # renders the CTA prominently, so a missing label is the most likely
+        # reason a carousel previews desktop-only.
+        _VALID_CTAS = {
+            "APPLY", "DOWNLOAD", "VIEW_QUOTE", "LEARN_MORE", "SIGN_UP", "SUBSCRIBE",
+            "REGISTER", "JOIN", "ATTEND", "REQUEST_DEMO", "SEE_MORE", "BUY_NOW", "SHOP_NOW",
+        }
+        _cta = (config.LINKEDIN_CTA_LABEL or "APPLY").strip().upper()
+        post_payload["contentCallToActionLabel"] = _cta if _cta in _VALID_CTAS else "APPLY"
         resp = requests.post(
             "https://api.linkedin.com/rest/posts",
             json=post_payload,

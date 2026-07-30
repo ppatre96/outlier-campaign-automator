@@ -73,6 +73,16 @@ CAMPAIGN_FORMAT = "CAROUSEL"
 # The 4-card narrative. `key` selects which copy field seeds the fallback, and
 # `intent` is what the card has to accomplish — both are handed to the LLM and
 # used by the deterministic fallback.
+# Fallback captions — the line LinkedIn renders under each card. Deliberately
+# complementary to the overlay, never a restatement, and free of banned
+# vocabulary ("work", "schedule") and task counts.
+_FALLBACK_CAPTIONS = {
+    1: "Your field, applied to AI models",
+    2: "Judge accuracy in your own domain",
+    3: "Paid per task, hours that suit you",
+    4: "Screening takes a few minutes",
+}
+
 CARD_PLAN: list[dict] = [
     {"slot": 1, "intent": "hook — name who they are and the shift to AI work",
      "fallback_key": "headline"},
@@ -83,6 +93,15 @@ CARD_PLAN: list[dict] = [
     {"slot": 4, "intent": "how to start — a plain next step",
      "fallback_key": "cta"},
 ]
+
+
+@dataclass
+class CardCopy:
+    """The two strings one card needs: the line rendered ON the image, and the
+    caption LinkedIn renders UNDER it (the API's media.title). They display
+    together, so they must not say the same thing twice."""
+    overlay: str
+    caption: str
 
 
 @dataclass
@@ -196,13 +215,28 @@ help train AI models in their own field of expertise.
 
 A carousel is read in order by swiping, so the cards must form ONE sequence,
 not four restatements of the same hook. You will be given the angle's existing
-ad copy and the intent of each card. Return a single JSON object:
+ad copy and the intent of each card.
 
-{"cards": ["card 1 headline", "card 2 headline", ...]}
+Each card needs TWO different strings:
+  "overlay" — the line rendered ON the card image
+  "caption" — the line LinkedIn shows UNDERNEATH that same card
+
+They appear together, so a reader sees both at once. The caption must NEVER
+repeat or paraphrase the overlay; it carries the NEXT piece of information.
+
+Return a single JSON object:
+
+{"cards": [{"overlay": "...", "caption": "..."}, ...]}
 
 HARD rules:
-- Each headline is AT MOST 40 characters. Longer text wraps onto a third line
-  and a card is shown at 312x312, where that is unreadable. Count them.
+- Each "overlay" is AT MOST 40 characters and 6 words. Longer text wraps onto a
+  third line and a card is shown at 312x312, where that is unreadable.
+- Each "caption" is AT MOST 45 characters, and must differ from its overlay.
+- COUNT THE CHARACTERS before answering. An overlay over 40 characters or 6
+  words, or a caption over 45 characters, is DISCARDED and replaced with generic
+  copy — so a shorter complete line always beats a longer one.
+- NEVER state a number of tasks anywhere. A contributor doesn't care that a
+  project has N tasks and won't be doing them all. "paid per task" is fine.
 - One idea per card, and each card must advance the story from the previous.
 - Plain sentence case. No em dashes, no hashtags, no ALL CAPS, no emoji.
 - At most 6 words per headline. The overlay renders 2 lines; 7 words wraps to 3
@@ -221,8 +255,8 @@ def build_card_copy(
     n_cards: int = DEFAULT_CARDS,
     advertised_rate: str = "",
     cohort_label: str = "",
-) -> list[str]:
-    """Return `n_cards` card headlines forming one narrative for this angle.
+) -> list[CardCopy]:
+    """Return `n_cards` CardCopy pairs forming one narrative for this angle.
 
     Tries the LLM, falls back to a deterministic build from the angle's existing
     copy fields. Never raises and never returns an over-length headline — the
@@ -259,19 +293,57 @@ def build_card_copy(
         )
         cards = _parse_cards(raw, len(plan))
         if cards:
-            out = []
-            for i, c in enumerate(_fit_headline(c) for c in cards):
-                bad = _banned_violations(c)
-                if bad:
-                    # Substitute rather than ship it: the copy checks downstream
-                    # do not gate the carousel (regen cannot fix copy), so a
-                    # banned word here would reach a live ad.
-                    log.warning("build_card_copy: card %d rejected (%s) — using fallback",
-                                i + 1, "; ".join(bad)[:160])
-                    out.append(fallback[i] if i < len(fallback) else "")
-                else:
-                    out.append(c)
-            return [o for o in out if o]
+            out: list[CardCopy] = []
+            for i, pair in enumerate(cards):
+                fb = fallback[i] if i < len(fallback) else CardCopy("", "")
+                raw_overlay = (pair.get("overlay") or "").strip()
+                raw_caption = (pair.get("caption") or "").strip()
+                overlay = _fit_headline(raw_overlay)
+                caption = _fit_caption(raw_caption)
+                # Trimming an over-length line leaves a fragment ("...and get
+                # paid per"), which reads worse than a shorter complete line. If
+                # the model blew the limit, take the fallback instead of the
+                # fragment.
+                if len(raw_caption) > CARD_HEADLINE_MAX:
+                    log.warning("build_card_copy: card %d caption was %d chars — using the "
+                                "fallback rather than a truncated fragment (%r)",
+                                i + 1, len(raw_caption), raw_caption[:60])
+                    caption = fb.caption
+                if len(raw_overlay) > CARD_HEADLINE_TARGET or len(raw_overlay.split()) > 6:
+                    log.warning("build_card_copy: card %d overlay was %d chars / %d words — "
+                                "using the fallback rather than a truncated fragment (%r)",
+                                i + 1, len(raw_overlay), len(raw_overlay.split()), raw_overlay[:60])
+                    overlay = fb.overlay
+                # Substitute rather than ship: the copy checks downstream do not
+                # gate the carousel (regen cannot fix copy), so anything banned
+                # here would reach a live ad.
+                # The overlay is scanned AS a headline so the "no Outlier
+                # wordmark in image text" rule applies to it; the caption isn't
+                # on the image, so it's scanned as a caption and may name the
+                # brand. Getting this backwards silently drops either the brand
+                # protection or every good caption.
+                for label, field, val, fbv in (
+                    ("overlay", "headline", overlay, fb.overlay),
+                    ("caption", "caption", caption, fb.caption),
+                ):
+                    bad = _banned_violations(val, field=field)
+                    if bad or not val:
+                        log.warning("build_card_copy: card %d %s rejected (%s) — using fallback",
+                                    i + 1, label, "; ".join(bad)[:160] or "empty")
+                        if label == "overlay":
+                            overlay = fbv
+                        else:
+                            caption = fbv
+                # The caption renders directly under the overlay, so a duplicate
+                # reads as a rendering bug.
+                if _same_text(overlay, caption):
+                    log.warning("build_card_copy: card %d caption duplicates the overlay "
+                                "(%r) — using fallback caption", i + 1, caption)
+                    caption = fb.caption if not _same_text(overlay, fb.caption) else ""
+                if overlay:
+                    out.append(CardCopy(overlay=overlay, caption=caption))
+            if out:
+                return out
         log.warning("build_card_copy: could not parse LLM cards — using fallback. Raw: %s",
                     (raw or "")[:200])
     except Exception as exc:  # noqa: BLE001
@@ -280,7 +352,7 @@ def build_card_copy(
     return fallback
 
 
-def _parse_cards(raw: str, want: int) -> list[str]:
+def _parse_cards(raw: str, want: int) -> list[dict]:
     import json
 
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", (raw or "").strip()).strip()
@@ -293,7 +365,16 @@ def _parse_cards(raw: str, want: int) -> list[str]:
             continue
         cards = obj.get("cards") if isinstance(obj, dict) else obj
         if isinstance(cards, list):
-            out = [str(c).strip() for c in cards if str(c).strip()]
+            out: list[dict] = []
+            for c in cards:
+                if isinstance(c, dict):
+                    ov, cap = str(c.get("overlay", "")).strip(), str(c.get("caption", "")).strip()
+                elif str(c).strip():
+                    ov, cap = str(c).strip(), ""   # tolerate the older flat shape
+                else:
+                    continue
+                if ov:
+                    out.append({"overlay": ov, "caption": cap})
             if len(out) >= want:
                 return out[:want]
     return []
@@ -324,14 +405,34 @@ def _fit_headline(text: str) -> str:
     return _drop_dangling_word(t.rstrip(" ,;:—-"))
 
 
-def _banned_violations(text: str) -> list[str]:
+def _fit_caption(text: str) -> str:
+    """Trim a caption to LinkedIn's 45-char media.title limit on a word boundary."""
+    t = re.sub(r"\s+", " ", (text or "")).strip().rstrip(".")
+    if len(t) <= CARD_HEADLINE_MAX:
+        return t
+    cut = t[:CARD_HEADLINE_MAX]
+    if " " in cut:
+        cut = cut[: cut.rindex(" ")]
+    return _drop_dangling_word(cut.rstrip(" ,;:—-"))
+
+
+def _same_text(a: str, b: str) -> bool:
+    """Loose equality — case, punctuation and spacing don't rescue a duplicate."""
+    norm = lambda s: re.sub(r"[^a-z0-9 ]", "", (s or "").lower()).strip()
+    return bool(norm(a)) and norm(a) == norm(b)
+
+
+def _banned_violations(text: str, field: str = "headline") -> list[str]:
     """Outlier's banned-vocabulary scan, from the ONE canonical list in
-    copy_design_qc — a hand-copied subset in the prompt above is what let
+    copy_design_qc. `field` matters: scan_brand_voice additionally bans the word
+    "Outlier" in headline/subheadline because the wordmark is composited on the
+    image — a card CAPTION isn't on the image, so it passes "caption" and may
+    name the brand — a hand-copied subset in the prompt above is what let
     "Earn $40/hr, work when you want" reach a live campaign."""
     try:
         from src.copy_design_qc import scan_brand_voice
 
-        return scan_brand_voice(text, "headline")
+        return scan_brand_voice(text, field)
     except Exception:  # noqa: BLE001 — never block card copy on the scanner
         return []
 
@@ -352,7 +453,7 @@ def _drop_dangling_word(text: str) -> str:
     return " ".join(words).rstrip(" ,;:—-")
 
 
-def _fallback_cards(copy_variant: dict, plan: list[dict], advertised_rate: str) -> list[str]:
+def _fallback_cards(copy_variant: dict, plan: list[dict], advertised_rate: str) -> list[CardCopy]:
     """Deterministic narrative from the copy fields we already have."""
     rate = advertised_rate or copy_variant.get("advertised_rate", "") or ""
     seeds = {
@@ -365,7 +466,11 @@ def _fallback_cards(copy_variant: dict, plan: list[dict], advertised_rate: str) 
                             else "Flexible hours, paid per task"),
         "cta":             "See if you qualify",
     }
-    return [_fit_headline(seeds.get(c["fallback_key"], "")) for c in plan]
+    return [
+        CardCopy(overlay=_fit_headline(seeds.get(c["fallback_key"], "")),
+                 caption=_fit_caption(_FALLBACK_CAPTIONS.get(c["slot"], "")))
+        for c in plan
+    ]
 
 
 # ── Card photo prompts ───────────────────────────────────────────────────────

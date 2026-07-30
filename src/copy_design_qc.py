@@ -189,6 +189,25 @@ def scan_brand_voice(text: str, field_name: str = "field") -> list[str]:
                 "(image-overlay text must not include the brand name; the wordmark is composited in the bottom strip)"
             )
 
+    # Never quantify tasks (Pranav 2026-07-31). A contributor doesn't care that a
+    # project has N tasks and won't be doing all of them alone, so a number reads
+    # as either meaningless or a workload promise we can't keep. Applies to EVERY
+    # field on EVERY channel, which is why it lives here rather than in one arm.
+    # "paid per task" is fine — it's the QUANTITY that's banned.
+    # Scoped to tasks/assignments deliberately. An earlier version also matched
+    # "questions", which false-positived on "Review AI answers to 1040 questions"
+    # — 1040 is a tax form, not a workload. Quantity + task is the rule.
+    _task_count = re.search(
+        r"\b(?:\d[\d,]*|x|one|two|three|four|five|six|seven|eight|nine|ten|dozens?|hundreds?|thousands?)"
+        r"\s*\+?\s*(?:of\s+|more\s+)?(?:tasks?|assignments?)\b",
+        low,
+    )
+    if _task_count:
+        violations.append(
+            f"{field_name} quantifies tasks ({_task_count.group(0)!r}): {text!r} — never state a "
+            "task count in contributor-facing copy; one contributor won't do them all"
+        )
+
     # Substring scan for multi-word phrases
     for phrase in _BANNED_PHRASES:
         if phrase in low:

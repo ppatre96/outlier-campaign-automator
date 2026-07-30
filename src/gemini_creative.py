@@ -969,7 +969,13 @@ def _add_bottom_strip(canvas: Image.Image, bottom_text: str, strip_h: int) -> Im
     # Description font scales with width, but the 1080-wide portrait/story
     # formats (9:16 / 4:5) get a larger fraction so the line doesn't read small;
     # the wider 1:1 / landscape (>=1200) keep the original size.
-    body_size = int(w * 0.027) if w >= 1200 else int(w * 0.032) + 6
+    # 1200-wide 1:1 used to get 0.027 (32px) while the 1080 portrait formats got
+    # 0.032+6 (40px) — i.e. the WIDER canvas rendered SMALLER absolute text, and
+    # the line read tiny next to the ~80px logo. Worst on LinkedIn carousel,
+    # which displays a card at 312x312 (32px of 1200 renders at ~8px). Bring the
+    # >=1200 branch up to match the smaller formats' absolute size; the
+    # shrink-to-fit loop below still guards against spill.
+    body_size = int(w * 0.034) if w >= 1200 else int(w * 0.032) + 6
     body_font = _load_font(body_size, text=bottom_text)
     lines = _wrap_text(bottom_text, body_font, text_max_w)
     # Keep to ≤2 lines: shrink the font a little before letting it spill.
