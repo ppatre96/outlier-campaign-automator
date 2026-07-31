@@ -132,7 +132,7 @@ def test_safe_intro_text_replaces_copy_that_fails_the_brand_scan():
     """The intro sits above the cards, so it's the most-read text on the ad —
     it gets the same scan the card copy gets."""
     from src.copy_design_qc import scan_brand_voice
-    from src.linkedin_carousel import safe_intro_text
+    from src.carousel import safe_intro_text
 
     clean = "Outlier matches tax professionals with AI projects. Flexible hours, paid per task."
     assert safe_intro_text(clean, cohort_name="tax pros", rate="$40/hr") == clean
@@ -343,7 +343,7 @@ def test_registry_refuses_obvious_test_ramp_ids():
 def test_headline_respects_the_overlay_word_cap():
     """34 chars but 7 words: the compositor wrapped it to 3 lines, which
     collided with the subject and burned 3 QC regens live."""
-    from src.linkedin_carousel import _fit_headline
+    from src.carousel import _fit_headline
 
     out = _fit_headline("Apply and get matched to a project")
     assert len(out.split()) <= 6, out
@@ -367,7 +367,7 @@ def test_banned_vocabulary_is_substituted_not_shipped(monkeypatch):
 def test_deterministic_fallback_is_brand_clean():
     """The fallback ships when the LLM is down, so it must pass the same scan.
     The first version used "on your own schedule" — 'schedule' is banned."""
-    from src.linkedin_carousel import CARD_PLAN, _banned_violations, _fallback_cards
+    from src.carousel import CARD_PLAN, _banned_violations, _fallback_cards
 
     cards = _fallback_cards({"headline": "Tax pros shaping AI",
                              "subheadline": "Review model answers"}, CARD_PLAN, "$40/hr")
@@ -389,7 +389,7 @@ def test_caption_never_duplicates_the_on_image_overlay(monkeypatch):
                      ' {"overlay": "Four", "caption": "Distinct four"}]}',
     )
     cards = build_card_copy({"headline": "H", "subheadline": "S"}, n_cards=4, advertised_rate="$40/hr")
-    from src.linkedin_carousel import _same_text
+    from src.carousel import _same_text
 
     for c in cards:
         assert not _same_text(c.overlay, c.caption), (c.overlay, c.caption)
@@ -469,7 +469,7 @@ def test_overlay_bans_the_brand_name_but_caption_does_not(monkeypatch):
 def test_only_the_rate_may_contain_a_number(monkeypatch):
     """"Review AI answers on 1040s" scans as "1040 answers", not as a tax form
     (Pranav 2026-07-31). Cards have no legitimate number except the pay rate."""
-    from src.linkedin_carousel import _has_bare_number
+    from src.carousel import _has_bare_number
 
     for bad in ("Review AI answers on 1040s", "Review 1040 answers AI gets wrong", "Complete 11 tasks"):
         assert _has_bare_number(bad), bad
@@ -491,7 +491,7 @@ def test_only_the_rate_may_contain_a_number(monkeypatch):
 def test_fallback_never_inherits_a_number_from_the_angle_copy():
     """The seed comes from the angle's own copy, which may carry a number. The
     fallback is what ships when everything else is rejected."""
-    from src.linkedin_carousel import CARD_PLAN, _fallback_cards, _has_bare_number
+    from src.carousel import CARD_PLAN, _fallback_cards, _has_bare_number
 
     cards = _fallback_cards(
         {"headline": "Your tax expertise, applied to AI",

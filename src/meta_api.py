@@ -745,6 +745,101 @@ class MetaClient(AdPlatformClient):
 
     # ── Ad creative + ad ─────────────────────────────────────────────────────
 
+    def create_carousel_ad(
+        self,
+        ad_set_id: str,
+        cards: "list",
+        *,
+        primary_text: str = "",
+        cta: Optional[str] = None,
+        destination_url: Optional[str] = None,
+        ad_name: Optional[str] = None,
+    ) -> CreateAdResult:
+        """Create a carousel AdCreative + Ad on the given ad set.
+
+        `cards` are `meta_carousel.MetaCarouselCard`s with `image_hash` already
+        filled by `upload_image`. Validation runs FIRST and raises before any API
+        call — a saved carousel's cards can't be edited, so shipping a bad set
+        costs a delete-and-rebuild.
+
+        Mirrors create_image_ad's contract: PAUSED on creation, `local_fallback`
+        when the page isn't configured so the arm can still hand the PNGs to a
+        human, and the ad named with the canonical campaign name + angle.
+        """
+        from src.meta_carousel import (
+            MetaCarouselSpecError, build_link_data, validate_cards,
+        )
+
+        if not self._page_id:
+            return CreateAdResult(
+                status="local_fallback",
+                error_class="ConfigError",
+                error_message=(
+                    "META_PAGE_ID not set — Meta carousel creation requires an "
+                    "object_story_spec.page_id. Saving PNGs locally instead."
+                ),
+            )
+        try:
+            validate_cards(cards)
+        except MetaCarouselSpecError as exc:
+            log.error("Meta create_carousel_ad: cards failed spec — not calling Meta: %s", exc)
+            return CreateAdResult(
+                status="error", error_class="MetaCarouselSpecError",
+                error_message=str(exc)[:500],
+            )
+        missing = [i for i, c in enumerate(cards, 1) if not c.image_hash]
+        if missing:
+            return CreateAdResult(
+                status="error", error_class="MetaCarouselSpecError",
+                error_message=f"cards {missing} have no image_hash — upload_image first",
+            )
+
+        self._ensure_init()
+        try:
+            from facebook_business.adobjects.adaccount import AdAccount
+            from facebook_business.adobjects.adcreative import AdCreative
+            from facebook_business.adobjects.ad import Ad
+
+            cta_type = (cta or "LEARN_MORE").upper()
+            cta_type = _META_CTA_REMAP.get(cta_type, cta_type)
+            if cta_type not in _VALID_META_CTAS:
+                cta_type = "LEARN_MORE"
+
+            default_link = destination_url or config.LINKEDIN_DESTINATION
+            link_data = build_link_data(
+                cards, primary_text=primary_text,
+                default_link=default_link, cta_type=cta_type,
+            )
+            account = AdAccount(self._ad_account_id)
+            creative = account.create_ad_creative(params={
+                AdCreative.Field.name: self._prefixed(f"carousel_creative_{ad_set_id}"),
+                AdCreative.Field.object_story_spec: {
+                    "page_id": self._page_id, "link_data": link_data,
+                },
+            })
+            creative_id = str(creative["id"])
+
+            ad = account.create_ad(params={
+                Ad.Field.name:     self._prefixed(ad_name or f"carousel_ad_{ad_set_id}"),
+                Ad.Field.adset_id: ad_set_id,
+                Ad.Field.creative: {"creative_id": creative_id},
+                Ad.Field.status:   Ad.Status.paused,
+            })
+            ad_id = str(ad["id"])
+            log.info("Meta carousel ad created %s (ad set=%s, creative=%s, %d cards)",
+                     ad_id, ad_set_id, creative_id, len(cards))
+            return CreateAdResult(creative_id=ad_id, status="ok")
+        except Exception as exc:
+            msg = str(exc)
+            upper = msg.upper()
+            status: Any = "error"
+            if "PAGE" in upper or "PERMISSION" in upper or "OAUTH" in upper:
+                status = "local_fallback"
+            log.error("Meta create_carousel_ad failed: %s", exc)
+            return CreateAdResult(
+                status=status, error_class=type(exc).__name__, error_message=msg[:500],
+            )
+
     def create_image_ad(
         self,
         campaign_id: str,
