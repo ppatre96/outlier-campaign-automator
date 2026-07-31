@@ -4558,6 +4558,26 @@ def _process_carousel_campaigns(
         except Exception as exc:  # noqa: BLE001
             log.exception("_process_carousel_campaigns: %s failed — other combos preserved: %s",
                           combo, exc)
+
+    # Conversion reconcile. attach_conversion_to_campaign GETs the conversion's
+    # `campaigns` array, appends, and $sets the whole thing back. That array holds
+    # 700+ campaigns and several campaigns are created per run, so two concurrent
+    # appends racing off the same stale copy silently drop one — a LOST UPDATE.
+    # The attach verifies immediately, so it reports success and the clobber lands
+    # afterwards. Observed live: the carousel attach logged "now 735 campaigns
+    # linked", yet the conversion later held 733 without ours.
+    # Re-verify once, after every campaign in this arm exists.
+    for _urn in out["campaigns"]:
+        try:
+            _conv = _linkedin_pod_conversion_id((naming_meta or {}).get("pod"))
+            if not li_client.attach_conversion_to_campaign(_urn, _conv):
+                log.error("_process_carousel_campaigns: %s has NO conversion attached after "
+                          "reconcile — WEBSITE_CONVERSION campaigns need one to optimize or "
+                          "report", _urn)
+        except Exception as exc:  # noqa: BLE001 — never fail the arm on reconcile
+            log.warning("_process_carousel_campaigns: conversion reconcile failed for %s: %s",
+                        _urn, exc)
+
     return out
 
 

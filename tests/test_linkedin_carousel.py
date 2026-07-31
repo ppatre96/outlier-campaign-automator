@@ -383,3 +383,39 @@ def test_overlay_bans_the_brand_name_but_caption_does_not(monkeypatch):
     cards = build_card_copy({"headline": "Seed one"}, n_cards=4, advertised_rate="$40/hr")
     assert "outlier" not in cards[0].overlay.lower(), cards[0].overlay
     assert cards[0].caption == "Outlier pairs pros with AI", cards[0].caption
+
+
+def test_only_the_rate_may_contain_a_number(monkeypatch):
+    """"Review AI answers on 1040s" scans as "1040 answers", not as a tax form
+    (Pranav 2026-07-31). Cards have no legitimate number except the pay rate."""
+    from src.linkedin_carousel import _has_bare_number
+
+    for bad in ("Review AI answers on 1040s", "Review 1040 answers AI gets wrong", "Complete 11 tasks"):
+        assert _has_bare_number(bad), bad
+    for ok in ("Earn $40/hr, flexible hours", "$40/hr on your terms",
+               "Review individual returns for accuracy", "See if you qualify"):
+        assert not _has_bare_number(ok), ok
+
+    monkeypatch.setattr(
+        "src.claude_client.call_claude",
+        lambda **kw: '{"cards": [{"overlay": "Review AI answers on 1040s", "caption": "Cap one"},'
+                     ' {"overlay": "Two", "caption": "Cap two"},'
+                     ' {"overlay": "Three", "caption": "Cap three"},'
+                     ' {"overlay": "Four", "caption": "Cap four"}]}',
+    )
+    cards = build_card_copy({"headline": "Seed one"}, n_cards=4, advertised_rate="$40/hr")
+    assert "1040" not in cards[0].overlay, cards[0].overlay
+
+
+def test_fallback_never_inherits_a_number_from_the_angle_copy():
+    """The seed comes from the angle's own copy, which may carry a number. The
+    fallback is what ships when everything else is rejected."""
+    from src.linkedin_carousel import CARD_PLAN, _fallback_cards, _has_bare_number
+
+    cards = _fallback_cards(
+        {"headline": "Your tax expertise, applied to AI",
+         "subheadline": "Review how models answer individual 1040 questions"},
+        CARD_PLAN, "$40/hr")
+    for c in cards:
+        assert not _has_bare_number(c.overlay), c.overlay
+        assert not _has_bare_number(c.caption), c.caption

@@ -235,8 +235,10 @@ HARD rules:
 - COUNT THE CHARACTERS before answering. An overlay over 40 characters or 6
   words, or a caption over 45 characters, is DISCARDED and replaced with generic
   copy — so a shorter complete line always beats a longer one.
-- NEVER state a number of tasks anywhere. A contributor doesn't care that a
-  project has N tasks and won't be doing them all. "paid per task" is fine.
+- The ONLY number allowed anywhere is the pay rate. No task counts, and no form
+  or document numbers either: "Review AI answers on 1040s" scans as a quantity
+  ("1040 answers"), not as a tax form. Say "individual returns" instead. A
+  contributor doesn't care how many tasks exist and won't be doing them all.
 - One idea per card, and each card must advance the story from the previous.
 - Plain sentence case. No em dashes, no hashtags, no ALL CAPS, no emoji.
 - At most 6 words per headline. The overlay renders 2 lines; 7 words wraps to 3
@@ -327,6 +329,9 @@ def build_card_copy(
                     ("caption", "caption", caption, fb.caption),
                 ):
                     bad = _banned_violations(val, field=field)
+                    if not bad and _has_bare_number(val):
+                        bad = [f"{label} contains a number that isn't the rate "
+                               f"(reads as a quantity): {val!r}"]
                     if bad or not val:
                         log.warning("build_card_copy: card %d %s rejected (%s) — using fallback",
                                     i + 1, label, "; ".join(bad)[:160] or "empty")
@@ -422,6 +427,21 @@ def _same_text(a: str, b: str) -> bool:
     return bool(norm(a)) and norm(a) == norm(b)
 
 
+# A rate is the ONLY number that belongs on a card.
+_CURRENCY_RE = re.compile(r"[$£€]\s?\d[\d,.]*(?:\s*/\s*(?:hr|hour|day|week|mo|month))?", re.I)
+
+
+def _has_bare_number(text: str) -> bool:
+    """True if the text carries a number that isn't the pay rate.
+
+    A digit next to a noun reads as a QUANTITY, whatever we meant by it:
+    "Review AI answers on 1040s" scans as "1040 answers", not "the 1040 tax
+    form" (Pranav, 2026-07-31). Cards have no legitimate use for a number other
+    than the rate, so anything else is rejected and the fallback ships.
+    """
+    return bool(re.search(r"\d", _CURRENCY_RE.sub("", text or "")))
+
+
 def _banned_violations(text: str, field: str = "headline") -> list[str]:
     """Outlier's banned-vocabulary scan, from the ONE canonical list in
     copy_design_qc. `field` matters: scan_brand_voice additionally bans the word
@@ -456,10 +476,16 @@ def _drop_dangling_word(text: str) -> str:
 def _fallback_cards(copy_variant: dict, plan: list[dict], advertised_rate: str) -> list[CardCopy]:
     """Deterministic narrative from the copy fields we already have."""
     rate = advertised_rate or copy_variant.get("advertised_rate", "") or ""
+    def _clean(text: str, generic: str) -> str:
+        """Seeds come from the angle's own copy, which may itself carry a number
+        ("Review how models answer individual 1040 questions"). The fallback is
+        what ships when everything else is rejected, so it has to be clean."""
+        return generic if (not text or _has_bare_number(text)) else text
+
     seeds = {
-        "headline":        copy_variant.get("headline", "") or "Your expertise, applied to AI",
-        "subheadline":     copy_variant.get("subheadline", "") or copy_variant.get("ad_description", "")
-                           or "Review and improve AI answers in your field",
+        "headline":        _clean(copy_variant.get("headline", ""), "Your expertise, applied to AI"),
+        "subheadline":     _clean(copy_variant.get("subheadline", "") or copy_variant.get("ad_description", ""),
+                                  "Review and improve AI answers in your field"),
         # NB: "schedule" and "work" are both banned vocabulary — keep this
         # fallback clean, it is what ships when the LLM is unavailable.
         "advertised_rate": (f"Earn {rate}, flexible hours" if rate
