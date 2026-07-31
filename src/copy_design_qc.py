@@ -194,12 +194,16 @@ def scan_brand_voice(text: str, field_name: str = "field") -> list[str]:
     # as either meaningless or a workload promise we can't keep. Applies to EVERY
     # field on EVERY channel, which is why it lives here rather than in one arm.
     # "paid per task" is fine — it's the QUANTITY that's banned.
-    # Scoped to tasks/assignments deliberately. An earlier version also matched
-    # "questions", which false-positived on "Review AI answers to 1040 questions"
-    # — 1040 is a tax form, not a workload. Quantity + task is the rule.
+    # The noun list covers every word we use for a unit of work, not just
+    # "task". "Review AI answers to 1040 questions" was once exempted here on the
+    # grounds that 1040 names a tax form; Pranav rejected that (2026-07-31) — a
+    # digit sitting next to a work-unit noun reads as a quantity whatever we
+    # meant by it. Deliberately excludes "project": "matched with one project"
+    # is legitimate copy about scope, not workload.
     _task_count = re.search(
         r"\b(?:\d[\d,]*|x|one|two|three|four|five|six|seven|eight|nine|ten|dozens?|hundreds?|thousands?)"
-        r"\s*\+?\s*(?:of\s+|more\s+)?(?:tasks?|assignments?)\b",
+        r"\s*\+?\s*(?:of\s+|more\s+)?"
+        r"(?:tasks?|assignments?|questions?|answers?|prompts?|responses?|conversations?|submissions?)\b",
         low,
     )
     if _task_count:

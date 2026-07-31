@@ -79,7 +79,7 @@ CAMPAIGN_FORMAT = "CAROUSEL"
 _FALLBACK_CAPTIONS = {
     1: "Your field, applied to AI models",
     2: "Judge accuracy in your own domain",
-    3: "Paid per task, hours that suit you",
+    3: "Hours that suit you, fully remote",
     4: "Screening takes a few minutes",
 }
 
@@ -207,6 +207,28 @@ def clamp_intro_text(text: str) -> str:
     return cut.rstrip(" ,;:—-")
 
 
+def safe_intro_text(intro: str, *, cohort_name: str = "", rate: str = "") -> str:
+    """The post commentary, guaranteed to clear the brand-voice scan.
+
+    The intro sits above the cards in the feed, so it's the most-read text on
+    the ad — but unlike the card copy it arrives verbatim from the static
+    variant, and nothing in this arm used to check it. Cards get scanned in
+    build_card_copy; this closes the same hole one level up.
+    """
+    text = clamp_intro_text(intro)
+    if text:
+        bad = _banned_violations(text, "intro_text")
+        if not bad:
+            return text
+        log.warning("safe_intro_text: intro rejected (%s) — using fallback",
+                    "; ".join(bad)[:160])
+    who = (cohort_name or "").strip() or "professionals"
+    out = f"Outlier matches {who} with AI projects that need their expertise."
+    if rate:
+        out += f" Current tasking rate: {rate}."
+    return clamp_intro_text(out)
+
+
 # ── Card copy ────────────────────────────────────────────────────────────────
 
 _CARD_COPY_SYSTEM = """\
@@ -231,15 +253,24 @@ Return a single JSON object:
 HARD rules:
 - Each "overlay" is AT MOST 40 characters and 6 words. Longer text wraps onto a
   third line and a card is shown at 312x312, where that is unreadable.
-- Each "caption" is AT MOST 45 characters, and must differ from its overlay.
-- COUNT THE CHARACTERS before answering. An overlay over 40 characters or 6
-  words, or a caption over 45 characters, is DISCARDED and replaced with generic
-  copy — so a shorter complete line always beats a longer one.
-- The ONLY number allowed anywhere is the pay rate. No task counts, and no form
-  or document numbers either: "Review AI answers on 1040s" scans as a quantity
-  ("1040 answers"), not as a tax form. Say "individual returns" instead. A
-  contributor doesn't care how many tasks exist and won't be doing them all.
+- Each "caption" is AT MOST 40 characters, and must differ from its overlay.
+- COUNT THE CHARACTERS before answering. An over-length line is DISCARDED and
+  replaced with generic copy, so a shorter complete line always beats a longer
+  one. Aim several characters under the cap: the usual failure is a caption that
+  misses by two or three and loses copy that was otherwise good.
+- An "overlay" contains NO digits at all. The pay rate is already painted into a
+  band at the bottom of every card, so an overlay that names it prints the same
+  sentence twice on one image. Card 3 is about payment and flexibility, so talk
+  about being paid per task and choosing your own hours, NOT the number.
+- A "caption" may name the rate, since it sits off the image. Nothing else
+  numeric: no task counts, and no form or document numbers either — "Review AI
+  answers on 1040s" scans as a quantity ("1040 answers"), not as a tax form. Say
+  "individual returns" instead. A contributor doesn't care how many tasks exist
+  and won't be doing them all.
 - One idea per card, and each card must advance the story from the previous.
+- The overlay must NOT contain the word "Outlier". The wordmark is composited
+  onto the card, so naming the brand in the overlay prints it twice. The caption
+  is not on the image and MAY name the brand — card 4 is the natural place.
 - Plain sentence case. No em dashes, no hashtags, no ALL CAPS, no emoji.
 - At most 6 words per headline. The overlay renders 2 lines; 7 words wraps to 3
   and collides with the subject.
@@ -284,77 +315,119 @@ def build_card_copy(
             + "\n".join(f"  {c['slot']}. {c['intent']}" for c in plan)
             + "\n\nReturn the JSON now."
         )
-        raw = call_claude(
-            messages=[{"role": "user", "content": user_msg}],
-            # replace, NOT .format — this prompt contains literal JSON braces
-            # ({"cards": [...]}) and .format() raises KeyError on them, which
-            # silently forced every card set onto the fallback.
-            system=_CARD_COPY_SYSTEM.replace("{banned}", ", ".join(_BANNED_VOCABULARY[:24])),
-            cache_system=True,
-            max_tokens=600,
-        )
-        cards = _parse_cards(raw, len(plan))
-        if cards:
-            out: list[CardCopy] = []
-            for i, pair in enumerate(cards):
-                fb = fallback[i] if i < len(fallback) else CardCopy("", "")
-                raw_overlay = (pair.get("overlay") or "").strip()
-                raw_caption = (pair.get("caption") or "").strip()
-                overlay = _fit_headline(raw_overlay)
-                caption = _fit_caption(raw_caption)
-                # Trimming an over-length line leaves a fragment ("...and get
-                # paid per"), which reads worse than a shorter complete line. If
-                # the model blew the limit, take the fallback instead of the
-                # fragment.
-                if len(raw_caption) > CARD_HEADLINE_MAX:
-                    log.warning("build_card_copy: card %d caption was %d chars — using the "
-                                "fallback rather than a truncated fragment (%r)",
-                                i + 1, len(raw_caption), raw_caption[:60])
-                    caption = fb.caption
-                if len(raw_overlay) > CARD_HEADLINE_TARGET or len(raw_overlay.split()) > 6:
-                    log.warning("build_card_copy: card %d overlay was %d chars / %d words — "
-                                "using the fallback rather than a truncated fragment (%r)",
-                                i + 1, len(raw_overlay), len(raw_overlay.split()), raw_overlay[:60])
-                    overlay = fb.overlay
-                # Substitute rather than ship: the copy checks downstream do not
-                # gate the carousel (regen cannot fix copy), so anything banned
-                # here would reach a live ad.
-                # The overlay is scanned AS a headline so the "no Outlier
-                # wordmark in image text" rule applies to it; the caption isn't
-                # on the image, so it's scanned as a caption and may name the
-                # brand. Getting this backwards silently drops either the brand
-                # protection or every good caption.
-                for label, field, val, fbv in (
-                    ("overlay", "headline", overlay, fb.overlay),
-                    ("caption", "caption", caption, fb.caption),
-                ):
-                    bad = _banned_violations(val, field=field)
-                    if not bad and _has_bare_number(val):
-                        bad = [f"{label} contains a number that isn't the rate "
-                               f"(reads as a quantity): {val!r}"]
-                    if bad or not val:
-                        log.warning("build_card_copy: card %d %s rejected (%s) — using fallback",
-                                    i + 1, label, "; ".join(bad)[:160] or "empty")
-                        if label == "overlay":
-                            overlay = fbv
-                        else:
-                            caption = fbv
-                # The caption renders directly under the overlay, so a duplicate
-                # reads as a rendering bug.
-                if _same_text(overlay, caption):
-                    log.warning("build_card_copy: card %d caption duplicates the overlay "
-                                "(%r) — using fallback caption", i + 1, caption)
-                    caption = fb.caption if not _same_text(overlay, fb.caption) else ""
-                if overlay:
-                    out.append(CardCopy(overlay=overlay, caption=caption))
-            if out:
-                return out
-        log.warning("build_card_copy: could not parse LLM cards — using fallback. Raw: %s",
-                    (raw or "")[:200])
+        system = _CARD_COPY_SYSTEM.replace("{banned}", ", ".join(_BANNED_VOCABULARY[:24]))
+        messages = [{"role": "user", "content": user_msg}]
+        best: list[CardCopy] = []
+        best_problems: list[str] = []
+        # Two attempts. The model routinely lands a caption 2-3 chars over the
+        # cap, and swapping that for a generic fallback throws away good copy for
+        # nothing — naming the offending strings back to it fixes most of them in
+        # one pass. One extra Claude call is trivial next to four Gemini images.
+        for attempt in (1, 2):
+            raw = call_claude(
+                messages=messages,
+                # replace, NOT .format — this prompt contains literal JSON braces
+                # ({"cards": [...]}) and .format() raises KeyError on them, which
+                # silently forced every card set onto the fallback.
+                system=system,
+                cache_system=True,
+                max_tokens=600,
+            )
+            pairs = _parse_cards(raw, len(plan))
+            if not pairs:
+                log.warning("build_card_copy: could not parse LLM cards (attempt %d). Raw: %s",
+                            attempt, (raw or "")[:200])
+                break
+            cards, problems = _vet_cards(pairs, fallback)
+            if not best or len(problems) < len(best_problems):
+                best, best_problems = cards, problems
+            if not problems or attempt == 2:
+                break
+            log.info("build_card_copy: %d card problem(s) on attempt 1 — asking for a repair",
+                     len(problems))
+            messages = messages + [
+                {"role": "assistant", "content": raw},
+                {"role": "user", "content":
+                    "These are not shippable:\n" + "\n".join(f"  - {p}" for p in problems)
+                    + "\n\nReturn the SAME JSON shape with every card rewritten to fix its "
+                      "problem. Keep the cards that were fine as they are. Count the "
+                      "characters this time."},
+            ]
+        if best:
+            if best_problems:
+                log.warning("build_card_copy: %d card(s) still fell back after the repair pass: %s",
+                            len(best_problems), "; ".join(best_problems)[:300])
+            return best
     except Exception as exc:  # noqa: BLE001
         log.warning("build_card_copy: LLM call failed (%s) — using fallback", exc)
 
     return fallback
+
+
+def _vet_cards(
+    pairs: list[dict], fallback: list[CardCopy]
+) -> tuple[list[CardCopy], list[str]]:
+    """Validate one LLM card set, substituting the fallback where it fails.
+
+    Returns the shippable cards plus a problem line per substitution, phrased for
+    the model so a repair attempt knows exactly what to change.
+    """
+    out: list[CardCopy] = []
+    problems: list[str] = []
+    for i, pair in enumerate(pairs):
+        fb = fallback[i] if i < len(fallback) else CardCopy("", "")
+        raw_overlay = (pair.get("overlay") or "").strip()
+        raw_caption = (pair.get("caption") or "").strip()
+        overlay = _fit_headline(raw_overlay)
+        caption = _fit_caption(raw_caption)
+        # Trimming an over-length line leaves a fragment ("...and get paid per"),
+        # which reads worse than a shorter complete line. If the model blew the
+        # limit, take the fallback instead of the fragment.
+        if len(raw_caption) > CARD_HEADLINE_MAX:
+            problems.append(f"card {i + 1} caption is {len(raw_caption)} chars, "
+                            f"max {CARD_HEADLINE_MAX}: {raw_caption!r}")
+            caption = fb.caption
+        if len(raw_overlay) > CARD_HEADLINE_TARGET or len(raw_overlay.split()) > 6:
+            problems.append(f"card {i + 1} overlay is {len(raw_overlay)} chars / "
+                            f"{len(raw_overlay.split())} words, max "
+                            f"{CARD_HEADLINE_TARGET} chars and 6 words: {raw_overlay!r}")
+            overlay = fb.overlay
+        # Substitute rather than ship: the copy checks downstream do not gate the
+        # carousel (regen cannot fix copy), so anything banned here would reach a
+        # live ad.
+        # The overlay is scanned AS a headline so the "no Outlier wordmark in
+        # image text" rule applies to it; the caption isn't on the image, so it's
+        # scanned as a caption and may name the brand. Getting this backwards
+        # silently drops either the brand protection or every good caption.
+        for label, field, val, fbv in (
+            ("overlay", "headline", overlay, fb.overlay),
+            ("caption", "caption", caption, fb.caption),
+        ):
+            bad = _banned_violations(val, field=field)
+            if not bad and label == "overlay" and re.search(r"\d", val or ""):
+                # The rate is composited into a band on every card, so an overlay
+                # naming it duplicates the band; any other number reads as a
+                # quantity. Either way an overlay has no use for a digit.
+                bad = [f"contains a number, but the card already shows the rate in "
+                       f"its bottom band: {val!r}"]
+            elif not bad and _has_bare_number(val):
+                bad = [f"contains a number that isn't the pay rate, which reads as a "
+                       f"quantity: {val!r}"]
+            if bad or not val:
+                problems.append(f"card {i + 1} {label} {'; '.join(bad)[:200] or 'is empty'}")
+                if label == "overlay":
+                    overlay = fbv
+                else:
+                    caption = fbv
+        # The caption renders directly under the overlay, so a duplicate reads as
+        # a rendering bug.
+        if _same_text(overlay, caption):
+            problems.append(f"card {i + 1} caption repeats its overlay ({caption!r}); the "
+                            "caption must carry the next piece of information")
+            caption = fb.caption if not _same_text(overlay, fb.caption) else ""
+        if overlay:
+            out.append(CardCopy(overlay=overlay, caption=caption))
+    return out, problems
 
 
 def _parse_cards(raw: str, want: int) -> list[dict]:
@@ -486,10 +559,12 @@ def _fallback_cards(copy_variant: dict, plan: list[dict], advertised_rate: str) 
         "headline":        _clean(copy_variant.get("headline", ""), "Your expertise, applied to AI"),
         "subheadline":     _clean(copy_variant.get("subheadline", "") or copy_variant.get("ad_description", ""),
                                   "Review and improve AI answers in your field"),
+        # No rate here even when we know it: compose_ad_for_platform paints the
+        # rate into a band at the bottom of EVERY card, so an overlay that
+        # repeats it renders the same sentence twice on one image.
         # NB: "schedule" and "work" are both banned vocabulary — keep this
         # fallback clean, it is what ships when the LLM is unavailable.
-        "advertised_rate": (f"Earn {rate}, flexible hours" if rate
-                            else "Flexible hours, paid per task"),
+        "advertised_rate": "Paid for every task you finish",
         "cta":             "See if you qualify",
     }
     return [
