@@ -102,6 +102,9 @@ class LinkedInClient(AdPlatformClient):
     def __init__(self, token: str):
         import threading
         self._token = token
+        # (campaign_urn, conversion_id) pairs attached this run — replayed by
+        # reconcile_conversions() to catch lost updates on the shared array.
+        self._attached_conversions: list[tuple[str, int | None]] = []
         self._session = requests.Session()
         self._session.headers.update({
             "Authorization": f"Bearer {token}",
@@ -794,7 +797,46 @@ class LinkedInClient(AdPlatformClient):
         # LINKEDIN_CONVERSION_ID.
         if payload.get("objectiveType") == "WEBSITE_CONVERSION":
             self.attach_conversion_to_campaign(urn, conversion_id)
+            # Remember it for reconcile_conversions(). The attach $sets the
+            # conversion's whole `campaigns` array (700+ entries), so two
+            # campaigns created concurrently in one run can clobber each other's
+            # append — a lost update that the immediate verify cannot see.
+            self._attached_conversions.append((urn, conversion_id))
         return urn
+
+    def reconcile_conversions(self) -> list[str]:
+        """Re-verify every conversion attach this client performed, and re-attach
+        any that went missing. Returns the campaign URNs still unlinked.
+
+        Call ONCE after all campaigns for a run exist. Covers every arm — static,
+        InMail and carousel all attach through create_campaign — because the race
+        is in the shared array, not in any one arm.
+
+        Observed live 2026-07-31: a carousel attach logged "now 735 campaigns
+        linked", yet the conversion later held 733 entries without that campaign.
+        Re-attaching took it to 734 with the campaign present, so the mechanism
+        works and the write had simply been overwritten.
+        """
+        pending = list(self._attached_conversions)
+        if not pending:
+            return []
+        failed: list[str] = []
+        for urn, conv_id in pending:
+            try:
+                if not self.attach_conversion_to_campaign(urn, conv_id):
+                    failed.append(urn)
+            except Exception as exc:  # noqa: BLE001 — reconcile is best-effort
+                log.warning("reconcile_conversions: %s failed: %s", urn, exc)
+                failed.append(urn)
+        if failed:
+            log.error(
+                "reconcile_conversions: %d of %d campaign(s) still have NO conversion "
+                "attached — WEBSITE_CONVERSION campaigns cannot optimize or report "
+                "without one: %s", len(failed), len(pending), failed,
+            )
+        else:
+            log.info("reconcile_conversions: all %d campaign(s) confirmed linked", len(pending))
+        return failed
 
     # ── Image upload ───────────────────────────────────────────────────────────
 
@@ -931,7 +973,14 @@ class LinkedInClient(AdPlatformClient):
         # default; None → LINKEDIN_CONVERSION_ID ("OCP Complete").
         if payload.get("objectiveType") == "WEBSITE_CONVERSION":
             self.attach_conversion_to_campaign(urn, conversion_id)
+            # Remember it for reconcile_conversions(). The attach $sets the
+            # conversion's whole `campaigns` array (700+ entries), so two
+            # campaigns created concurrently in one run can clobber each other's
+            # append — a lost update that the immediate verify cannot see.
+            self._attached_conversions.append((urn, conversion_id))
         return urn
+
+
 
     # ── InMail Creative ────────────────────────────────────────────────────────
 
