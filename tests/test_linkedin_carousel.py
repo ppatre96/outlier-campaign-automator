@@ -128,6 +128,26 @@ def test_clamp_intro_text_trims_on_a_word_boundary():
     assert clamp_intro_text("  short   text ") == "short text"
 
 
+def test_safe_intro_text_replaces_copy_that_fails_the_brand_scan():
+    """The intro sits above the cards, so it's the most-read text on the ad —
+    it gets the same scan the card copy gets."""
+    from src.copy_design_qc import scan_brand_voice
+    from src.linkedin_carousel import safe_intro_text
+
+    clean = "Outlier matches tax professionals with AI projects. Flexible hours, paid per task."
+    assert safe_intro_text(clean, cohort_name="tax pros", rate="$40/hr") == clean
+
+    for bad in ("Apply for this job today, no interview needed",
+                "Complete 11 tasks to unlock your bonus"):
+        out = safe_intro_text(bad, cohort_name="tax professionals", rate="$40/hr")
+        assert out != bad
+        assert not scan_brand_voice(out, "intro_text"), out
+        assert "$40/hr" in out
+
+    # No usable input at all still yields shippable copy.
+    assert scan_brand_voice(safe_intro_text(""), "intro_text") == []
+
+
 # ── API payload ──────────────────────────────────────────────────────────────
 
 def test_as_api_card_matches_the_posts_api_shape(tmp_path):
@@ -198,7 +218,9 @@ def test_card_copy_falls_back_to_a_narrative_within_the_limit(monkeypatch):
     overlays = [c.overlay for c in cards]
     assert all(0 < len(c) <= CARD_HEADLINE_MAX for c in overlays), overlays
     assert all(not c.endswith(("-", ",", ";")) for c in overlays)
-    assert "$40/hr" in overlays[2]
+    # The rate is painted into a band on every card, so no overlay repeats it.
+    assert not any(any(ch.isdigit() for ch in c) for c in overlays), overlays
+    assert cards[2].overlay != cards[2].caption
 
 
 def test_card_copy_parses_llm_json(monkeypatch):
@@ -230,6 +252,58 @@ def test_trimmed_headline_never_ends_on_a_dangling_word(monkeypatch):
     for c in cards:
         last = c.split()[-1].lower()
         assert last not in {"and", "or", "to", "for", "the", "your", "their"}, c
+
+
+def test_card_copy_asks_for_a_repair_before_taking_the_fallback(monkeypatch):
+    """A caption 3 chars over the cap is good copy — swapping it for a generic
+    fallback wastes it. Name the problem back to the model first."""
+    calls = []
+    over = "Flag errors on deductions, filings, and credits."  # 48 > 45
+
+    def fake_claude(**kw):
+        calls.append(kw["messages"])
+        if len(calls) == 1:
+            return ('{"cards": [{"overlay": "Your tax expertise, applied to AI",'
+                    f' "caption": "{over}"}}]}}')
+        return ('{"cards": [{"overlay": "Your tax expertise, applied to AI",'
+                ' "caption": "Flag errors on deductions and credits."}]}')
+
+    monkeypatch.setattr("src.claude_client.call_claude", fake_claude)
+    cards = build_card_copy({"headline": "h", "subheadline": "s"}, n_cards=1)
+
+    assert len(calls) == 2, "must retry rather than silently accept the fallback"
+    feedback = calls[1][-1]["content"]
+    assert over in feedback and str(len(over)) in feedback, feedback
+    # _fit_caption drops the trailing period.
+    assert cards[0].caption == "Flag errors on deductions and credits"
+
+
+def test_card_copy_keeps_the_better_attempt_when_the_repair_is_worse(monkeypatch):
+    """A repair that breaks more than it fixes must not be shipped."""
+    def fake_claude(**kw):
+        if len(kw["messages"]) == 1:
+            return ('{"cards": [{"overlay": "Your tax expertise, applied to AI",'
+                    ' "caption": "Flag errors on deductions, filings, and credits."}]}')
+        return '{"cards": [{"overlay": "", "caption": ""}]}'
+
+    monkeypatch.setattr("src.claude_client.call_claude", fake_claude)
+    cards = build_card_copy({"headline": "h", "subheadline": "s"}, n_cards=1)
+    assert cards[0].overlay == "Your tax expertise, applied to AI"
+
+
+def test_overlay_never_repeats_the_rate_band(monkeypatch):
+    """compose_ad_for_platform paints "Earn $40/hr or more" into a band on every
+    card, so an overlay naming the rate prints it twice on one image — which is
+    what shipped on card 3 of the first v5 review build."""
+    monkeypatch.setattr(
+        "src.claude_client.call_claude",
+        lambda **kw: '{"cards": [{"overlay": "Earn $40 per hour",'
+                     ' "caption": "Paid per task, remote"}]}',
+    )
+    cards = build_card_copy({"headline": "h"}, n_cards=1, advertised_rate="$40/hr")
+    assert "$40" not in cards[0].overlay, cards[0].overlay
+    # The caption sits off the image, so it may still carry the rate.
+    assert "$40/hr" not in cards[0].overlay
 
 
 def test_card_photo_variant_keeps_the_profession_and_varies_the_frame():
@@ -327,11 +401,18 @@ def test_task_counts_are_rejected_everywhere():
     from src.copy_design_qc import scan_brand_voice
 
     for bad in ("Complete 11 tasks to unlock payment", "Finish x tasks", "Ten tasks a day",
-                "hundreds of tasks available", "1,000 tasks waiting", "5 more tasks this week"):
+                "hundreds of tasks available", "1,000 tasks waiting", "5 more tasks this week",
+                # Every word we use for a unit of work counts, not just "task".
+                # "1040" names a tax form, but next to a work-unit noun it still
+                # reads as a quantity (Pranav 2026-07-31, on a live creative).
+                "Review AI answers to 1040 questions", "Grade 20 responses a day",
+                "Rate 50 prompts", "Three conversations per session"):
         assert any("quantifies tasks" in v for v in scan_brand_voice(bad, "headline")), bad
-    # Not a workload: "per task" is allowed, and 1040 is a tax form.
-    for ok in ("Flexible hours, paid per task", "Review AI answers to 1040 questions",
-               "Tasks in your area of expertise"):
+    # "per task" is allowed — it's the quantity that's banned. "one project" is
+    # about scope, not workload.
+    for ok in ("Flexible hours, paid per task", "Tasks in your area of expertise",
+               "Matched with one project that fits your expertise",
+               "Familiar with 1040 filings"):
         assert not any("quantifies tasks" in v for v in scan_brand_voice(ok, "headline")), ok
 
 

@@ -4359,7 +4359,7 @@ def _process_carousel_campaigns(
     from src.image_adapter import compose_ad_for_platform, primary_aspect
     from src.linkedin_carousel import (
         CAMPAIGN_FORMAT, CarouselCard, CarouselSpecError,
-        build_card_copy, card_photo_variant,
+        build_card_copy, card_photo_variant, safe_intro_text,
     )
     from src.linkedin_targeting_guard import linkedin_targeting_collapsed
     from src.utm_builder import build_utm_url, resolve_base_lp_url
@@ -4510,7 +4510,11 @@ def _process_carousel_campaigns(
             ad_result = li_client.create_carousel_ad(
                 campaign_urn=campaign_urn,
                 cards=cards,
-                intro_text=variant.get("intro_text", "") or variant.get("subheadline", ""),
+                intro_text=safe_intro_text(
+                    variant.get("intro_text", "") or variant.get("subheadline", ""),
+                    cohort_name=getattr(cohort, "name", ""),
+                    rate=getattr(geo_group, "advertised_rate", "") or "",
+                ),
                 content_landing_page=utm_url,
                 ad_name=f"{campaign_name} | carousel",
             )
