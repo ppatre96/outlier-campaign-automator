@@ -4566,8 +4566,13 @@ def _process_carousel_campaigns(
     return out
 
 
-def _render_carousel_card(card_variant: dict, angle_label: str, aspect, *, combo: str, slot: int):
+def _render_carousel_card(card_variant: dict, angle_label: str, aspect, *, combo: str, slot: int,
+                          platform: str = "linkedin_carousel"):
     """Render one carousel card, or None if it can't be shipped.
+
+    `platform` selects the compositor profile — the Meta and Google carousel
+    arms reuse this whole path, including the fail-closed font guard and the
+    QC retry loop, since a bad card is just as unfixable there.
 
     Carousel cards are freshly generated images, so they get the same treatment
     the extra-platform arms give their regenerated photos:
@@ -4602,7 +4607,7 @@ def _render_carousel_card(card_variant: dict, angle_label: str, aspect, *, combo
         bg = generate_imagen_photo(v, aspect=aspect)
         return compose_ad_for_platform(
             bg_image=bg, copy_variant=v,
-            platform="linkedin_carousel", angle=angle_label, aspect=aspect,
+            platform=platform, angle=angle_label, aspect=aspect,
         )
 
     png = _render()
@@ -4668,6 +4673,228 @@ def _carousel_group_urn(li_client, ramp_id: str | None, geos: list[str] | None) 
         urn = li_client.create_campaign_group(f"{key} carousel", geos=list(geos or []))
         _CAROUSEL_GROUP_CACHE[key] = urn
     return urn
+
+
+def _process_platform_carousel_arm(
+    *,
+    platform: str,
+    client,
+    resolver,
+    campaign_specs: list[dict],
+    ramp_id: str | None,
+    cohort_id_override: str | None,
+    destination_url_override: str | None,
+    naming_meta: dict | None = None,
+    sheets=None,
+    daily_budget_cents: int | None = None,
+) -> dict:
+    """Carousel arm for Meta and Google Demand Gen.
+
+    Mirrors `_process_carousel_campaigns` (LinkedIn) — same 4-card narrative from
+    `build_card_copy`, same per-card render + QC path, same fail-closed validation
+    before any upload, because a saved carousel's cards can't be edited on any of
+    the three platforms.
+
+    What differs is only the container and the payload:
+      - Meta: a normal ad set holds any creative format, so this reuses
+        `create_campaign_group` + `create_campaign` unchanged and only the AD is
+        carousel-shaped.
+      - Google: carousel exists ONLY in Demand Gen, so `client` must be a
+        GoogleAdsClient constructed with channel="demand_gen" — a Demand Gen ad on
+        a Display campaign is rejected. Cards also need a third asset layer
+        (image asset → card asset → ad).
+
+    Per (cohort × geo × angle) failures are isolated, as in every other arm.
+    """
+    from src.campaign_registry import log_campaign as _reg_log
+    from src.carousel import build_card_copy, card_photo_variant, safe_intro_text
+    from src.image_adapter import primary_aspect
+    from src.utm_builder import build_utm_url, resolve_base_lp_url
+
+    out: dict = {"campaigns": [], "campaigns_by_cohort": {}, "creative_paths": {}}
+    if not campaign_specs:
+        return out
+    if platform not in ("meta_carousel", "google_carousel"):
+        raise ValueError(f"unsupported carousel platform {platform!r}")
+
+    is_google = platform == "google_carousel"
+    n_cards = config.LINKEDIN_CAROUSEL_CARDS
+    aspect = primary_aspect(platform)
+    group_id = ""
+
+    for spec in campaign_specs:
+        cohort = spec["cohort"]
+        geo_group = spec["geo_group"]
+        group_geos = spec.get("group_geos") or []
+        angle_label = spec.get("angle_label", "A")
+        angle_idx = spec.get("angle_idx", 0)
+        variants = spec.get("variants") or []
+        variant = variants[angle_idx] if angle_idx < len(variants) else {}
+        combo = (f"cohort={getattr(cohort, 'name', '?')} "
+                 f"geo={getattr(geo_group, 'cluster_label', '?')} angle={angle_label}")
+
+        try:
+            base_id = (cohort_id_override or getattr(cohort, "id", None)
+                       or getattr(cohort, "_stg_id", ""))
+            # Same naming contract as every other arm.
+            if naming_meta is not None:
+                from src.campaign_name import build_campaign_name
+                campaign_name = build_campaign_name(
+                    ramp_id=ramp_id or "",
+                    submitted_at=naming_meta.get("submitted_at", ""),
+                    cohort=cohort,
+                    geo_group=geo_group,
+                    platform=platform,
+                    campaign_type="carousel",
+                    pod=naming_meta.get("pod"),
+                    domain=naming_meta.get("domain"),
+                    locale=naming_meta.get("locale"),
+                    included_geos=naming_meta.get("included_geos"),
+                    campaign_state=naming_meta.get("campaign_state"),
+                )
+                campaign_name = f"{campaign_name} | {angle_label}"
+            else:
+                campaign_name = (f"{getattr(cohort, '_stg_name', getattr(cohort, 'name', 'cohort'))} "
+                                 f"{platform} carousel {angle_label}")
+            rate = getattr(geo_group, "advertised_rate", "") or ""
+
+            base_lp = resolve_base_lp_url(
+                campaign_state=(naming_meta or {}).get("campaign_state"),
+                platform=platform,
+                fallback=destination_url_override or config.LINKEDIN_DESTINATION,
+                matched_domain=(naming_meta or {}).get("domain"),
+                sheets_client=sheets,
+                ramp_id=ramp_id,
+                cohort_id=base_id,
+            )
+
+            def _card_utm(suffix: str) -> str:
+                return build_utm_url(
+                    base_url=base_lp, platform=platform,
+                    campaign_name=f"{campaign_name}{suffix}",
+                    pod=(naming_meta or {}).get("pod"),
+                    domain=(naming_meta or {}).get("domain"),
+                    locale=(naming_meta or {}).get("locale"),
+                )
+
+            # ── Card copy + images (identical to the LinkedIn arm) ───────────
+            card_copy = build_card_copy(
+                variant, n_cards=n_cards, advertised_rate=rate,
+                cohort_label=getattr(cohort, "name", ""),
+            )
+            cards: list = []
+            card_failed = False
+            for slot, cc in enumerate(card_copy, 1):
+                card_variant = card_photo_variant(variant, slot, cc.overlay)
+                png = _render_carousel_card(
+                    card_variant, angle_label, aspect,
+                    combo=combo, slot=slot, platform=platform,
+                )
+                if png is None:
+                    card_failed = True
+                    break
+                if is_google:
+                    from src.google_carousel import GoogleCarouselCard
+
+                    cards.append(GoogleCarouselCard(
+                        png_path=png, headline=(cc.caption or cc.overlay),
+                    ))
+                else:
+                    from src.meta_carousel import MetaCarouselCard
+
+                    cards.append(MetaCarouselCard(
+                        png_path=png, headline=(cc.caption or cc.overlay),
+                        landing_page=_card_utm(f"-card{slot}"),
+                    ))
+            if card_failed:
+                # Skip the WHOLE carousel: the cards are one argument read in
+                # order and can't be edited once saved.
+                log.error("_process_platform_carousel_arm[%s]: %s — a card could not be "
+                          "produced; skipping the whole carousel", platform, combo)
+                continue
+            log.info("_process_platform_carousel_arm[%s]: %s → %d cards rendered",
+                     platform, combo, len(cards))
+
+            # ── Container ────────────────────────────────────────────────────
+            if not group_id:
+                group_id = client.create_campaign_group(
+                    f"{ramp_id or 'agent'} carousel", geos=list(group_geos),
+                )
+                out.setdefault("campaign_groups", []).append(group_id)
+            targeting = resolver.resolve_cohort(cohort, geos=list(group_geos))
+            _budget = ({"daily_budget_cents": daily_budget_cents}
+                       if daily_budget_cents is not None else {})
+            sub_id = client.create_campaign(
+                name=campaign_name, campaign_group_id=group_id,
+                targeting=targeting, **_budget,
+            )
+            out["campaigns"].append(sub_id)
+
+            # ── Upload + ad ──────────────────────────────────────────────────
+            utm_url = _card_utm("")
+            if is_google:
+                for card in cards:
+                    card.image_asset = client.upload_image(card.png_path)
+                client.create_carousel_card_assets(cards)
+                ad_result = client.create_carousel_ad(
+                    sub_id, cards,
+                    headline=(variant.get("ad_headline") or variant.get("headline", ""))[:40],
+                    description=(variant.get("ad_description")
+                                 or variant.get("subheadline", ""))[:90],
+                    cta_text=(variant.get("cta_button") or "").replace("_", " ").title(),
+                    destination_url=utm_url,
+                    ad_name=f"{campaign_name} | carousel",
+                )
+            else:
+                for card in cards:
+                    card.image_hash = client.upload_image(card.png_path)
+                ad_result = client.create_carousel_ad(
+                    sub_id, cards,
+                    primary_text=safe_intro_text(
+                        variant.get("intro_text", "") or variant.get("subheadline", ""),
+                        cohort_name=getattr(cohort, "name", ""), rate=rate,
+                    ),
+                    cta=variant.get("cta_button"),
+                    destination_url=utm_url,
+                    ad_name=f"{campaign_name} | carousel",
+                )
+            if ad_result.status != "ok":
+                log.warning("_process_platform_carousel_arm[%s]: %s ad not created (%s): %s",
+                            platform, combo, ad_result.status, ad_result.error_message)
+                continue
+
+            suffix = getattr(geo_group, "campaign_suffix", "geo")
+            out["campaigns_by_cohort"][f"{base_id}_{suffix}_{angle_label}"] = sub_id
+            out["creative_paths"][f"{base_id}_{angle_label}"] = ad_result.creative_id
+            log.info("_process_platform_carousel_arm[%s]: %s → %s creative %s",
+                     platform, combo, sub_id, ad_result.creative_id)
+
+            try:
+                _reg_log(
+                    smart_ramp_id=ramp_id or "",
+                    cohort_id=base_id,
+                    cohort_signature=getattr(cohort, "name", ""),
+                    geo_cluster=getattr(geo_group, "cluster", ""),
+                    geo_cluster_label=getattr(geo_group, "cluster_label", ""),
+                    geos=group_geos,
+                    angle=angle_label,
+                    campaign_type="carousel",
+                    advertised_rate=rate,
+                    platform=platform,
+                    platform_campaign_id=str(sub_id),
+                    platform_creative_id=str(ad_result.creative_id or ""),
+                    campaign_name=campaign_name,
+                    cohort_geo=_cohort_geo_label(cohort, geo_group),
+                    headline=" | ".join(c.overlay for c in card_copy),
+                    destination_url=utm_url,
+                )
+            except Exception:
+                log.exception("_process_platform_carousel_arm[%s]: registry write failed "
+                              "(non-fatal)", platform)
+        except Exception as exc:  # noqa: BLE001 — isolate per combo
+            log.exception("_process_platform_carousel_arm[%s]: %s failed — %s",
+                          platform, combo, exc)
+    return out
 
 
 def _process_extra_platform_arm(
@@ -6014,6 +6241,37 @@ def _build_extra_platform_clients(enabled: list[str]) -> dict:
                 "Skipping Google arm — GOOGLE_ADS_DEVELOPER_TOKEN / GOOGLE_ADS_REFRESH_TOKEN / "
                 "GOOGLE_ADS_CUSTOMER_ID not all set"
             )
+    # 2026-07-31 — carousel siblings. Meta reuses the same client (an ad set holds
+    # any creative format, so only the AD differs), while Google needs a
+    # channel="demand_gen" client: carousel does not exist in Display, so its
+    # parent has to be a DEMAND_GEN campaign.
+    if "meta_carousel" in enabled:
+        if config.META_ACCESS_TOKEN and config.META_AD_ACCOUNT_ID:
+            from src.meta_api import MetaClient
+            from src.meta_targeting import MetaInterestResolver
+            try:
+                out["meta_carousel"] = {
+                    "client":   MetaClient(),
+                    "resolver": MetaInterestResolver(),
+                }
+            except Exception as exc:
+                log.warning("Skipping Meta carousel arm — init failed: %s", exc)
+        else:
+            log.info("Skipping Meta carousel arm — META_ACCESS_TOKEN / "
+                     "META_AD_ACCOUNT_ID not set")
+    if "google_carousel" in enabled:
+        if google_creds_ok:
+            from src.google_ads_api import GoogleAdsClient
+            from src.google_targeting import GoogleSegmentResolver
+            try:
+                out["google_carousel"] = {
+                    "client":   GoogleAdsClient(channel="demand_gen"),
+                    "resolver": GoogleSegmentResolver(),
+                }
+            except Exception as exc:
+                log.warning("Skipping Google carousel arm — init failed: %s", exc)
+        else:
+            log.info("Skipping Google carousel arm — Google Ads creds not all set")
     # 2026-05-24 — google_search is the sibling Search arm. Mirrors Diego's
     # manual Search campaigns: SEARCH channel + RSA + keyword criteria via
     # KeywordPlanIdeaService. Can run alongside or instead of "google"
@@ -6647,6 +6905,41 @@ def _process_row_both_modes(
                 )
         elif _specs and not _carousel_on:
             log.info("_process_row_both_modes: linkedin_carousel not enabled for this run")
+
+    # ── Meta + Google Demand Gen carousel arms ───────────────────────────────
+    # Also separate from the extras fan-out: they need their own container (a
+    # Meta ad set of their own, and for Google a DEMAND_GEN campaign, which is a
+    # different campaign type from the Display one the "google" arm builds).
+    # Both are OFF unless explicitly enabled — neither has been verified against
+    # a live account yet.
+    if "static" in modes and not dry_run:
+        from src.ad_platform import enabled_platforms
+
+        _specs = (static_result or {}).get("campaign_specs") or []
+        for _pf in ("meta_carousel", "google_carousel"):
+            _on = _pf in enabled_platforms() and (channels is None or _pf in channels)
+            if not (_on and _specs):
+                continue
+            try:
+                _parts = _build_extra_platform_clients([_pf]).get(_pf)
+                if not _parts:
+                    log.warning("_process_row_both_modes: no client for %s — skipped", _pf)
+                    continue
+                extra_platform_results[_pf] = _process_platform_carousel_arm(
+                    platform=_pf,
+                    client=_parts["client"],
+                    resolver=_parts["resolver"],
+                    campaign_specs=_specs,
+                    ramp_id=ramp_id,
+                    cohort_id_override=cohort_id_override,
+                    destination_url_override=destination_url_override,
+                    naming_meta=naming_meta,
+                    sheets=sheets,
+                    daily_budget_cents=(budgets or {}).get(_pf),
+                )
+            except Exception:
+                log.exception("_process_row_both_modes: %s arm aborted — other arms "
+                              "preserved", _pf)
 
     # ── Conversion reconcile, once, after EVERY LinkedIn arm ─────────────────
     # attach_conversion_to_campaign $sets the conversion's whole `campaigns`

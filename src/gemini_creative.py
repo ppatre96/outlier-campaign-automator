@@ -223,8 +223,9 @@ COMPOSITION (frame the subject so there is clear background space for a text ove
 - Place the subject in the LEFT or RIGHT half of the frame — NOT dead-centre. Leave the \
   opposite half mostly clear (background only, no subject pixels) so a 1-2 line headline \
   and a short subheadline can be composited next to the subject without overlap.
-- The empty half should show natural background (bookshelves, plants, walls, soft \
-  ambient light) with mid-tone to dark colour values so white text reads against it.
+- The empty half should show natural background (plants, walls, softly blurred \
+  shelving, soft ambient light) with mid-tone to dark colour values so white text \
+  reads against it.
 - CRITICAL HAIR/HEAD PLACEMENT: the TOP of the subject's head/hair (including flyaways) \
   must sit AT OR BELOW the 35% line from the top of the frame. The full upper 35% of \
   the canvas must be PURE BACKGROUND — zero hair, zero head, zero shoulders, zero \
@@ -239,7 +240,7 @@ BACKGROUND:
   white walls or blown-out windows in this zone — white headline text will overlay \
   it and needs contrast to read.
 - Bottom third must also be mid-tone/darker for white subheadline text readability.
-- Setting: lush home interior — bookshelves, potted plants, wall art, warm natural \
+- Setting: lush home interior — potted plants, out-of-focus shelving, warm natural \
   window light. 85mm prime lens, shallow depth of field. {expression}. Shot on film, \
   analog color grade, authentic lifestyle photo. NOT a stock photo. NOT a corporate headshot.
 - COLOR MOOD: Warm pinkish-amber light in the top-left of the frame (as if a warm lamp \
@@ -250,13 +251,21 @@ BACKGROUND:
   laptop is part of the subject's activity, render it CLOSED, ANGLED AWAY from \
   the camera so the screen is not visible, or DEEPLY BLURRED in the bokeh — \
   NEVER showing software UI, document text, code, emails, video timelines, or \
-  any rendered content. Preferred alternatives: paper notes, a notebook + pen, \
-  the subject looking up away from the device, a cup of coffee on the desk. \
+  any rendered content. Preferred alternatives: a plain unlabelled notebook, \
+  the subject looking up away from the device, a plain ceramic cup on the desk. \
   (Updated 2026-05-20 — Vision QC's no-text-in-photo rule was failing every \
   attempt when laptops rendered with editing UI / document content.)
 
 CRITICAL OUTPUT CONSTRAINTS:
 - DO NOT render any text, words, letters, numbers, logos, or wordmarks in the image.
+- THAT INCLUDES TEXT ON PROPS, which is where it actually shows up: book and binder \
+  spines, printing on mugs, notebook and folder covers, lapel badges, certificates \
+  and lettering in wall art. Choose props that cannot carry lettering — potted \
+  plants, plain ceramics, unlabelled folders, blank paper, softly blurred shelving. \
+  Books must be far enough out of focus that no spine is legible. (Added 2026-07-31: \
+  four of six QC regenerations on one carousel were "TAX CODE" on a book spine, \
+  "OUTLIER" on a mug, "RKS" on a folder and "CPA" — the prompt was asking for the \
+  very objects the no-text rule then rejected.)
 - DO NOT add any Outlier branding — logo, earnings strip, and gradient overlays are \
   composited separately in post-processing.
 - OUTPUT ONLY THE CLEAN PHOTOGRAPH — no text overlays, no graphic elements, no \

@@ -74,6 +74,13 @@ _PRIMARY_ASPECT: dict[str, tuple[int, int]] = {
     # LinkedIn carousel cards MUST all share one ratio; 1:1 is LinkedIn's
     # recommendation (1080×1080, displayed at 312×312). See src/linkedin_carousel.
     "linkedin_carousel": (1, 1),
+    # Meta carousel: 4:5 is Meta's own recommendation and matches the single-image
+    # Meta arm, so a cohort's cards and its static ad share one look. Facebook
+    # crops every card to the FIRST card's ratio, so this must be uniform.
+    "meta_carousel": (4, 5),
+    # Google Demand Gen carousel: 1:1 (1200×1200). 1.91:1 is also valid but a
+    # square card reads better in the Discover/Gmail placements Demand Gen serves.
+    "google_carousel": (1, 1),
 }
 
 # Pixel dimensions for each aspect — sized for sharpness on the platform's

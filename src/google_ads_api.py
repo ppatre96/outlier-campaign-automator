@@ -78,9 +78,14 @@ class GoogleAdsClient(AdPlatformClient):
         # creates Search campaigns with Responsive Search Ads + keyword
         # criteria, mirroring Diego's manual Search campaigns surfaced by
         # the 2026-05-24 live-account audit.
+        # "demand_gen" added 2026-07-31: carousel does not exist in Display, so a
+        # carousel needs a DEMAND_GEN campaign as its parent.
         ch = (channel or "display").strip().lower()
-        if ch not in ("display", "search"):
-            raise ValueError(f"GoogleAdsClient channel must be 'display' or 'search', got {channel!r}")
+        if ch not in ("display", "search", "demand_gen"):
+            raise ValueError(
+                "GoogleAdsClient channel must be 'display', 'search' or "
+                f"'demand_gen', got {channel!r}"
+            )
         self._channel = ch
         self._client = None  # lazy
         # Keywords _apply_keyword_criteria had to drop (policy/invalid) keyed by
@@ -156,9 +161,14 @@ class GoogleAdsClient(AdPlatformClient):
         campaign_op = client.get_type("CampaignOperation")
         c = campaign_op.create
         c.name = name
+        # DEMAND_GEN is the only channel that can hold a carousel ad — Display
+        # has no carousel format at all, so `google_carousel` is a campaign-type
+        # change, not a creative change.
         c.advertising_channel_type = (
             client.enums.AdvertisingChannelTypeEnum.SEARCH
             if self._channel == "search"
+            else client.enums.AdvertisingChannelTypeEnum.DEMAND_GEN
+            if self._channel == "demand_gen"
             else client.enums.AdvertisingChannelTypeEnum.DISPLAY
         )
         c.status = client.enums.CampaignStatusEnum.PAUSED
@@ -848,6 +858,141 @@ class GoogleAdsClient(AdPlatformClient):
         resource = resp.results[0].resource_name
         log.info("Google image asset uploaded %s → %s", path.name, resource)
         return resource
+
+    def create_carousel_card_assets(self, cards: "list") -> None:
+        """Build one `DEMAND_GEN_CAROUSEL_CARD` asset per card, in place.
+
+        Demand Gen carousel needs three asset layers: the image asset, a CARD
+        asset wrapping it with that card's one line of text, and then the ad
+        referencing the card assets in order. This does layer 2 and fills each
+        card's `card_asset`; `upload_image` must already have filled `image_asset`.
+
+        Read off the installed proto (google-ads 30.1.0, v24), not the docs: a
+        card asset has NO description — {marketing_image_asset,
+        square_marketing_image_asset, portrait_marketing_image_asset, headline,
+        call_to_action_text}. So a card carries a single line of copy.
+        """
+        from src.google_carousel import CARD_HEADLINE_MAX, GoogleCarouselSpecError
+
+        missing = [i for i, c in enumerate(cards, 1) if not c.image_asset]
+        if missing:
+            raise GoogleCarouselSpecError(
+                f"cards {missing} have no image_asset — call upload_image first"
+            )
+        client = self._ensure_client()
+        asset_service = client.get_service("AssetService")
+        ops = []
+        for i, card in enumerate(cards, 1):
+            op = client.get_type("AssetOperation")
+            a = op.create
+            a.name = self._prefixed(f"dgcard_{i}_{Path(card.png_path).stem}")
+            a.type_ = client.enums.AssetTypeEnum.DEMAND_GEN_CAROUSEL_CARD
+            cc = a.demand_gen_carousel_card_asset
+            # Our cards are square, which is the `square_marketing_image_asset`
+            # slot; `marketing_image_asset` is the 1.91:1 one.
+            cc.square_marketing_image_asset = card.image_asset
+            cc.headline = card.headline[:CARD_HEADLINE_MAX]
+            ops.append(op)
+        resp = asset_service.mutate_assets(
+            customer_id=self._customer_id_str, operations=ops,
+        )
+        for card, result in zip(cards, resp.results):
+            card.card_asset = result.resource_name
+        log.info("Google built %d Demand Gen carousel card asset(s)", len(cards))
+
+    def create_carousel_ad(
+        self,
+        ad_group: str,
+        cards: "list",
+        *,
+        headline: str,
+        description: str,
+        business_name: str = "Outlier",
+        logo_asset: str = "",
+        cta_text: str = "",
+        destination_url: Optional[str] = None,
+        ad_name: Optional[str] = None,
+    ) -> CreateAdResult:
+        """Create a Demand Gen carousel ad on the given ad group.
+
+        Validation runs FIRST: Google's asset layers mean a rejected ad leaves
+        orphaned image and card assets behind, so it is cheaper to refuse than to
+        clean up. `cards` must already have `card_asset` filled by
+        `create_carousel_card_assets`.
+
+        NOTE: this requires the parent campaign to be `advertising_channel_type =
+        DEMAND_GEN`. A Demand Gen ad on a DISPLAY campaign is rejected.
+        """
+        from src.google_carousel import (
+            GoogleCarouselSpecError, validate_ad_text, validate_cards,
+        )
+
+        try:
+            validate_cards(cards)
+            validate_ad_text(business_name=business_name, headline=headline,
+                             description=description)
+            missing = [i for i, c in enumerate(cards, 1) if not c.card_asset]
+            if missing:
+                raise GoogleCarouselSpecError(
+                    f"cards {missing} have no card_asset — call "
+                    "create_carousel_card_assets first"
+                )
+        except GoogleCarouselSpecError as exc:
+            log.error("Google create_carousel_ad: failed spec — not calling Google: %s", exc)
+            return CreateAdResult(
+                status="error", error_class="GoogleCarouselSpecError",
+                error_message=str(exc)[:500],
+            )
+
+        try:
+            client = self._ensure_client()
+            ad_service = client.get_service("AdGroupAdService")
+            op = client.get_type("AdGroupAdOperation")
+            aga = op.create
+            aga.ad_group = ad_group
+            aga.status = client.enums.AdGroupAdStatusEnum.PAUSED
+
+            ad = aga.ad
+            ad.name = self._prefixed(ad_name or "dg_carousel")
+            # Same final_urls / final_url_suffix split as the RDA arm: Google
+            # strips a query string from final_urls, which would lose the UTMs.
+            from urllib.parse import urlsplit, urlunsplit
+            _parts = urlsplit(destination_url or config.LINKEDIN_DESTINATION)
+            ad.final_urls.append(
+                urlunsplit((_parts.scheme, _parts.netloc, _parts.path, "", ""))
+            )
+            if _parts.query:
+                ad.final_url_suffix = _parts.query
+
+            carousel = ad.demand_gen_carousel_ad
+            carousel.business_name = business_name
+            carousel.headline.text = headline
+            carousel.description.text = description
+            if cta_text:
+                carousel.call_to_action_text = cta_text
+            if logo_asset:
+                carousel.logo_image.asset = logo_asset
+            for card in cards:
+                carousel.carousel_cards.append(
+                    client.get_type("AdDemandGenCarouselCardAsset")(asset=card.card_asset)
+                )
+
+            resp = ad_service.mutate_ad_group_ads(
+                customer_id=self._customer_id_str, operations=[op],
+            )
+            resource = resp.results[0].resource_name
+            log.info("Google Demand Gen carousel ad created %s (%d cards)",
+                     resource, len(cards))
+            return CreateAdResult(creative_id=resource, status="ok")
+        except Exception as exc:
+            msg = str(exc)
+            status: Any = "error"
+            if "PERMISSION" in msg.upper() or "AUTH" in msg.upper():
+                status = "local_fallback"
+            log.error("Google create_carousel_ad failed: %s", exc)
+            return CreateAdResult(
+                status=status, error_class=type(exc).__name__, error_message=msg[:500],
+            )
 
     def upload_image_landscape(self, square_image_path: str | Path,
                                width: int = 1200, height: int = 628) -> str:

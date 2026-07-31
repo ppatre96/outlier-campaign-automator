@@ -97,6 +97,41 @@ LINKEDIN_CAROUSEL_CONSTRAINTS = PlatformConstraints(
 )
 
 
+# Meta carousel. Card headline is 40 (vs 40 for a single-image Meta headline, so
+# the same), and the ratio set is narrower than single-image: no 1.91:1, because
+# Facebook crops every card to the first card's ratio.
+META_CAROUSEL_CONSTRAINTS = PlatformConstraints(
+    name="meta_carousel",
+    headline_max_chars=40,
+    description_max_chars=30,
+    primary_text_max_chars=125,
+    cta_max_chars=None,      # enum, same as single-image Meta
+    image_aspects=((1, 1), (4, 5)),
+    headline_count=1,
+    description_count=1,
+    supports_inmail=False,
+    supports_special_ad_category=True,
+)
+
+
+# Google carousel exists ONLY in Demand Gen, not Display. Per-card headline 40,
+# per-card description implemented to 40 (sources conflict 40 vs 90; Google's API
+# reference confirms the field is required but not its length, so take the
+# tighter one). business_name <=25 and a 1:1 logo are additionally required.
+GOOGLE_CAROUSEL_CONSTRAINTS = PlatformConstraints(
+    name="google_carousel",
+    headline_max_chars=40,
+    description_max_chars=40,
+    primary_text_max_chars=None,
+    cta_max_chars=None,
+    image_aspects=((1, 1), (191, 100)),
+    headline_count=1,
+    description_count=1,
+    supports_inmail=False,
+    supports_special_ad_category=True,
+)
+
+
 META_CONSTRAINTS = PlatformConstraints(
     name="meta",
     headline_max_chars=40,
@@ -193,7 +228,9 @@ PLATFORM_CONSTRAINTS: dict[str, PlatformConstraints] = {
     "linkedin":      LINKEDIN_CONSTRAINTS,
     "linkedin_carousel": LINKEDIN_CAROUSEL_CONSTRAINTS,
     "meta":          META_CONSTRAINTS,
+    "meta_carousel": META_CAROUSEL_CONSTRAINTS,
     "google":        GOOGLE_CONSTRAINTS,
+    "google_carousel": GOOGLE_CAROUSEL_CONSTRAINTS,
     "google_search": GOOGLE_SEARCH_CONSTRAINTS,
     "reddit":        REDDIT_CONSTRAINTS,
     "tiktok":        TIKTOK_CONSTRAINTS,
