@@ -419,3 +419,47 @@ def test_fallback_never_inherits_a_number_from_the_angle_copy():
     for c in cards:
         assert not _has_bare_number(c.overlay), c.overlay
         assert not _has_bare_number(c.caption), c.caption
+
+
+# ── Conversion reconcile (all LinkedIn arms) ─────────────────────────────────
+
+def test_reconcile_replays_every_attach_and_reports_failures(monkeypatch):
+    """The attach $sets a 700+ entry array, so concurrent campaign creates clobber
+    each other. Observed live: log said "now 735 campaigns linked" while the
+    conversion held 733 without that campaign. Reconcile replays the attaches."""
+    from src.linkedin_api import LinkedInClient
+
+    client = LinkedInClient("t")
+    client._attached_conversions = [
+        ("urn:li:sponsoredCampaign:1", 19801700),
+        ("urn:li:sponsoredCampaign:2", 26557044),
+        ("urn:li:sponsoredCampaign:3", None),
+    ]
+    seen = []
+
+    def _attach(urn, conv_id=None, **kw):
+        seen.append((urn, conv_id))
+        return urn != "urn:li:sponsoredCampaign:2"      # 2 stays unlinked
+
+    monkeypatch.setattr(client, "attach_conversion_to_campaign", _attach)
+    failed = client.reconcile_conversions()
+    assert seen == [("urn:li:sponsoredCampaign:1", 19801700),
+                    ("urn:li:sponsoredCampaign:2", 26557044),
+                    ("urn:li:sponsoredCampaign:3", None)]
+    assert failed == ["urn:li:sponsoredCampaign:2"]
+
+
+def test_reconcile_survives_an_attach_that_raises(monkeypatch):
+    from src.linkedin_api import LinkedInClient
+
+    client = LinkedInClient("t")
+    client._attached_conversions = [("urn:li:sponsoredCampaign:9", 1)]
+    monkeypatch.setattr(client, "attach_conversion_to_campaign",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("500")))
+    assert client.reconcile_conversions() == ["urn:li:sponsoredCampaign:9"]
+
+
+def test_reconcile_is_a_noop_when_nothing_was_attached():
+    from src.linkedin_api import LinkedInClient
+
+    assert LinkedInClient("t").reconcile_conversions() == []
