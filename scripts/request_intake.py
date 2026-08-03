@@ -196,7 +196,7 @@ def main() -> int:
             cols[own] = len(header) - 1
             appended = True
     if appended and not args.dry_run:
-        ws.update(f"A1:{chr(ord('A') + len(header) - 1)}1", [header])
+        ws.update(range_name=f"A1:{chr(ord('A') + len(header) - 1)}1", values=[header])
         log.info("added Status/Issue columns to the sheet header")
 
     queued = 0
@@ -225,8 +225,8 @@ def main() -> int:
         # retry or an overlapping run cannot double-queue this row.
         status_col = chr(ord("A") + cols[COL_STATUS])
         issue_col = chr(ord("A") + cols[COL_ISSUE])
-        ws.update(f"{status_col}{row_number}", [["QUEUED"]])
-        ws.update(f"{issue_col}{row_number}", [[url]])
+        ws.update(range_name=f"{status_col}{row_number}", values=[["QUEUED"]])
+        ws.update(range_name=f"{issue_col}{row_number}", values=[[url]])
         log.info("row %d queued → %s (%s)", row_number, url, who or "unknown")
         queued += 1
 
