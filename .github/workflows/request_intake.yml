@@ -1,0 +1,102 @@
+name: Campaign Tool Request Intake
+
+# Diego, Bryan and Tuan raise requests through a Slack workflow form in the group
+# DM (C0B34UJ6D7H); the workflow appends each response to a Google Sheet. This
+# job is the cloud half of the intake loop — it detects new rows and queues each
+# as a GitHub issue, which is the durable work queue Claude picks up from.
+#
+# It does NOT post to Slack. The account's stored SLACK_BOT_TOKEN is a rotating
+# user token that currently returns invalid_auth, and replying in the request's
+# thread needs the workflow message's `ts`, which only a Slack search resolves.
+# So the in-thread reply is posted by Claude, which has a working connector.
+#
+# State lives in the sheet's Status column, not on the runner: Actions runners
+# are ephemeral, and a Status column is visible to the people who filed the
+# request. A row with a non-empty Status is never queued twice, so an overlapping
+# or retried run is safe.
+#
+# NOTE on cadence: GitHub's scheduler is best-effort and commonly fires several
+# minutes late under load (it is not a hard 15-minute guarantee). That is fine
+# here — the queue is a sheet, nothing is lost by a late tick.
+
+on:
+  schedule:
+    # Every 15 minutes. Offset off the :00 mark: the top of the hour is the most
+    # contended slot on GitHub's shared scheduler, and launch.yml already runs
+    # hourly at :00 on this repo.
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report new rows without creating issues or writing to the sheet"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+# Only one intake run at a time. Two concurrent runs could both read a row
+# before either writes Status back and file duplicate issues.
+concurrency:
+  group: request-intake
+  cancel-in-progress: false
+
+jobs:
+  intake:
+    name: Queue new requests as issues
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install gspread google-auth
+          # setup-python's pip cache sometimes restores certifi's METADATA
+          # without the cacert.pem payload — force the PEM onto disk.
+          pip install --force-reinstall --no-deps --no-cache-dir certifi
+
+      - name: Repoint SSL_CERT_FILE at certifi
+        # setup-python pre-sets SSL_CERT_FILE to a path that goes stale once pip
+        # moves packages around; gspread's transport reads it first.
+        run: |
+          CERT_PATH=$(python -c "import certifi; print(certifi.where())")
+          test -f "$CERT_PATH" || { echo "certifi bundle missing"; exit 1; }
+          echo "SSL_CERT_FILE=$CERT_PATH" >> "$GITHUB_ENV"
+          echo "REQUESTS_CA_BUNDLE=$CERT_PATH" >> "$GITHUB_ENV"
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v4
+
+      - name: Write Google credentials
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: doppler run -- bash -c 'echo "$GOOGLE_CREDENTIALS_JSON" > credentials.json'
+
+      - name: Poll the request sheet
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REQUEST_INTAKE_REPO: ${{ github.repository }}
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            doppler run -- python3 scripts/request_intake.py --dry-run
+          else
+            doppler run -- python3 scripts/request_intake.py
+          fi
