@@ -3472,9 +3472,16 @@ def _process_static_campaigns(
     Returns a dict with the shape Plan 03 / scripts/smart_ramp_poller.py expects:
       {
         "campaigns": [campaign_urn, ...],
-        "campaigns_by_cohort": {cohort_id: campaign_urn, ...},
-        "creative_paths": {cohort_id: <urn or local path>, ...},
+        "campaigns_by_cohort": {"<cohort_id>_<geo_suffix>": campaign_urn, ...},
+        "creative_paths": {"<cohort_id>_<geo_suffix>_<angle>": <urn or path>, ...},
       }
+
+    NB the keys are COMPOSITE, not bare cohort ids — one cohort fans out over geo
+    clusters and A/B/C angles. This docstring claimed `{cohort_id: ...}` until
+    2026-08-04, and the Slack ramp summary had been written against that claim, so
+    it looked every value up by bare cohort id, missed, and printed "InMail draft:
+    —" for runs that had created everything. Use `_values_for_cohort()` to read
+    these maps by cohort.
     """
     from src.geo_tiers import group_geos_for_campaigns, filter_blocked_geos
 
@@ -4895,6 +4902,29 @@ def _process_platform_carousel_arm(
             log.exception("_process_platform_carousel_arm[%s]: %s failed — %s",
                           platform, combo, exc)
     return out
+
+
+def _values_for_cohort(result: dict, key: str, cohort_id: str) -> list:
+    """Every value in `result[key]` belonging to `cohort_id`, in insertion order.
+
+    The LinkedIn arms key these maps by COMPOSITE id, not bare cohort id:
+    `campaigns_by_cohort` is `<cohort>_<geo_suffix>` and `creative_paths` is
+    `<cohort>_<geo_suffix>_<angle>`, because one cohort fans out over geo
+    clusters and A/B/C angles. The Slack ramp summary used to look these up by
+    bare cohort id, so every lookup missed and the summary rendered "InMail
+    draft: —" / "Creative (Static): —" on runs that had in fact created
+    everything (Pranav, 2026-08-04).
+
+    Matching is on the `<cohort_id>_` prefix (plus an exact hit, for older
+    single-geo rows). The trailing underscore is what makes it safe: cohort `T1`
+    matches `T1_us` but not `T10_us`.
+    """
+    mapping = (result or {}).get(key) or {}
+    if not cohort_id:
+        return []
+    prefix = f"{cohort_id}_"
+    return [v for k, v in mapping.items()
+            if v and (k == cohort_id or str(k).startswith(prefix))]
 
 
 def _process_extra_platform_arm(
@@ -6959,13 +6989,24 @@ def _process_row_both_modes(
     per_cohort = []
     for c in resolved.selected:
         cid = cohort_id_override or getattr(c, "id", None) or getattr(c, "_stg_id", "")
+        inmail_urns = _values_for_cohort(inmail_result, "campaigns_by_cohort", cid)
+        static_urns = _values_for_cohort(static_result, "campaigns_by_cohort", cid)
+        inmail_creatives = _values_for_cohort(inmail_result, "creative_paths", cid)
+        static_creatives = _values_for_cohort(static_result, "creative_paths", cid)
         per_cohort.append({
             "cohort_id": cid,
             "cohort_description": getattr(c, "cohort_description", "") or getattr(c, "name", ""),
-            "inmail_urn": inmail_result.get("campaigns_by_cohort", {}).get(cid),
-            "static_urn": static_result.get("campaigns_by_cohort", {}).get(cid),
-            "inmail_creative": inmail_result.get("creative_paths", {}).get(cid),
-            "static_creative": static_result.get("creative_paths", {}).get(cid),
+            "inmail_urn": inmail_urns[0] if inmail_urns else None,
+            "static_urn": static_urns[0] if static_urns else None,
+            "inmail_creative": inmail_creatives[0] if inmail_creatives else None,
+            "static_creative": static_creatives[0] if static_creatives else None,
+            # A cohort fans out over geo clusters and A/B/C angles, so one line
+            # per cohort can only show the first of each. The counts tell the
+            # reader there is more without pasting a dozen URNs into Slack.
+            "inmail_count": len(inmail_urns),
+            "static_count": len(static_urns),
+            "inmail_creative_count": len(inmail_creatives),
+            "static_creative_count": len(static_creatives),
         })
 
     extra_groups: list[str] = []
