@@ -18,8 +18,18 @@ from src.copy_design_qc import validate_inmail_copy  # noqa: E402
 
 
 def _body(words: int = 115) -> str:
-    """Generate a clean body of exactly `words` words."""
-    return " ".join(f"word{i}" for i in range(words))
+    """Generate a clean body of exactly `words` words.
+
+    Includes the %FIRSTNAME% greeting and a closing CTA, both required since
+    2026-08-03 — validate_inmail_copy emits a SOFT violation without them, so a
+    fixture missing either is no longer "clean".
+    """
+    from src.inmail_copy_writer import INMAIL_GREETING
+
+    closing = "Click Apply now to see the current tasks."
+    filler = words - len(INMAIL_GREETING.split()) - len(closing.split())
+    body = " ".join(f"word{i}" for i in range(max(filler, 1)))
+    return f"{INMAIL_GREETING}\n\n{body}\n\n{closing}"
 
 
 # ── Subject line ─────────────────────────────────────────────────────────────
@@ -141,6 +151,8 @@ def test_clean_copy_all_pass():
     # Uses approved Outlier vocabulary (no "schedule", no em dashes, no banned tokens)
     subject = "Cardiologists: earn $50/hr, no fixed hours"
     body = (
+        # Greeting + closing CTA are required since 2026-08-03.
+        "Hi %FIRSTNAME%,\n\n"
         "Your ability to read ECG waveforms is exactly what AI developers need right now. "
         "Outlier pays cardiologists to review AI-generated clinical content from home. "
         "No fixed hours, no minimum commitment. We send payment every week. "
@@ -149,7 +161,8 @@ def test_clean_copy_all_pass():
         "You log in when it suits you and complete as much or as little as you want. "
         "Getting started takes under ten minutes: complete a brief screening, "
         "become familiar with project guidelines, then pick up tasks at your own pace. "
-        "Outlier has paid over $500M to contributors worldwide. This opportunity is open now."
+        "Outlier has paid over $500M to contributors worldwide. This opportunity is open now.\n\n"
+        "Click Apply now to see the current tasks and get started."
     )
     cta = "See Open Tasks"
     viols = validate_inmail_copy(subject, body, cta)

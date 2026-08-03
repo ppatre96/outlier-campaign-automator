@@ -91,7 +91,15 @@ def test_inmail_html_body_strips_br_and_wraps_paragraphs():
 
 
 def test_inmail_html_body_escapes_and_caps_length():
-    # HTML-special chars escaped; output never exceeds the 1000-char cap.
+    # HTML-special chars escaped; output never exceeds the cap. The cap is
+    # LinkedIn's documented 1,500-char message limit (Marketing Solutions Help
+    # a425533) — it was 1,000 here, which was ours, not LinkedIn's, and started
+    # mattering once bodies grew a greeting line and a closing CTA.
+    from src.linkedin_api import INMAIL_BODY_HTML_MAX
+
     out = _inmail_html_body("A & B <test>")
     assert "&amp;" in out and "&lt;test&gt;" in out
-    assert len(_inmail_html_body("para. \n\n" * 400)) <= 1000
+    long_out = _inmail_html_body("para. \n\n" * 400)
+    assert len(long_out) <= INMAIL_BODY_HTML_MAX + len("<p>para.</p>")
+    # Truncation drops MIDDLE paragraphs: the last one is the call to action.
+    assert long_out.endswith("<p>para.</p>")

@@ -26,6 +26,7 @@ New angles can be injected via hypothesis dicts from the competitor agent —
 see build_inmail_variants() for the interface.
 """
 import logging
+import re
 from dataclasses import dataclass
 
 from src.claude_client import call_claude
@@ -36,6 +37,18 @@ log = logging.getLogger(__name__)
 # 2026-06-11): the LLM-chosen CTA varied ("See Opportunities" etc.); Diego's
 # live Message Ads all use "Apply now", so we lock to it across every angle.
 INMAIL_CTA_TEXT = "Apply now"
+
+# Personalized greeting, first line of every Message Ad body (Pranav 2026-08-03).
+# %FIRSTNAME% is a LinkedIn macro expanded at send time; it MUST be upper-case
+# with the percent signs (lower-case does not expand) and it only works in
+# Sponsored Messaging / Sponsored Content. When a member has ad personalization
+# switched off, or LinkedIn has no first name, it renders as "LinkedIn Member" —
+# so the greeting stands alone on its own line and no following sentence leans on
+# the name. Verified live: the hand-built Message Ads on this account
+# (adInMailContent:6234716) already open with exactly this token.
+# Docs: linkedin.com/help/lms/answer/a424137
+INMAIL_FIRSTNAME_MACRO = "%FIRSTNAME%"
+INMAIL_GREETING = f"Hi {INMAIL_FIRSTNAME_MACRO},"
 
 # ── Angle configs ──────────────────────────────────────────────────────────────
 # Data-validated ranking by CTR (12-month, 17.4M sends, 2026-05-04 analysis):
@@ -67,7 +80,7 @@ ANGLE_CONFIGS = {
             "E.g. 'Your background in [specific skill] is exactly what AI developers are missing.' "
             "Then: what contributors do (review, rate, generate AI content, 1 sentence) → "
             "concrete task example for this TG → "
-            "weekly payment + no fixed schedule → "
+            "weekly payment + no fixed hours → "
             "no commitment, no minimum hours → "
             "call to action. Keep to 100-130 words total."
         ),
@@ -106,7 +119,7 @@ ANGLE_CONFIGS = {
             "OPEN: peer count or 'others like you are already doing this' — "
             "name the specific peer group, not a generic label. "
             "Then: what they do on Outlier → why this TG's knowledge is valuable → "
-            "flexible schedule + weekly payment → call to action. "
+            "flexible hours + weekly payment → call to action. "
             "Keep to 100-130 words."
         ),
         "is_control": False,
@@ -116,7 +129,7 @@ ANGLE_CONFIGS = {
         "hook":          "lifestyle / schedule freedom — DATA WINNER (5.84% avg CTR)",
         "tone":          "relaxed, empowering, lifestyle-led",
         "subject_style": (
-            "Lead with schedule freedom AND earning signal together. "
+            "Lead with freedom over your own hours AND an earning signal together. "
             "Good: '[Role]: set your own hours, earn $X/hr' or 'Flexible, Remote — $X/hr for [skill]'. "
             "Pure lifestyle without a rate underperforms. Must include the $ amount. "
             "Never 'Remote Opportunity' alone — it is in the bottom-10 subject patterns."
@@ -124,7 +137,7 @@ ANGLE_CONFIGS = {
         "body_structure": (
             "OPEN: call out the constraints they actually face (shifts, call schedules, "
             "hospital deadlines, fixed hours) — make it specific to this TG. "
-            "E.g. 'No call schedule. No charting deadlines.' for medical. "
+            "E.g. 'No call rota. No charting deadlines.' for medical. "
             "Then: what flexibility on Outlier actually looks like → "
             "what the tasks involve (specific to TG) → weekly payment → call to action. "
             "Keep to 75-100 words. This is the highest-CTR angle — write it with energy."
@@ -260,6 +273,11 @@ def build_inmail_variants(
             if len(body) > 1900:
                 log.warning("Body over LinkedIn hard limit (%d chars), trimming", len(body))
                 body = _shorten_field("InMail body", body, 1900)
+            # Both structural elements are repaired deterministically rather than
+            # left to the model: a missing greeting or a body that trails off with
+            # no ask are the two failures a reader notices immediately.
+            body = ensure_greeting(body)
+            body = ensure_closing_cta(body)
 
             variant = InMailVariant(
                 angle=angle_key,
@@ -392,13 +410,35 @@ CRITICAL WRITING RULES (based on 12-month performance data — these directly af
 7. PARAGRAPH SPACING: break the body into 3-4 short paragraphs and put a BLANK LINE
    between every paragraph (one empty line between them) so the message renders with
    clear spacing and is easy to read. No bullet points or headers, plain paragraphs only.
-8. Do NOT start with "Hi" or "Hello".
-9. CTA label: always output exactly "Apply now" — the button text is fixed and not chosen per angle.
-10. Subject line: ≤60 characters including spaces. Count carefully.
+8. GREETING: the body's FIRST line must be exactly:
+
+       Hi %FIRSTNAME%,
+
+   followed by a blank line. %FIRSTNAME% is a LinkedIn personalization macro that
+   expands to the recipient's first name at send time. Write it in CAPITALS with
+   the percent signs exactly as shown — lowercase %firstname% does NOT expand.
+   Never substitute a real name or a placeholder like [Name]. When a member has ad
+   personalization switched off, LinkedIn renders it as "LinkedIn Member", so the
+   greeting has to read acceptably that way too — which is why it stands alone on
+   its own line and the next sentence never depends on the name.
+9. CLOSING CTA LINE: the body's LAST paragraph must be a short, direct instruction
+   to act, naming the button. The button is labelled "Apply now", so refer to it:
+
+       GOOD: "Click Apply now to see the current tasks and get started."
+       GOOD: "Apply now and you can be tasking this week."
+       BAD:  "If this sounds interesting, feel free to take a look." (no action)
+       BAD:  "Click below." (does not name the button)
+
+   Keep it to one sentence. Do NOT promise a timeline you were not given: no
+   "approved in 24 hours", no "start in less than 7 days", no "instant access".
+   Screening duration is not a figure this prompt supplies, so do not invent one.
+10. CTA label: always output exactly "Apply now" — the button text is fixed and not chosen per angle.
+11. Subject line: ≤60 characters including spaces. Count carefully.
 
 Write your response EXACTLY in this format (no other text):
 SUBJECT: <subject line, max 60 chars>
-BODY: <body text, 100–130 words, 3-4 short paragraphs each separated by a blank line>
+BODY: <"Hi %FIRSTNAME%," then a blank line, then 100–130 words in 3-4 short
+       paragraphs separated by blank lines, ending with the closing CTA line>
 CTA_LABEL: <button label, max 20 chars>"""
 
 
@@ -459,45 +499,106 @@ def _parse_response(raw: str) -> dict:
 # ── Fallbacks ──────────────────────────────────────────────────────────────────
 
 def _fallback_subject(tg_category: str, angle_key: str) -> str:
+    """Subjects that ship when the LLM is unavailable.
+
+    Angle C previously read "Earn on your schedule — no fixed shifts", which broke
+    two of this module's own rules at once: "schedule" is banned vocabulary and
+    rule 6 bans em dashes. Angle B claimed "1,000+ … work on Outlier" — an
+    unverified peer count plus the banned word "work".
+    """
     subjects = {
         "A": f"Your {tg_category} expertise is in demand",
-        "B": f"1,000+ {tg_category} professionals work on Outlier",
-        "C": "Earn on your schedule — no fixed shifts",
+        "B": f"{tg_category} professionals are tasking on Outlier",
+        "C": "Earn on your own hours, no fixed shifts",
     }
     return subjects.get(angle_key, "AI tasks for domain experts")[:60]
 
 
+def ensure_greeting(body: str) -> str:
+    """Guarantee the body opens with the personalized greeting on its own line.
+
+    Repairs three cases seen from the model: no greeting at all, a greeting with a
+    literal name or placeholder ("Hi Sarah," / "Hi [Name],"), and a lower-case
+    macro (%firstname% does not expand — LinkedIn requires capitals).
+    """
+    text = (body or "").strip()
+    if not text:
+        return INMAIL_GREETING
+    # Normalise a macro the model wrote in the wrong case.
+    text = re.sub(r"%first ?name%", INMAIL_FIRSTNAME_MACRO, text, flags=re.IGNORECASE)
+    lines = text.split("\n")
+    first = lines[0].strip()
+    if first == INMAIL_GREETING:
+        return text
+    # A greeting IS present but names someone (or nobody) concrete — replace it.
+    if re.match(r"^(hi|hello|hey|dear)\b[^\n]{0,40}[,:]\s*$", first, flags=re.IGNORECASE):
+        lines[0] = INMAIL_GREETING
+        return "\n".join(lines).strip()
+    return f"{INMAIL_GREETING}\n\n{text}"
+
+
+# A closing paragraph counts as an ask only if it tells the reader to do something.
+_CTA_SIGNALS = re.compile(r"\b(apply|click|get started|start tasking|sign up|join)\b", re.I)
+_FALLBACK_CLOSING_CTA = "Click Apply now to see the current tasks and get started."
+
+
+def ensure_closing_cta(body: str) -> str:
+    """Guarantee the body ends on an explicit ask naming the Apply now button.
+
+    The button alone is not enough — reviewer feedback (Pranav 2026-08-03) is that
+    the body should carry the call to action too. Deliberately does NOT invent a
+    timeline: "get started in less than 7 days" is a claim about screening speed
+    that nothing in this pipeline can substantiate.
+    """
+    text = (body or "").strip()
+    if not text:
+        return _FALLBACK_CLOSING_CTA
+    paras = [p for p in re.split(r"\n\s*\n", text) if p.strip()]
+    if paras and _CTA_SIGNALS.search(paras[-1]):
+        return text
+    return f"{text}\n\n{_FALLBACK_CLOSING_CTA}"
+
+
 def _fallback_body(tg_category: str, angle_key: str) -> str:
+    """The body that ships when the LLM is unavailable or unparseable.
+
+    Carries the same two structural elements the prompt demands, because this is
+    real copy that reaches real inboxes: the %FIRSTNAME% greeting on its own first
+    line, and a closing line that names the Apply now button. Also free of banned
+    vocabulary ("schedule", "work", "job") — the earlier version of this fallback
+    was not, and it bypasses the LLM entirely so nothing else would catch it.
+    """
+    greeting = f"{INMAIL_GREETING}\n\n"
     if angle_key == "A":
         return (
+            greeting +
             f"Your background in {tg_category} is exactly what AI companies are looking for right now.\n\n"
-            f"Outlier is an AI data platform that matches domain experts with AI tasks — reviewing model "
+            f"Outlier is an AI data platform that matches domain experts with AI tasks: reviewing model "
             f"outputs, generating examples, and rating responses in your area of expertise. Everything is "
-            f"remote and async; you set your own schedule.\n\n"
-            f"Your specific background means you'd be working on tasks where your judgment actually matters "
-            f"to the quality of the AI. Payment is made weekly, and you can take on as many or as few tasks "
-            f"as you want.\n\n"
-            f"Click below to see current opportunities and get started."
+            f"remote and async, and you choose your own hours.\n\n"
+            f"Your specific background means tasks where your judgment shapes the quality of the AI. "
+            f"Payment is made weekly, and you can take on as many or as few tasks as you like.\n\n"
+            f"Click Apply now to see the current tasks and get started."
         )
     elif angle_key == "B":
         return (
-            f"Over 1,000 {tg_category} professionals are already contributing to AI projects on Outlier — "
-            f"and the platform has paid out more than $500M to contributors globally.\n\n"
+            greeting +
+            f"Outlier has paid out more than $500M to contributors globally, and {tg_category} "
+            f"professionals are among those contributing to AI projects on the platform.\n\n"
             f"Outlier matches domain experts with AI tasks: reviewing model outputs, rating responses, and "
-            f"generating content in their field. Tasks are remote, async, and flexible — no fixed schedule, "
-            f"no minimum hours.\n\n"
+            f"generating content in their field. Tasks are remote, async, and flexible, with no fixed hours "
+            f"and no minimum commitment.\n\n"
             f"Payment is made weekly. You decide how much time you put in.\n\n"
-            f"If you're looking for a way to put your expertise to work on your own terms, see what's "
-            f"currently available on Outlier."
+            f"Click Apply now to see what is currently open to you."
         )
     else:  # C
         return (
+            greeting +
             f"No shifts. No deadlines. No minimum hours.\n\n"
             f"Outlier is an AI data platform where {tg_category} professionals complete AI tasks on their "
-            f"own schedule — reviewing model outputs, generating examples, rating responses. Everything is "
+            f"own hours: reviewing model outputs, generating examples, rating responses. Everything is "
             f"remote and async.\n\n"
             f"More than $500M has been paid to contributors on the platform. Payment is weekly. You choose "
-            f"when you work and how much.\n\n"
-            f"If you've been looking for a flexible way to use your expertise outside of your main work, "
-            f"take a look at what's available."
+            f"when you task and how much.\n\n"
+            f"Click Apply now to see the current tasks and get started."
         )

@@ -409,14 +409,13 @@ class LinkedInClient(AdPlatformClient):
 
     def get_creative(self, creative_urn_or_id: str) -> dict:
         """GET a sponsoredCreative. Used to resolve a Message Ad creative's
-        backing inMailContents URN (`content.reference`). Uses LinkedIn-Version
-        202506 to match the InMail create path."""
+        backing inMailContents URN (`content.reference`)."""
         from urllib.parse import quote
         cid = creative_urn_or_id
         if not cid.startswith("urn:li:"):
             cid = f"urn:li:sponsoredCreative:{cid}"
         headers = self._default_headers()
-        headers["LinkedIn-Version"] = "202506"
+        headers["LinkedIn-Version"] = config.LINKEDIN_VERSION
         resp = self._req(
             "GET",
             self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/creatives/{quote(cid, safe='')}"),
@@ -429,7 +428,6 @@ class LinkedInClient(AdPlatformClient):
         """Rename an existing inMailContents object (the InMail ad name shown in
         Campaign Manager) via Rest.li PARTIAL_UPDATE. Unlike rename_campaign this
         does NOT prefix — the caller passes the full pipe-delimited spec name.
-        Uses LinkedIn-Version 202506 (same as the InMail create path).
 
         The resource is keyed by the FULL adInMailContent URN (URL-encoded), not
         the bare numeric id — a numeric key 400s ("Key parameter value invalid")."""
@@ -438,7 +436,7 @@ class LinkedInClient(AdPlatformClient):
         if not urn.startswith("urn:li:"):
             urn = f"urn:li:adInMailContent:{urn}"
         headers = self._default_headers()
-        headers["LinkedIn-Version"] = "202506"
+        headers["LinkedIn-Version"] = config.LINKEDIN_VERSION
         headers["X-RestLi-Method"] = "PARTIAL_UPDATE"
         resp = self._req(
             "POST",
@@ -657,7 +655,7 @@ class LinkedInClient(AdPlatformClient):
         if cached:
             return cached
         headers = self._default_headers()
-        headers["LinkedIn-Version"] = "202506"
+        headers["LinkedIn-Version"] = config.LINKEDIN_VERSION
         resp = self._req(
             "GET",
             self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}"),
@@ -997,7 +995,7 @@ class LinkedInClient(AdPlatformClient):
         """
         Create a LinkedIn Message Ad creative and attach it to a campaign.
         Two-step: (1) create inMailContent via REST API, (2) create creative referencing it.
-        Uses /rest/inMailContents (no MDP needed) with LinkedIn-Version: 202506 header.
+        Uses /rest/inMailContents (no MDP needed).
 
         sender_urn: must be the URN of the LinkedIn ORGANIZATION that owns the
                     ad account (e.g. `urn:li:organization:92583550`). Person
@@ -1046,11 +1044,15 @@ class LinkedInClient(AdPlatformClient):
         # Custom footer / Terms & Conditions (reviewer feedback GMR-0024). Set
         # only when configured so the field isn't sent empty. Text lives in
         # config.LINKEDIN_INMAIL_FOOTER (Doppler-overridable).
-        footer = (getattr(config, "LINKEDIN_INMAIL_FOOTER", "") or "").strip()
+        footer = _inmail_html_footer(getattr(config, "LINKEDIN_INMAIL_FOOTER", ""))
         if footer:
             content_payload["customFooter"] = footer
         content_headers = self._default_headers()
-        content_headers["LinkedIn-Version"] = "202506"
+        # Was pinned to "202506", which LinkedIn retired — every call returned
+        # HTTP 426 NONEXISTENT_VERSION ("Requested version 20250601 is not
+        # active"), so InMail content creation was dead (observed 2026-08-03).
+        # LinkedIn ages versions out after ~12 months, so a hardcoded one is a
+        # time bomb: track config.LINKEDIN_VERSION like every other call.
 
         import requests as _req_lib
         resp = _req_lib.post("https://api.linkedin.com/rest/inMailContents", json=content_payload, headers=content_headers)
@@ -1071,7 +1073,7 @@ class LinkedInClient(AdPlatformClient):
             "intendedStatus": "DRAFT",
         }
         creative_headers = self._default_headers()
-        creative_headers["LinkedIn-Version"] = "202506"
+        creative_headers["LinkedIn-Version"] = config.LINKEDIN_VERSION
         resp = self._req("POST", f"https://api.linkedin.com/rest/adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/creatives", json=creative_payload, headers=creative_headers)
         self._raise_for_status(resp, "createInMailCreative")
         # Same normalisation as for adInMailContent: x-restli-id may be a bare
@@ -1499,6 +1501,15 @@ class LinkedInClient(AdPlatformClient):
 
 # ── InMail body formatting ──────────────────────────────────────────────────────
 
+# LinkedIn's documented Message Ad limits (Marketing Solutions Help a425533,
+# checked 2026-08-03): message text 1,500 characters, subject 60, CTA 20, custom
+# footer 20,000. The body cap here was 1,000 with a comment calling that
+# "LinkedIn's limit" — it is ours, and it mattered once the body grew a greeting
+# line and a closing CTA.
+INMAIL_BODY_HTML_MAX = 1500
+INMAIL_FOOTER_MAX = 20000
+
+
 def _inmail_html_body(text: str) -> str:
     """Render plain-text InMail copy as LinkedIn-style <p> paragraphs.
 
@@ -1506,8 +1517,10 @@ def _inmail_html_body(text: str) -> str:
     `<br><br>` separators render literally in some inboxes (reviewer feedback
     GMR-0024, 2026-06-11). We strip any <br> the copy model emitted, split on
     blank lines, collapse intra-paragraph newlines, and wrap each paragraph.
-    Caps total length at LinkedIn's ~1000-char htmlBody limit on a paragraph
-    boundary so a tag is never cut mid-render.
+
+    If the paragraphs don't all fit, the LAST one is kept and middle ones are
+    dropped: the final paragraph is the call to action (Pranav 2026-08-03), and
+    truncating from the end silently deletes the ask.
     """
     text = re.sub(r"<br\s*/?>", "\n", text or "", flags=re.IGNORECASE)
     paras = [
@@ -1515,15 +1528,65 @@ def _inmail_html_body(text: str) -> str:
         for p in re.split(r"\n\s*\n", text)
         if p.strip()
     ]
-    out: list[str] = []
-    total = 0
-    for p in paras:
-        seg = f"<p>{html.escape(p, quote=False)}</p>"
-        if total + len(seg) > 1000:
+    if not paras:
+        return ""
+    segs = [f"<p>{html.escape(p, quote=False)}</p>" for p in paras]
+    if sum(len(s) for s in segs) <= INMAIL_BODY_HTML_MAX:
+        return "".join(segs)
+
+    kept = [segs[0], segs[-1]] if len(segs) > 1 else [segs[0]]
+    total = sum(len(s) for s in kept)
+    middle: list[str] = []
+    for seg in segs[1:-1]:
+        if total + len(seg) > INMAIL_BODY_HTML_MAX:
             break
-        out.append(seg)
+        middle.append(seg)
         total += len(seg)
-    return "".join(out)
+    log.warning(
+        "InMail body over %d chars — kept the greeting, %d middle paragraph(s) and "
+        "the closing CTA, dropped %d",
+        INMAIL_BODY_HTML_MAX, len(middle), len(segs) - 2 - len(middle),
+    )
+    return "".join([segs[0], *middle, segs[-1]]) if len(segs) > 1 else segs[0]
+
+
+def _inmail_html_footer(text: str) -> str:
+    """Render the Terms & Conditions footer as HTML.
+
+    `customFooter` is rendered as HTML, not plain text. Verified live 2026-08-03:
+    the hand-built Message Ads on this account store it as
+    `<p>…</p><p><br></p><ul><li>…</li></ul>`, and they read correctly — while the
+    pipeline was sending the same policy as plain text with 27 newlines. Rendered
+    as HTML every one of those breaks collapses, so the whole notice became one
+    run-on wall with stray "- " hyphens mid-sentence and the four policy links
+    jammed onto one line. That is the "privacy policy full of typos" a reviewer
+    sees (Pranav 2026-08-03); nothing was actually misspelled.
+
+    Passes text through untouched when it already contains markup, so a Doppler
+    override can supply legal's own HTML directly.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    if re.search(r"</(p|ul|li|div|br)\s*>|<br\s*/?>", raw, flags=re.IGNORECASE):
+        return raw[:INMAIL_FOOTER_MAX]
+
+    out: list[str] = []
+    for block in re.split(r"\n\s*\n", raw):
+        lines = [ln.strip() for ln in block.splitlines() if ln.strip()]
+        if not lines:
+            continue
+        for line in lines:
+            if line.startswith(("- ", "* ", "• ")):
+                # Bullets become real list items; left as text they read as a
+                # stray hyphen in the middle of the previous sentence.
+                out.append(f"<ul><li>{html.escape(line[2:].strip(), quote=False)}</li></ul>")
+            else:
+                out.append(f"<p>{html.escape(line, quote=False)}</p>")
+        out.append("<p><br></p>")     # blank line between blocks, as legal's own copy does
+    while out and out[-1] == "<p><br></p>":
+        out.pop()
+    return "".join(out)[:INMAIL_FOOTER_MAX]
 
 
 # ── Targeting helpers ──────────────────────────────────────────────────────────
