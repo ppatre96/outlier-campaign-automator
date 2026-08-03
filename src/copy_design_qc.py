@@ -933,6 +933,30 @@ def validate_inmail_copy(
     if re.search(r"^\s*#{1,3}\s+\S", body_text, re.MULTILINE):
         violations.append("[SOFT] Body contains markdown headers — InMail must use plain paragraphs only")
 
+    # ── Personalization + in-body CTA (Pranav 2026-08-03) ──
+    # inmail_copy_writer repairs both deterministically, so these firing means
+    # something bypassed that path (a hand-assembled variant, or a caller building
+    # its own body).
+    if "%FIRSTNAME%" not in body_text:
+        if re.search(r"%first ?name%", body_text, re.IGNORECASE):
+            violations.append(
+                "[SOFT] Body has a lower-case %firstname% macro — LinkedIn only expands "
+                "the upper-case %FIRSTNAME%, so it would render literally"
+            )
+        else:
+            violations.append(
+                "[SOFT] Body has no %FIRSTNAME% greeting — Message Ads open with "
+                '"Hi %FIRSTNAME%," so the message is personalized'
+            )
+    _last_para = [p for p in re.split(r"\n\s*\n", body_text) if p.strip()]
+    if _last_para and not re.search(
+        r"\b(apply|click|get started|start tasking|sign up|join)\b", _last_para[-1], re.I
+    ):
+        violations.append(
+            "[SOFT] Body does not end on a call to action — the closing line should "
+            'name the button, e.g. "Click Apply now to see the current tasks"'
+        )
+
     # ── CTA label ──
     if len(cta) > INMAIL_CTA_MAX_CHARS:
         violations.append(
