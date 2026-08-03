@@ -10,10 +10,17 @@ script is the cloud half of the intake loop, run by
                                                             request's Slack thread
 
 It deliberately does NOT try to post to Slack. The account's stored
-SLACK_BOT_TOKEN is a rotating user token that is currently `invalid_auth`, and
-threading a reply needs the workflow message's `ts`, which only a Slack search can
-resolve. So CI's job is detection and durable queueing; the in-thread reply is
-posted by Claude, which has a working Slack connector.
+SLACK_BOT_TOKEN is a rotating user token that is currently `invalid_auth`, so CI
+has no working Slack credential. All Slack traffic is handled by Claude, which
+does.
+
+Slack shape (decided with Pranav 2026-08-04): the Slack workflow appends to the
+sheet and posts NOTHING in the channel — verified by a channel read plus two
+bot-inclusive searches, neither of which found the submission. So there is no
+"workflow message" to reply under. Instead the worker posts ONE anchor message per
+ticket into the group DM and confines every reply to that thread, recording the
+anchor's `ts` as a `slack-thread-ts:` comment on this issue so a re-run reuses the
+thread rather than posting a second anchor.
 
 State lives in the SHEET, not on disk — CI runners are ephemeral, and a Status
 column is also visible to the people who filed the request. A row with a
@@ -115,9 +122,12 @@ def _issue_body(row: list[str], cols: dict[str, int], row_number: int) -> str:
         "3. If it is ambiguous, needs a product decision, reverses an earlier deliberate"
         " choice, or asks for an unverifiable claim in ad copy, open no PR and ask in"
         " the thread instead.",
-        "4. **Reply in the Slack thread for THIS request only** — the workflow message"
-        f" in <#{SLACK_CHANNEL}> that carries the text above. Do not post a new"
-        " channel message and do not DM.",
+        f"4. **Slack: one anchor message per ticket in <#{SLACK_CHANNEL}>, then reply"
+        " only in its thread.** The Slack workflow writes to the sheet and posts"
+        " nothing in the channel (verified 2026-08-04), so there is no workflow"
+        " message to reply to — the worker posts the anchor itself. If this issue"
+        " already has a `slack-thread-ts:` comment, REUSE that thread instead of"
+        " posting a second anchor. Never DM.",
         "",
         f"_Queued automatically from sheet row {row_number} by"
         " `scripts/request_intake.py`._",
