@@ -54,6 +54,20 @@ def _build_mention_prefix() -> str:
     return " ".join(f"<@{uid}>" for uid in ids)
 
 
+def _more(count: Optional[int]) -> str:
+    """" (+N more)" when a cohort produced more than the one entry we show.
+
+    A cohort fans out over geo clusters and A/B/C angles, so a single line per
+    cohort can only name the first campaign/creative. Without this the reader has
+    no way to tell one draft from twelve.
+    """
+    try:
+        n = int(count or 0)
+    except (TypeError, ValueError):
+        return ""
+    return f" (+{n - 1} more)" if n > 1 else ""
+
+
 def build_success_message(
     ramp_id: str,
     project_name: str,
@@ -115,12 +129,16 @@ def build_success_message(
     for c in per_cohort:
         desc = c.get("cohort_description") or c.get("cohort_id") or "cohort"
         lines.append(f"*Cohort: {desc}*")
-        lines.append(f"  • InMail draft: `{c.get('inmail_urn') or '—'}`")
-        lines.append(f"  • Static draft: `{c.get('static_urn') or '—'}`")
+        lines.append(f"  • InMail draft: `{c.get('inmail_urn') or '—'}`"
+                     f"{_more(c.get('inmail_count'))}")
+        lines.append(f"  • Static draft: `{c.get('static_urn') or '—'}`"
+                     f"{_more(c.get('static_count'))}")
         inmail_creative = c.get("inmail_creative") or "—"
         static_creative = c.get("static_creative") or "—"
-        lines.append(f"  • Creative (InMail): {inmail_creative}")
-        lines.append(f"  • Creative (Static): {static_creative}")
+        lines.append(f"  • Creative (InMail): {inmail_creative}"
+                     f"{_more(c.get('inmail_creative_count'))}")
+        lines.append(f"  • Creative (Static): {static_creative}"
+                     f"{_more(c.get('static_creative_count'))}")
         lines.append("")
 
     if extra_platform_campaigns:
