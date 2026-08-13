@@ -43,13 +43,17 @@ on:
           - "true"
           - "false"
       only_channel:
-        description: "Per-channel manual launch (feature #3): restrict this run to one channel and bypass the ramp status machine (channel_locks guard concurrency). Requires ramp_id + a prior approval. Blank = all approved channels. NOTE: 'google' = Display only + 'google_search' = Search only when scoped (a bare 'google' in the full/approve path still covers both)."
+        description: "Per-channel manual launch (feature #3): restrict this run to one channel and bypass the ramp status machine (channel_locks guard concurrency). Requires ramp_id + a prior approval. Blank = all approved channels. NOTE: 'google' = Display only + 'google_search' = Search only when scoped (a bare 'google' in the full/approve path still covers both). Keep this list in sync with the console's lib/launch-channels.ts — a value the console offers but this enum omits is rejected by GitHub with 422 before any run starts."
         required: false
         default: ""
         type: choice
         options:
           - ""
           - "linkedin"
+          # LinkedIn Carousel is its own pipeline channel, not a LinkedIn arm:
+          # LinkedIn fixes a campaign's format at creation, so carousel needs
+          # its own campaigns. The console has offered it since console#75.
+          - "linkedin_carousel"
           - "meta"
           - "google"
           - "google_search"
