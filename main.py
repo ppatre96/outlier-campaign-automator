@@ -6442,17 +6442,31 @@ def _process_row_both_modes(
             )
             modes = _override
 
-    # OUTLIER_CHANNELS env override (2026-05-20): comma-separated subset of
-    # {"linkedin","meta","google"}. Mirrors OUTLIER_ARMS but for the platform
-    # axis — lets a manual rerun create only Meta campaigns (no LinkedIn /
-    # Google touch). Used for GMR-0021's Meta-only end-to-end trigger.
-    # When set, overrides the `channels` arg (which normally comes from the
-    # console approval decision); the env var wins so a one-off CLI rerun
-    # doesn't need to fake a console decision.
+    # OUTLIER_CHANNELS env override (2026-05-20): comma-separated subset of the
+    # known platform names (src.ad_platform.PLATFORM_CONSTRAINTS — linkedin,
+    # linkedin_carousel, meta, google, google_search, reddit, tiktok). Mirrors
+    # OUTLIER_ARMS but for the platform axis — lets a manual rerun create only
+    # Meta campaigns (no LinkedIn / Google touch). Used for GMR-0021's Meta-only
+    # end-to-end trigger. When set, overrides the `channels` arg (which normally
+    # comes from the console approval decision); the env var wins so a one-off
+    # CLI rerun doesn't need to fake a console decision.
+    # The whitelist was hardcoded to linkedin/meta/google, which SILENTLY dropped
+    # every channel added since (linkedin_carousel, google_search, reddit,
+    # tiktok) and left `channels` at its default — a scoped rerun for those
+    # looked like it worked and launched everything. Validate against the
+    # registry instead, and log anything dropped.
     _channels_env = (_os.environ.get("OUTLIER_CHANNELS") or "").strip()
     if _channels_env:
-        _channels_override = [c.strip().lower() for c in _channels_env.split(",") if c.strip()]
-        _channels_override = [c for c in _channels_override if c in ("linkedin", "meta", "google")]
+        from src.ad_platform import PLATFORM_CONSTRAINTS
+        _requested = [c.strip().lower() for c in _channels_env.split(",") if c.strip()]
+        _channels_override = [c for c in _requested if c in PLATFORM_CONSTRAINTS]
+        _dropped = [c for c in _requested if c not in PLATFORM_CONSTRAINTS]
+        if _dropped:
+            log.warning(
+                "_process_row_both_modes: OUTLIER_CHANNELS contains unknown channel(s) %s "
+                "— ignored (known: %s)",
+                _dropped, sorted(PLATFORM_CONSTRAINTS),
+            )
         if _channels_override:
             log.info(
                 "_process_row_both_modes: OUTLIER_CHANNELS env override active — "
