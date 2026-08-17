@@ -530,3 +530,23 @@ def test_notify_success_routes_zero_campaign_run_to_not_live(monkeypatch, fake_r
     sent.clear()
     N.notify_success(fake_ramp, _fake_result(n_cohorts=1))
     assert "Smart Ramp processed" in sent["text"]
+
+
+def test_notify_success_stays_quiet_for_states_with_their_own_ping(monkeypatch, fake_ramp):
+    """A dormant awaiting_approval ramp re-visited by the poller must not post —
+    it already got the briefs-ready/approval ping, and the merge that backfills
+    locales re-signatures 7 old ramps at once."""
+    from src import smart_ramp_notifier as N
+    sent: dict = {}
+    monkeypatch.setattr(
+        N, "_send_to_all_targets",
+        lambda text, ramp_id="", thread_ts=None, targets=None: sent.update(text=text) or {},
+    )
+    monkeypatch.setattr(N, "_lookup_thread_ts", lambda rid: None)
+
+    for quiet in ("awaiting_approval", "awaiting_brief_review", "prep_running", "launching"):
+        N.notify_success(fake_ramp, {
+            "ok": True, "ui_gated": True, "status": quiet,
+            "per_cohort": [], "static_campaigns": [], "inmail_campaigns": [],
+        })
+        assert sent == {}, f"{quiet} should not post"

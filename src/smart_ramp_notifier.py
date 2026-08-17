@@ -674,11 +674,24 @@ def notify_success(ramp_record, result: dict, version: int = 1) -> dict:
         or any(extra_platform_campaigns.values())
     )
     if not created_anything:
+        status = str(result.get("status") or "")
+        # Only ping when someone ACTED and got nothing: a launch that ran
+        # (status blank), a ramp approved but never dispatched, or a lost claim.
+        # awaiting_approval / awaiting_brief_review / prep_running / launching
+        # already have their own action-required ping, and the poller re-visits
+        # them on every signature change — posting "NOT live" there would bury
+        # the real ones under dormant-ramp noise.
+        if status not in ("", "awaiting_manual_launch", "claim_lost"):
+            log.info(
+                "Ramp %s created nothing (status=%s) — that state has its own "
+                "ping; no Slack post.", ramp_record.id, status,
+            )
+            return {}
         text = build_nothing_live_message(
             ramp_id=ramp_record.id,
             project_name=ramp_record.project_name or "—",
             requester_name=ramp_record.requester_name or "—",
-            status=str(result.get("status") or ""),
+            status=status,
             missing=missing_launch_inputs(ramp_record),
             version=version,
         )
