@@ -72,20 +72,48 @@ def refresh_access_token(
     new_token   = data["access_token"]
     new_refresh = data.get("refresh_token", refresh_token)  # LinkedIn may rotate it
 
-    # Persist back to .env so the next process startup picks it up
-    _update_env_token(new_token, new_refresh)
-    log.info("LinkedIn access token refreshed and written to .env")
+    # Persist back to .env so the next process startup picks it up, and so the
+    # workflows' "Persist refreshed LinkedIn tokens to Doppler" step has a file
+    # to read. Log what actually happened — this used to claim success even when
+    # the write was skipped.
+    if _update_env_token(new_token, new_refresh):
+        log.info("LinkedIn access token refreshed and written to .env")
+    else:
+        log.warning(
+            "LinkedIn access token refreshed but NOT persisted to .env — the "
+            "workflow's Doppler persist step will find nothing, so the next run "
+            "starts from the stale token again."
+        )
     return new_token
 
 
-def _update_env_token(new_access: str, new_refresh: str) -> None:
-    """Overwrite LINKEDIN_ACCESS_TOKEN (and optionally LINKEDIN_REFRESH_TOKEN) in .env."""
-    if not _ENV_FILE.exists():
-        return
-    text = _ENV_FILE.read_text()
-    text = re.sub(r"^LINKEDIN_ACCESS_TOKEN=.*$",  f"LINKEDIN_ACCESS_TOKEN={new_access}",  text, flags=re.MULTILINE)
-    text = re.sub(r"^LINKEDIN_REFRESH_TOKEN=.*$", f"LINKEDIN_REFRESH_TOKEN={new_refresh}", text, flags=re.MULTILINE)
-    _ENV_FILE.write_text(text)
+def _update_env_token(new_access: str, new_refresh: str) -> bool:
+    """Write both LinkedIn tokens into .env. True when persisted.
+
+    CI has no .env (Doppler injects the environment), and this used to return
+    early in that case — so every refreshed token was discarded and BOTH
+    workflows' Doppler persist steps read an absent file. That is why Doppler
+    kept serving an expired LINKEDIN_ACCESS_TOKEN while runs themselves kept
+    working (each one re-refreshed in memory). Create the file when missing: the
+    CI runner is ephemeral and .env is gitignored.
+
+    Appends a key that isn't already present, too — the old regex-only path
+    silently dropped the value when .env existed without the line.
+    """
+    try:
+        text = _ENV_FILE.read_text() if _ENV_FILE.exists() else ""
+        for key, val in (("LINKEDIN_ACCESS_TOKEN", new_access),
+                         ("LINKEDIN_REFRESH_TOKEN", new_refresh)):
+            pattern = rf"^{key}=.*$"
+            if re.search(pattern, text, flags=re.MULTILINE):
+                text = re.sub(pattern, f"{key}={val}", text, flags=re.MULTILINE)
+            else:
+                text = (text.rstrip("\n") + "\n" if text.strip() else "") + f"{key}={val}\n"
+        _ENV_FILE.write_text(text)
+        return True
+    except OSError as exc:
+        log.warning("Could not write %s: %s", _ENV_FILE, exc)
+        return False
 
 
 class LinkedInClient(AdPlatformClient):
