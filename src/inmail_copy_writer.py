@@ -239,9 +239,9 @@ def build_inmail_variants(
                 cache_system=True,
             ).strip()
             parsed = _parse_response(raw)
-            subject = parsed.get("subject", _fallback_subject(tg_category, angle_key))
+            subject = parsed.get("subject", _fallback_subject(tg_category, angle_key, cohort))
             cta_label = INMAIL_CTA_TEXT  # fixed across angles (reviewer feedback)
-            body = parsed.get("body", _fallback_body(tg_category, angle_key))
+            body = parsed.get("body", _fallback_body(tg_category, angle_key, cohort))
 
             # Auto-replace any banned-terminology hits per CLAUDE.md
             # "Don't Say / Instead, Say" table. Demoted from MUST→SHOULD
@@ -307,8 +307,8 @@ def build_inmail_variants(
             variant = InMailVariant(
                 angle=angle_key,
                 angle_label=angle_cfg["label"],
-                subject=_fallback_subject(tg_category, angle_key),
-                body=_fallback_body(tg_category, angle_key),
+                subject=_fallback_subject(tg_category, angle_key, cohort),
+                body=_fallback_body(tg_category, angle_key, cohort),
                 cta_label=INMAIL_CTA_TEXT,
                 cta_url=destination_url,
             )
@@ -498,7 +498,57 @@ def _parse_response(raw: str) -> dict:
 
 # ── Fallbacks ──────────────────────────────────────────────────────────────────
 
-def _fallback_subject(tg_category: str, angle_key: str) -> str:
+# classify_tg() returns UPPER_SNAKE category codes, which read as broken English
+# when interpolated straight into copy — GMR-0027 shipped "Your GENERAL expertise
+# is in demand" to LinkedIn because the LLM was down and the fallback used the raw
+# code. Every fallback string goes through _display_category() now.
+_CATEGORY_LABELS = {
+    "DATA_ANALYST":      "data analysis",
+    "ML_ENGINEER":       "machine learning",
+    "MATH":              "mathematics",
+    "MEDICAL":           "clinical medicine",
+    "ACCESSIBILITY":     "accessibility",
+    "LANGUAGE":          "language",
+    "SOFTWARE_ENGINEER": "software engineering",
+}
+
+# Cohort signal prefixes that name a FIELD the copy templates can drop in
+# verbatim, in preference order. Only these two read naturally in every slot
+# ("your {x} expertise", "{x} professionals", "background in {x}"). Deliberately
+# excluded: experience_band__ / highest_degree_level__ ("Your Masters expertise"),
+# and accreditations_norm__ / job_titles_norm__ — "background in certified public
+# accountant" is clunky and "Certified public accountant professionals are
+# tasking on Outlier" blows the 60-char subject cap. Those cohorts take the
+# generic line instead, which is what the LLM would have replaced anyway.
+_FIELD_SIGNAL_PREFIXES = (
+    "skills__",
+    "fields_of_study__",
+)
+
+
+def _display_category(tg_category: str, cohort=None) -> str:
+    """A field phrase that reads as English inside fallback copy.
+
+    Known categories map to a written-out field. GENERAL (and anything
+    unrecognized) falls back to the cohort's strongest field signal, which also
+    gives each cohort its own line instead of one shared generic sentence.
+    Returns "" when nothing reads sensibly — callers then use a generic line
+    rather than interpolating a phrase that stutters ("domain expert expertise").
+    """
+    label = _CATEGORY_LABELS.get((tg_category or "").upper().strip())
+    if label:
+        return label
+    for prefix in _FIELD_SIGNAL_PREFIXES:
+        for rule in (getattr(cohort, "rules", None) or []):
+            field = str(rule[0] if isinstance(rule, (list, tuple)) else rule)
+            if field.startswith(prefix):
+                derived = field[len(prefix):].replace("_", " ").strip()
+                if derived:
+                    return derived
+    return ""
+
+
+def _fallback_subject(tg_category: str, angle_key: str, cohort=None) -> str:
     """Subjects that ship when the LLM is unavailable.
 
     Angle C previously read "Earn on your schedule — no fixed shifts", which broke
@@ -506,12 +556,23 @@ def _fallback_subject(tg_category: str, angle_key: str) -> str:
     rule 6 bans em dashes. Angle B claimed "1,000+ … work on Outlier" — an
     unverified peer count plus the banned word "work".
     """
-    subjects = {
-        "A": f"Your {tg_category} expertise is in demand",
-        "B": f"{tg_category} professionals are tasking on Outlier",
-        "C": "Earn on your own hours, no fixed shifts",
-    }
-    return subjects.get(angle_key, "AI tasks for domain experts")[:60]
+    label = _display_category(tg_category, cohort)
+    if label:
+        subjects = {
+            "A": f"Your {label} expertise is in demand",
+            "B": f"{label[0].upper()}{label[1:]} professionals are tasking on Outlier",
+            "C": "Earn on your own hours, no fixed shifts",
+        }
+    else:
+        subjects = {
+            "A": "Your expertise is in demand",
+            "B": "Domain experts are tasking on Outlier",
+            "C": "Earn on your own hours, no fixed shifts",
+        }
+    subject = subjects.get(angle_key, "AI tasks for domain experts")
+    # Never hard-truncate: the old [:60] slice would ship a subject cut mid-word
+    # ("…are tasking on Out"). A long label drops to the generic line, which fits.
+    return subject if len(subject) <= 60 else "AI tasks for domain experts"
 
 
 def ensure_greeting(body: str) -> str:
@@ -559,7 +620,7 @@ def ensure_closing_cta(body: str) -> str:
     return f"{text}\n\n{_FALLBACK_CLOSING_CTA}"
 
 
-def _fallback_body(tg_category: str, angle_key: str) -> str:
+def _fallback_body(tg_category: str, angle_key: str, cohort=None) -> str:
     """The body that ships when the LLM is unavailable or unparseable.
 
     Carries the same two structural elements the prompt demands, because this is
@@ -568,11 +629,12 @@ def _fallback_body(tg_category: str, angle_key: str) -> str:
     vocabulary ("schedule", "work", "job") — the earlier version of this fallback
     was not, and it bypasses the LLM entirely so nothing else would catch it.
     """
+    label = _display_category(tg_category, cohort)
     greeting = f"{INMAIL_GREETING}\n\n"
     if angle_key == "A":
         return (
             greeting +
-            f"Your background in {tg_category} is exactly what AI companies are looking for right now.\n\n"
+            f"Your background in {label or 'your field'} is exactly what AI companies are looking for right now.\n\n"
             f"Outlier is an AI data platform that matches domain experts with AI tasks: reviewing model "
             f"outputs, generating examples, and rating responses in your area of expertise. Everything is "
             f"remote and async, and you choose your own hours.\n\n"
@@ -583,7 +645,7 @@ def _fallback_body(tg_category: str, angle_key: str) -> str:
     elif angle_key == "B":
         return (
             greeting +
-            f"Outlier has paid out more than $500M to contributors globally, and {tg_category} "
+            f"Outlier has paid out more than $500M to contributors globally, and {label or 'domain'} "
             f"professionals are among those contributing to AI projects on the platform.\n\n"
             f"Outlier matches domain experts with AI tasks: reviewing model outputs, rating responses, and "
             f"generating content in their field. Tasks are remote, async, and flexible, with no fixed hours "
@@ -595,7 +657,7 @@ def _fallback_body(tg_category: str, angle_key: str) -> str:
         return (
             greeting +
             f"No shifts. No deadlines. No minimum hours.\n\n"
-            f"Outlier is an AI data platform where {tg_category} professionals complete AI tasks on their "
+            f"Outlier is an AI data platform where {label or 'domain'} professionals complete AI tasks on their "
             f"own hours: reviewing model outputs, generating examples, rating responses. Everything is "
             f"remote and async.\n\n"
             f"More than $500M has been paid to contributors on the platform. Payment is weekly. You choose "

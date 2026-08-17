@@ -308,6 +308,42 @@ jobs:
           echo "Running: doppler run -- python scripts/smart_ramp_poller.py $ARGS"
           doppler run -- python scripts/smart_ramp_poller.py $ARGS
 
+      # Same step launch.yml has had all along. Without it this workflow — the one
+      # the console dispatches, and the one that ticks every 5 min — refreshed
+      # LinkedIn/Reddit tokens on 401, used them in-run, then threw them away. So
+      # Doppler kept serving an expired LINKEDIN_ACCESS_TOKEN: runs still worked
+      # (they re-refresh each time) but anything reading the secret directly got
+      # EXPIRED_ACCESS_TOKEN.
+      - name: Persist refreshed LinkedIn tokens to Doppler
+        if: always()
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: |
+          if [ ! -f .env ]; then
+            echo "No .env produced by run — nothing to persist."
+            exit 0
+          fi
+          NEW_ACCESS=$(grep '^LINKEDIN_ACCESS_TOKEN=' .env | cut -d= -f2- || true)
+          NEW_REFRESH=$(grep '^LINKEDIN_REFRESH_TOKEN=' .env | cut -d= -f2- || true)
+          if [ -n "$NEW_ACCESS" ]; then
+            doppler secrets set LINKEDIN_ACCESS_TOKEN="$NEW_ACCESS" --silent
+            echo "Persisted refreshed LINKEDIN_ACCESS_TOKEN to Doppler."
+          fi
+          if [ -n "$NEW_REFRESH" ]; then
+            doppler secrets set LINKEDIN_REFRESH_TOKEN="$NEW_REFRESH" --silent
+            echo "Persisted refreshed LINKEDIN_REFRESH_TOKEN to Doppler."
+          fi
+          # Reddit ADS token refreshes-on-401 the same way — the pipeline writes
+          # new values to .env; persist each non-empty one. (The media token uses
+          # a browser-free password-grant mint, so there's nothing to persist.)
+          for KEY in REDDIT_ACCESS_TOKEN REDDIT_REFRESH_TOKEN; do
+            VAL=$(grep "^$KEY=" .env | cut -d= -f2- || true)
+            if [ -n "$VAL" ]; then
+              doppler secrets set "$KEY"="$VAL" --silent
+              echo "Persisted refreshed $KEY to Doppler."
+            fi
+          done
+
       - name: Save processed_ramps state
         if: always()
         uses: actions/cache@v4
