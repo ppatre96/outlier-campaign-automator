@@ -1,10 +1,13 @@
 """Smart Ramp API client for fetching ramps and their cohort specifications."""
 
 import json
+import logging
 import os
 import requests
 from typing import Optional
 from dataclasses import dataclass
+
+log = logging.getLogger(__name__)
 
 
 def _domain_match_failed(lp_guardrail_snapshot) -> bool:
@@ -213,6 +216,22 @@ class SmartRampClient:
         """Parse raw cohort row into CohortSpec."""
         included_geos = raw.get("included_geos", []) or []
         matched_locales = raw.get("matched_locales")
+        # Locale backfill: a cohort can ship with matched_locales empty while the
+        # form still carries `job_post_language_code` (GMR-0027 "Personal Bench":
+        # matched_locales=[], language code "en"). Smart Ramp's own campaign
+        # naming resolves that cohort's locale segment to "en", so mirror it here.
+        # Without a locale the console has nothing to lock or pass as
+        # ONLY_LOCALES, and main.py's ONLY_LOCALES filter can never match the
+        # cohort — the launch silently creates nothing.
+        if not matched_locales:
+            _lang = str(raw.get("job_post_language_code") or "").strip()
+            if _lang:
+                log.info(
+                    "Cohort %s has no matched_locales — backfilling from "
+                    "job_post_language_code=%r",
+                    raw.get("id", "?"), _lang,
+                )
+                matched_locales = [_lang]
         # Geo backfill: some cohorts ship with no included_geos (e.g. GMR-0023
         # ko-KR / vi-VN). Fill from config.LOCALE_GEO_OVERRIDES keyed on locale
         # ONLY when the cohort has no geos of its own, so we never override an

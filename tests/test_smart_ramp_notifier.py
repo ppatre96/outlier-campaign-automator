@@ -460,3 +460,73 @@ def test_notify_briefs_ready_persists_thread_parent(monkeypatch, fake_ramp):
         fake_ramp, briefs_generated=3, cohorts_count=1, fell_back_to_legacy=False,
     )
     assert persisted == {"rid": fake_ramp.id, "ts": "1700.0001"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Zero-campaign runs must report the blocker + the fix, never "processed"
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_nothing_live_message_states_blocker_and_next_step():
+    """GMR-0027 shape: approved, nothing launched. The body has to name the
+    blocker and the click, and must NOT read like a launch."""
+    from src import smart_ramp_notifier as N
+    msg = N.build_nothing_live_message(
+        ramp_id="GMR-0027", project_name="Personal Bench",
+        requester_name="Tuan Hoang", status="awaiting_manual_launch",
+        missing=["`Personal finance CBs` has no landing page — pick one on the ramp form"],
+    )
+    assert "NOT live: GMR-0027" in msg
+    assert "No campaigns were created" in msg
+    assert "no landing page" in msg
+    assert "click Launch" in msg
+    assert "GMR-0027/form" in msg
+    assert "Review and activate" not in msg
+
+    banned = re.compile(
+        r"\b(compensation|project rate|interview|bonus|promote|assign|"
+        r"job|role|position|team|required)\b",
+        re.IGNORECASE,
+    )
+    m = banned.search(msg)
+    assert not m, f"banned vocab in not-live message: {m.group(0) if m else ''!r}"
+
+
+def test_missing_launch_inputs_flags_gaps_and_passes_complete_cohorts(fake_ramp):
+    from src import smart_ramp_notifier as N
+    # fake_ramp's cohort has no locale + no landing page → both flagged.
+    gaps = N.missing_launch_inputs(fake_ramp)
+    assert any("no locale" in g for g in gaps)
+    assert any("no landing page" in g for g in gaps)
+
+    fake_ramp.cohorts[0].matched_locales = ["bn-IN"]
+    fake_ramp.cohorts[0].selected_lp_url = "https://outlier.ai/experts/x"
+    assert N.missing_launch_inputs(fake_ramp) == []
+
+    fake_ramp.cohorts = []
+    assert N.missing_launch_inputs(fake_ramp) == [
+        "the ramp form has no cohorts — add one (locale, geos, landing page) "
+        "on the form, then re-run prep from the console"
+    ]
+
+
+def test_notify_success_routes_zero_campaign_run_to_not_live(monkeypatch, fake_ramp):
+    """A ui_gated tick creates nothing — it must not post the success body."""
+    from src import smart_ramp_notifier as N
+    sent: dict = {}
+    monkeypatch.setattr(
+        N, "_send_to_all_targets",
+        lambda text, ramp_id="", thread_ts=None, targets=None: sent.update(text=text) or {},
+    )
+    monkeypatch.setattr(N, "_lookup_thread_ts", lambda rid: None)
+
+    N.notify_success(fake_ramp, {
+        "ok": True, "ui_gated": True, "status": "awaiting_manual_launch",
+        "per_cohort": [], "static_campaigns": [], "inmail_campaigns": [],
+    })
+    assert "NOT live" in sent["text"]
+    assert "click Launch" in sent["text"]
+
+    sent.clear()
+    N.notify_success(fake_ramp, _fake_result(n_cohorts=1))
+    assert "Smart Ramp processed" in sent["text"]
