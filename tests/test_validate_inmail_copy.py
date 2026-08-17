@@ -167,3 +167,57 @@ def test_clean_copy_all_pass():
     cta = "See Open Tasks"
     viols = validate_inmail_copy(subject, body, cta)
     assert viols == [], f"Expected no violations, got: {viols}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fallback copy must read as English — no raw classify_tg() codes, no truncation
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _cohort(rules):
+    from types import SimpleNamespace
+    return SimpleNamespace(name="c", rules=rules, lift_pp=0)
+
+
+def test_fallback_never_ships_raw_category_code():
+    """GMR-0027 shipped "Your GENERAL expertise is in demand" to LinkedIn when the
+    LLM was down: the fallback interpolated classify_tg()'s raw code."""
+    from src.inmail_copy_writer import _fallback_subject, _fallback_body
+    cohort = _cohort([("skills__trading", "1"), ("highest_degree_level__Masters", "1")])
+    for angle in ("F", "A", "B", "C"):
+        subject = _fallback_subject("GENERAL", angle, cohort)
+        body = _fallback_body("GENERAL", angle, cohort)
+        assert "GENERAL" not in subject and "GENERAL" not in body
+        assert len(subject) <= 60, f"{angle} subject over LinkedIn's cap: {subject!r}"
+
+
+def test_fallback_derives_field_from_cohort_signals():
+    from src.inmail_copy_writer import _fallback_subject, _fallback_body
+    cohort = _cohort([("experience_band__10plus", "1"), ("skills__internal_controls", "1")])
+    assert _fallback_subject("GENERAL", "A", cohort) == "Your internal controls expertise is in demand"
+    assert "background in internal controls" in _fallback_body("GENERAL", "A", cohort)
+
+
+def test_known_category_uses_written_out_label():
+    from src.inmail_copy_writer import _fallback_subject
+    assert _fallback_subject("ML_ENGINEER", "A", _cohort([])) == "Your machine learning expertise is in demand"
+
+
+def test_unusable_signal_falls_back_to_generic_not_a_stutter():
+    """Degree/accreditation-only cohorts have no field phrase that reads well.
+    "domain expert expertise" and a mid-word truncation are both regressions."""
+    from src.inmail_copy_writer import _fallback_subject
+    for rules in ([("accreditations_norm__certified_public_accountant", "1")],
+                  [("highest_degree_level__Phd", "1")],
+                  []):
+        a = _fallback_subject("GENERAL", "A", _cohort(rules))
+        b = _fallback_subject("GENERAL", "B", _cohort(rules))
+        assert a == "Your expertise is in demand", a
+        assert b == "Domain experts are tasking on Outlier", b
+        assert "expert expertise" not in a
+
+
+def test_no_cohort_at_all_still_renders():
+    from src.inmail_copy_writer import _fallback_subject, _fallback_body
+    assert _fallback_subject("GENERAL", "A") == "Your expertise is in demand"
+    assert "your field" in _fallback_body("GENERAL", "A")
