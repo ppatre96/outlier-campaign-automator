@@ -33,6 +33,10 @@ LINKEDIN_CAMPAIGN_MANAGER_URL = (
     "https://www.linkedin.com/campaignmanager/accounts/510956407/campaigns"
 )
 
+# Smart Ramp form deep-link base — the blocked-launch message points at the form
+# because that's where a missing locale / geo / landing page gets fixed.
+SMART_RAMP_FORM_URL_BASE = "https://genai-smart-ramp-v2.vercel.app/ramps"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Message builders (vocabulary-clean per CLAUDE.md)
@@ -278,6 +282,112 @@ def build_briefs_ready_message(
         "Console:",
         "",
         url,
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def missing_launch_inputs(ramp_record) -> list[str]:
+    """Ramp-form gaps that stop a cohort from producing campaigns, each with its fix.
+
+    Read AFTER SmartRampClient._parse_cohort, so `matched_locales` is already
+    backfilled from the language code — anything still missing here is genuinely
+    absent from the form. Empty list = the form has everything the launch needs.
+    """
+    cohorts = list(getattr(ramp_record, "cohorts", None) or [])
+    if not cohorts:
+        return [
+            "the ramp form has no cohorts — add one (locale, geos, landing page) "
+            "on the form, then re-run prep from the console"
+        ]
+    gaps: list[str] = []
+    for c in cohorts:
+        label = (getattr(c, "cohort_description", "") or getattr(c, "id", "") or "cohort")[:60]
+        if not (getattr(c, "matched_locales", None) or getattr(c, "job_post_language_code", None)):
+            gaps.append(
+                f"`{label}` has no locale — set the cohort's locale (or its "
+                "language code) on the ramp form"
+            )
+        if not (getattr(c, "included_geos", None) or []):
+            gaps.append(f"`{label}` has no geos — set the cohort's geos on the ramp form")
+        if not getattr(c, "selected_lp_url", None):
+            gaps.append(f"`{label}` has no landing page — pick one on the ramp form")
+    return gaps
+
+
+def build_nothing_live_message(
+    ramp_id: str,
+    project_name: str,
+    requester_name: str,
+    status: str = "",
+    missing: Optional[list[str]] = None,
+    version: int = 1,
+) -> str:
+    """Slack body for a run that created NOTHING — states the blocker + the fix.
+
+    Why this exists: every zero-campaign tick used to render as "Smart Ramp
+    processed … Cohorts: 0 … Review and activate in LinkedIn Campaign Manager",
+    which reads like a launch. GMR-0027 sat un-launched for three days behind two
+    of those messages. A run that creates nothing has to name what is missing and
+    what to click.
+
+    `status` is the poller's ui_gated status ("awaiting_manual_launch",
+    "awaiting_approval", …); blank means a launch actually ran and still produced
+    no campaigns. `missing` comes from missing_launch_inputs().
+    """
+    next_step = {
+        "awaiting_manual_launch":
+            "Channels are approved but nothing has launched yet. Open the console "
+            "→ Launch, tick the channels, set a daily budget, then click Launch.",
+        "awaiting_approval":
+            "Prep is done and this is waiting on you: open the console → Launch, "
+            "tick the channels, set a daily budget, then click Launch.",
+        "awaiting_brief_review":
+            "Prep is done and the briefs are waiting on review: open the console, "
+            "comment on any brief you want redirected, then click Confirm briefs.",
+        "prep_running":
+            "Prep is still running — this tick did nothing. The next ping lands "
+            "when prep finishes.",
+        "launching":
+            "A launch is already in flight for this ramp — this tick did nothing.",
+        "claim_lost":
+            "Another run claimed this ramp first — this tick did nothing.",
+    }.get(status, "")
+
+    mention = _build_mention_prefix()
+    lines = []
+    if mention:
+        lines.append(mention)
+    header = f"*Smart Ramp NOT live: {ramp_id}* — {project_name}"
+    if version > 1:
+        header = f"*Smart Ramp NOT live (v{version}): {ramp_id}* — {project_name}"
+    lines += [
+        header,
+        f"Requester: {requester_name or '—'}",
+        "No campaigns were created in this run — nothing is live and nothing is spending.",
+        "",
+    ]
+    if missing:
+        lines.append("*Missing on the ramp form:*")
+        lines += [f"  • {g}" for g in missing]
+        lines.append("")
+    if next_step:
+        lines += ["*To take it live:*", next_step, ""]
+    elif not missing:
+        lines += [
+            "*To take it live:*",
+            "Re-launch from the console → Launch (channels + daily budget). If it "
+            "creates nothing again, the run log is on the Smart Ramp Poller "
+            "workflow in GitHub Actions.",
+            "",
+        ]
+    console_url = _console_ramp_url(ramp_id)
+    if console_url:
+        lines += ["Console:", "", console_url, ""]
+    lines += [
+        "Ramp form:",
+        "",
+        f"{SMART_RAMP_FORM_URL_BASE}/{ramp_id}/form",
         "",
     ]
     return "\n".join(lines)
@@ -547,14 +657,54 @@ def _send_to_all_targets(
 
 
 def notify_success(ramp_record, result: dict, version: int = 1) -> dict:
-    """Launch-done summary. Threaded under notify_new_ramp's parent."""
+    """Launch-done summary. Threaded under notify_new_ramp's parent.
+
+    A run can finish `ok` and still create nothing — every ui_gated tick does
+    (`awaiting_manual_launch`, `awaiting_approval`, …), and so does a launch whose
+    cohorts are missing a locale / geo / landing page. Those go out as the
+    NOT-live body (blocker + what to click) instead of the success body, which
+    would otherwise say "processed … review and activate" over zero campaigns.
+    """
+    per_cohort = result.get("per_cohort") or []
+    extra_platform_campaigns = result.get("extra_platform_campaigns") or {}
+    created_anything = bool(
+        per_cohort
+        or (result.get("static_campaigns") or [])
+        or (result.get("inmail_campaigns") or [])
+        or any(extra_platform_campaigns.values())
+    )
+    if not created_anything:
+        status = str(result.get("status") or "")
+        # Only ping when someone ACTED and got nothing: a launch that ran
+        # (status blank), a ramp approved but never dispatched, or a lost claim.
+        # awaiting_approval / awaiting_brief_review / prep_running / launching
+        # already have their own action-required ping, and the poller re-visits
+        # them on every signature change — posting "NOT live" there would bury
+        # the real ones under dormant-ramp noise.
+        if status not in ("", "awaiting_manual_launch", "claim_lost"):
+            log.info(
+                "Ramp %s created nothing (status=%s) — that state has its own "
+                "ping; no Slack post.", ramp_record.id, status,
+            )
+            return {}
+        text = build_nothing_live_message(
+            ramp_id=ramp_record.id,
+            project_name=ramp_record.project_name or "—",
+            requester_name=ramp_record.requester_name or "—",
+            status=status,
+            missing=missing_launch_inputs(ramp_record),
+            version=version,
+        )
+        return _send_to_all_targets(
+            text, ramp_id=ramp_record.id, thread_ts=_lookup_thread_ts(ramp_record.id),
+        )
     text = build_success_message(
         ramp_id=ramp_record.id,
         project_name=ramp_record.project_name or "—",
         requester_name=ramp_record.requester_name or "—",
-        per_cohort=result.get("per_cohort") or [],
+        per_cohort=per_cohort,
         version=version,
-        extra_platform_campaigns=result.get("extra_platform_campaigns") or {},
+        extra_platform_campaigns=extra_platform_campaigns,
         manual_handoff_urls=result.get("manual_handoff_urls") or {},
     )
     return _send_to_all_targets(
