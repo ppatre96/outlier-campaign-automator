@@ -250,6 +250,56 @@ ORDER BY sd.SCREENING_RESULT DESC, ac.USER_ID
 # starting_project_id) instead of a signup_flow_id.
 # Returns the dominant signup flow + config for that project,
 # i.e. the (signup_flow_id, config_name) pair with the most PASS results.
+# Structural project → signup-flow resolution.
+#
+# PROJECT_FLOW_LOOKUP_SQL (below) answers "where did the people who ended up on
+# this project originally screen in?" — a BEHAVIOURAL question. For a project
+# staffed by existing CBs, the winner is whatever big funnel those CBs joined
+# through years earlier. GMR-0029 (RLI OTS Artifact Collection, a creative-
+# professional ramp) resolved to a LATAM-coder flow that way, which poisoned
+# both the job-post ICP and the entire Stage 1 screening pool.
+#
+# The structural link is `SIGNUPFLOWS.INTENDED_PROJECTS` (VARIANT array of
+# project ids) — "which flow was built FOR this project". Preference order:
+#   1. flows that actually carry a JOBPOSTS row (that post is the JD)
+#   2. active flows
+#   3. most recently updated
+# `config_name` comes from the job post's resume-screening config, which is what
+# RESUME_SQL needs alongside the flow id.
+PROJECT_FLOW_STRUCTURAL_SQL = """
+WITH flows AS (
+  SELECT
+    sf._ID        AS signup_flow_id,
+    sf.NAME       AS flow_name,
+    sf.ACTIVE     AS flow_active,
+    sf.UPDATED_AT AS flow_updated_at
+  FROM PUBLIC.SIGNUPFLOWS sf
+  WHERE TO_VARCHAR(sf.INTENDED_PROJECTS) ILIKE '%{project_id}%'
+     OR TO_VARCHAR(sf.JOB_POST_IDS)      ILIKE '%{project_id}%'
+)
+SELECT
+  f.signup_flow_id,
+  f.flow_name,
+  f.flow_active,
+  COALESCE(jp._ID, '')      AS jobpost_id,
+  COALESCE(jp.JOB_NAME, '') AS job_name,
+  COALESCE(jp.DOMAIN, '')   AS domain,
+  COALESCE(r.NAME, '')      AS config_name
+FROM flows f
+LEFT JOIN PUBLIC.JOBPOSTS jp
+  ON jp.SIGNUP_FLOW_ID = f.signup_flow_id
+ AND COALESCE(jp.__DELETED, FALSE) = FALSE
+LEFT JOIN PUBLIC.RESUMESCREENINGCONFIGS r
+  ON jp.RESUME_SCREENING_CONFIG_ID = r._ID
+ORDER BY
+  CASE WHEN jp._ID IS NOT NULL THEN 0 ELSE 1 END,
+  CASE WHEN COALESCE(r.NAME, '') <> '' THEN 0 ELSE 1 END,
+  CASE WHEN f.flow_active THEN 0 ELSE 1 END,
+  jp.UPDATED_AT   DESC NULLS LAST,
+  f.flow_updated_at DESC NULLS LAST
+LIMIT 10
+"""
+
 PROJECT_FLOW_LOOKUP_SQL = """
 SELECT
   ac.SIGNUP_FLOW_ID,
@@ -681,16 +731,90 @@ class RedashClient:
         log.info("Fetched %d screening rows", len(df))
         return df
 
+    def resolve_project_to_flow_structural(
+        self,
+        project_id: str,
+    ) -> tuple[str, str] | None:
+        """
+        Resolve project → (signup_flow_id, config_name) STRUCTURALLY, i.e. via
+        the flow that was built for this project (SIGNUPFLOWS.INTENDED_PROJECTS
+        / JOB_POST_IDS), preferring one that carries a job post.
+
+        This is the authoritative answer to "who does this project want?" — the
+        job post on that flow is the JD. Returns None when the project isn't
+        wired to any flow, in which case the caller falls back to the
+        behavioural lookup.
+        """
+        sql = PROJECT_FLOW_STRUCTURAL_SQL.format(project_id=_esc(project_id))
+        try:
+            df = self._run_query(sql, label=f"proj-struct-{project_id[:12]}")
+        except Exception as exc:
+            log.warning(
+                "Structural project→flow lookup failed for project_id=%s (%s) — "
+                "falling back to the behavioural pass-count lookup", project_id, exc,
+            )
+            return None
+        if df.empty:
+            log.info(
+                "No signup flow declares project_id=%s in INTENDED_PROJECTS/JOB_POST_IDS "
+                "— falling back to the behavioural pass-count lookup", project_id,
+            )
+            return None
+        row = df.iloc[0]
+
+        def _get(*names):
+            for n in names:
+                v = row.get(n)
+                if v is not None and str(v).strip() and str(v).strip().lower() != "nan":
+                    return str(v).strip()
+            return ""
+
+        signup_flow_id = _get("signup_flow_id", "SIGNUP_FLOW_ID")
+        config_name    = _get("config_name", "CONFIG_NAME")
+        if not signup_flow_id:
+            return None
+        if not config_name:
+            # RESUME_SQL filters on flow AND config; without a config the
+            # screening pull returns nothing, so this is not a usable answer.
+            log.warning(
+                "Structural flow %s (%r) for project_id=%s has no resume-screening config "
+                "— falling back to the behavioural lookup",
+                signup_flow_id, _get("flow_name", "FLOW_NAME"), project_id,
+            )
+            return None
+        log.info(
+            "Resolved project → signup_flow_id=%s config='%s' STRUCTURALLY "
+            "(flow=%r job_post=%r domain=%r) — %d candidate flow row(s)",
+            signup_flow_id, config_name, _get("flow_name", "FLOW_NAME"),
+            _get("job_name", "JOB_NAME"), _get("domain", "DOMAIN"), len(df),
+        )
+        return signup_flow_id, config_name
+
     def resolve_project_to_flow(
         self,
         project_id: str,
         start_date: str | None = None,
+        prefer_structural: bool = True,
     ) -> tuple[str, str] | None:
         """
         Given an Outlier project_id (activation_project_id or starting_project_id),
-        return the (signup_flow_id, config_name) pair with the most PASS results.
-        Returns None if no data found.
+        return a (signup_flow_id, config_name) pair.
+
+        Structural first (the flow built FOR this project), then the legacy
+        behavioural lookup (the flow with the most screening PASSes among people
+        who ended up on this project). The behavioural answer is only correct
+        when a project's contributors came in through its own funnel; for a
+        project staffed by existing CBs it returns their original funnel, which
+        is how GMR-0029 mined software engineers for a creative-professional
+        ramp. Pass `prefer_structural=False` to force the legacy behaviour.
+
+        Returns None if no data found either way.
         """
+        if prefer_structural:
+            structural = self.resolve_project_to_flow_structural(project_id)
+            if structural:
+                return structural
+
         sql = PROJECT_FLOW_LOOKUP_SQL.format(
             project_id=_esc(project_id),
             start_date=start_date or config.SCREENING_START_DATE,
@@ -703,7 +827,9 @@ class RedashClient:
         signup_flow_id = row.get("signup_flow_id") or row.get("SIGNUP_FLOW_ID")
         config_name    = row.get("config_name")    or row.get("CONFIG_NAME")
         log.info(
-            "Resolved project → signup_flow_id=%s config='%s' (passes=%s)",
+            "Resolved project → signup_flow_id=%s config='%s' BEHAVIOURALLY (passes=%s) "
+            "— this is where the project's contributors originally screened in, which "
+            "is not necessarily who the project wants",
             signup_flow_id, config_name, row.get("passes"),
         )
         return str(signup_flow_id), str(config_name)
@@ -735,6 +861,29 @@ class RedashClient:
             start_date=start_date,
             end_date=end_date,
         )
+        # The structural flow is the right ANSWER but may have no screening
+        # history yet (new project, or screening ran under a different config).
+        # Stage A needs a population to mine, so fall back to the behavioural
+        # flow rather than handing back an empty frame — loudly, because the
+        # pool is then off-JD and the JD anchors are doing all the work.
+        if df.empty:
+            behavioural = self.resolve_project_to_flow(
+                project_id, start_date=start_date, prefer_structural=False
+            )
+            if behavioural and behavioural != resolved:
+                log.warning(
+                    "Structural flow %s/%r returned 0 screening rows for project_id=%s — "
+                    "falling back to behavioural flow %s/%r. Stage A will mine an "
+                    "off-JD population; JD anchors must constrain it.",
+                    signup_flow_id, config_name, project_id, behavioural[0], behavioural[1],
+                )
+                signup_flow_id, config_name = behavioural
+                df = self.fetch_screenings(
+                    signup_flow_id=signup_flow_id,
+                    config_name=config_name,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
         return df, signup_flow_id, config_name
 
     def fetch_audience_requirements(

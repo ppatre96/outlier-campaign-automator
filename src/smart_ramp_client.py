@@ -71,6 +71,11 @@ class RampRecord:
     linear_issue_id: Optional[str]
     linear_url: Optional[str]
     cohorts: list[CohortSpec]
+    # True when the requester ticked "off_platform" — traffic goes somewhere
+    # other than an Outlier job post, so there is no job post to derive an ICP
+    # from. Consumers must NOT fall back to whatever JOBPOSTS row happens to
+    # hang off the signup flow (see GMR-0029, 2026-09-04).
+    off_platform: bool = False
 
 
 class SmartRampClient:
@@ -210,6 +215,10 @@ class SmartRampClient:
             linear_issue_id=raw.get("linearIssueId"),
             linear_url=raw.get("linearUrl"),
             cohorts=cohorts,
+            off_platform=(
+                str(form_data.get("outlier_or_off_platform") or "").strip().lower()
+                == "off_platform"
+            ),
         )
 
     def _parse_cohort(self, raw: dict) -> CohortSpec:

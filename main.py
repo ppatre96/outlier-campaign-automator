@@ -372,7 +372,12 @@ def _process_row(
     project_meta   = {}
     worker_skills: list[str] = []
     try:
-        if flow_id:
+        if flow_id and row.get("off_platform"):
+            log.info(
+                "_process_row: off-platform ramp — skipping job-post ICP derivation "
+                "for flow=%s (ICP comes from the Smart Ramp brief + project)", flow_id,
+            )
+        elif flow_id:
             job_post_meta = snowflake.fetch_job_post_meta(flow_id) or {}
         if project_id:
             project_meta = snowflake.fetch_project_meta(project_id) or {}
@@ -2732,7 +2737,18 @@ def _resolve_cohorts(
     job_post_meta: dict = {}
     project_meta: dict = {}
     try:
-        if flow_id:
+        # Off-platform ramps have no Outlier job post (GMR-0029). The JOBPOSTS
+        # lookup is keyed on signup_flow_id only, so it happily returns an
+        # unrelated post that hangs off the same flow — that post then drives
+        # derive_icp_from_job_post, the Stage 1 brief filter and base-role
+        # extraction, and the whole ramp mines the wrong audience. Skip it and
+        # let the Smart Ramp brief + project description define the ICP.
+        if flow_id and row.get("off_platform"):
+            log.info(
+                "_resolve_cohorts: off-platform ramp — skipping job-post ICP derivation "
+                "for flow=%s (ICP comes from the Smart Ramp brief + project)", flow_id,
+            )
+        elif flow_id:
             job_post_meta = snowflake.fetch_job_post_meta(flow_id) or {}
         if project_id:
             project_meta = snowflake.fetch_project_meta(project_id) or {}
@@ -2896,6 +2912,25 @@ def _resolve_cohorts(
         derived_icp.get("required_skills", []), list(df_bin.columns),
     )
     base_role_cols = title_anchor_cols + [c for c in skill_anchor_cols if c not in title_anchor_cols]
+
+    # ── JD-anchored feature gate ─────────────────────────────────────────────
+    # The brief filter above narrows WHICH PEOPLE Stage A mines. This narrows
+    # WHICH SIGNALS it may report. Without it Stage A returns the strongest
+    # predictor in the pool regardless of the requirement — GMR-0029 asked for
+    # graphic designers, animators and video producers and got kubernetes +
+    # python, because that pool was coder-heavy and coding genuinely does
+    # predict screening pass there. The requirement is the holy grail: gate the
+    # space to features related to the JD, then let Stage A rank within it.
+    if config.JD_ANCHORED_MINING:
+        from src.jd_anchors import gate_features_to_jd
+        bin_cols = gate_features_to_jd(
+            bin_cols,
+            derived_icp=derived_icp,
+            matched_domain=row.get("matched_domain") or "",
+            cohort_description=cohort_description,
+            job_post_meta=job_post_meta,
+            always_keep=base_role_cols,
+        )
 
     def _try_icp_fallback(reason: str) -> list:
         """Synthesize a single Cohort from the LLM-derived ICP's anchor
@@ -4927,6 +4962,35 @@ def _values_for_cohort(result: dict, key: str, cohort_id: str) -> list:
             if v and (k == cohort_id or str(k).startswith(prefix))]
 
 
+def _google_unique_suffix(platform: str, cohort, geo_group) -> str:
+    """Extra name segments that keep Google ad-group names unique.
+
+    Google enforces ad_group_name uniqueness within a parent campaign. The
+    Smart Ramp v2 spec (build_campaign_name) has no per-cohort or per-geo
+    segment that distinguishes within one row — "main country" is shared
+    across all geo clusters AND the cohort signature is omitted entirely.
+    With 3 cohorts × 3 geos = 9 combos, the spec produces just 1 unique name
+    → the first ad group lands and the other 8 fail DUPLICATE_ADGROUP_NAME.
+
+    Returns cohort._stg_id + geo_group.cluster_label as extra segments for
+    Google Display AND Google Search; LinkedIn + Meta tolerate duplicates so
+    they get "" and keep their canonical names untouched.
+    """
+    if platform not in ("google", "google_search"):
+        return ""
+    stg_suffix = getattr(cohort, "_stg_id", "") or ""
+    geo_suffix = (
+        getattr(geo_group, "cluster_label", "")
+        if geo_group is not None
+        and getattr(geo_group, "cluster", "") != "global_mix"
+        else ""
+    )
+    # Both segments together guarantee uniqueness across (cohort × geo_group)
+    # under a single parent campaign.
+    extras = " | ".join(s for s in (stg_suffix, geo_suffix) if s)
+    return f" | {extras}" if extras else ""
+
+
 def _process_extra_platform_arm(
     *,
     platform: str,
@@ -5621,28 +5685,9 @@ def _process_extra_platform_arm(
                 )
                 campaign_name = f"{cohort._stg_name}{geo_suffix}"
             # Google enforces ad_group_name uniqueness within a parent
-            # campaign. The Smart Ramp v2 spec (build_campaign_name) has no
-            # per-cohort or per-geo segment that distinguishes within one
-            # row — "main country" is shared across all geo clusters AND
-            # the cohort signature is omitted entirely. With 3 cohorts × 3
-            # geos = 9 combos, the spec produces just 1 unique name → the
-            # first ad group lands and the other 8 fail DUPLICATE_ADGROUP_NAME.
-            # Append cohort._stg_id + geo_group.cluster_label as a 13th/14th
-            # segment ONLY for Google; LinkedIn + Meta tolerate duplicates so
-            # we leave their canonical names untouched.
-            if platform == "google":
-                stg_suffix = getattr(cohort, "_stg_id", "") or ""
-                geo_suffix = (
-                    getattr(geo_group, "cluster_label", "")
-                    if geo_group is not None
-                    and getattr(geo_group, "cluster", "") != "global_mix"
-                    else ""
-                )
-                # Both segments together guarantee uniqueness across (cohort
-                # × geo_group) under a single parent campaign.
-                extras = " | ".join(s for s in (stg_suffix, geo_suffix) if s)
-                if extras:
-                    campaign_name = f"{campaign_name} | {extras}"
+            # campaign — see _google_unique_suffix. Applies to Display AND
+            # Search ("google_search"); LinkedIn + Meta keep canonical names.
+            campaign_name += _google_unique_suffix(platform, cohort, geo_group)
             targeting = resolver.resolve_cohort(cohort, geos=group_geos)
 
             # Google Search keyword override (Phase 2 of keywords-card flow).
@@ -7089,6 +7134,9 @@ def _ramp_to_rows(ramp) -> list[dict]:
             "target_activations": cohort.target_activations,
             "linear_issue_id": ramp.linear_issue_id,
             "project_id": ramp.project_id,
+            # No Outlier job post behind this ramp — suppresses job-post ICP
+            # derivation so an unrelated JOBPOSTS row can't define the audience.
+            "off_platform": getattr(ramp, "off_platform", False),
             # Smart Ramp v2 campaign-naming metadata
             "job_post_pod": getattr(cohort, "job_post_pod", None),
             "matched_domain": getattr(cohort, "matched_domain", None),

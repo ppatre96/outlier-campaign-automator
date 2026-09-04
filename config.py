@@ -641,6 +641,15 @@ META_LAL_BUDGET_SPLIT_PCT    = int(os.getenv("META_LAL_BUDGET_SPLIT_PCT", "70"))
 # to fall back to beam discovery for every cohort.
 GENERALIST_LOCALE_TARGETING  = os.getenv("GENERALIST_LOCALE_TARGETING", "true").lower() in ("1", "true", "yes")
 
+# ── JD-anchored Stage A mining (2026-09-05) ───────────────────────────────────
+# Gate the binary-feature space Stage A may mine down to features related to
+# the job post + the Smart Ramp cohort's requirement, so the behavioural miner
+# can only surface signals that relate to what the project actually asked for.
+# Without it Stage A reports the strongest predictor in the pool full stop —
+# GMR-0029 (graphic design / audio / video / animation) mined kubernetes +
+# python off a coder-heavy pool. Set False to restore unconstrained mining.
+JD_ANCHORED_MINING = os.getenv("JD_ANCHORED_MINING", "true").lower() in ("1", "true", "yes")
+
 # ── Copy localization (2026-06-17) ─────────────────────────────────────────────
 # Write ad copy in the target locale's language for locale-defined cohorts
 # (generalist_locale facet / ICP language_pref / known LOCALES tag). Scoped to

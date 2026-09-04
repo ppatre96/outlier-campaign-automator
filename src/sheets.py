@@ -145,8 +145,15 @@ class SheetsClient:
         creds = Credentials.from_service_account_file(config.GOOGLE_CREDENTIALS, scopes=SCOPES)
         self._creds = creds
         self._gc = gspread.authorize(creds)
-        self._triggers = self._gc.open_by_key(config.TRIGGERS_SHEET_ID)
-        self._urn_sheet = self._gc.open_by_key(config.URN_SHEET_ID)
+        # Opened lazily. These used to be eager `open_by_key` calls, so every
+        # SheetsClient() made two Sheets round-trips before doing any work —
+        # and a transient Google outage took the whole run with it. GMR-0029's
+        # LinkedIn launch (2026-09-04) died here with
+        # `APIError: [503]: The service is currently unavailable.` before a
+        # single campaign was touched. Nothing that doesn't read a spreadsheet
+        # should be able to fail on one.
+        self._triggers_ss = None
+        self._urn_ss = None
         self._drive_service = None  # lazy-init in _get_drive()
         self._lp_url_map_cache: dict[str, str] | None = None  # lazy, see read_lp_url_map
         # Phase 3.3 — gspread is not thread-safe (sequential http client + no
@@ -156,6 +163,36 @@ class SheetsClient:
         # A coarse instance-level RLock serializes those writes; concurrent
         # READs are still allowed (we don't lock the reader methods).
         self._write_lock = threading.RLock()
+
+    # These two were plain attributes assigned in __init__. They are properties
+    # now so the open is deferred to first use, but the setters are kept so
+    # callers (and tests) that inject a spreadsheet stub still work.
+
+    @property
+    def _triggers(self):
+        """The triggers/registry spreadsheet, opened on first use."""
+        if self._triggers_ss is None:
+            self._triggers_ss = self._gc.open_by_key(config.TRIGGERS_SHEET_ID)
+        return self._triggers_ss
+
+    @_triggers.setter
+    def _triggers(self, value):
+        self._triggers_ss = value
+
+    @property
+    def _urn_sheet(self):
+        """The URN mapping spreadsheet, opened on first use.
+
+        Only reached now when the Postgres URN cache is empty or unreachable —
+        see src/urn_store.py.
+        """
+        if self._urn_ss is None:
+            self._urn_ss = self._gc.open_by_key(config.URN_SHEET_ID)
+        return self._urn_ss
+
+    @_urn_sheet.setter
+    def _urn_sheet(self, value):
+        self._urn_ss = value
 
     # ── Drive helpers (registry image embedding) ──────────────────────────────
 
