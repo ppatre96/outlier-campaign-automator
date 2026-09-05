@@ -117,9 +117,17 @@ def test_prefer_structural_false_keeps_legacy_behaviour(monkeypatch):
     assert not any(c.startswith("proj-struct") for c in client._calls)
 
 
-def test_empty_structural_pool_falls_back_to_the_behavioural_flow(monkeypatch):
-    """Structural flow is right but has no screening history yet — Stage A still
-    needs a population, so take the behavioural pool rather than returning empty."""
+def test_empty_structural_pool_returns_empty_for_cold_start(monkeypatch):
+    """No on-requirement screening history means cold-start from the job post,
+    NOT borrowing an unrelated population.
+
+    GMR-0029's dry run showed why: with the coder pool substituted in, the
+    graphic-design cohort mined `skills__api_design`, `accreditations_norm__
+    design_patterns` and `skills__ant_design` — software-engineering homonyms
+    of "design", which were the only "design" signals present in that pool.
+    Cohorts that merely share vocabulary with the requirement are worse than no
+    cohorts, because the names look plausible.
+    """
     client = _client(
         monkeypatch,
         structural_rows=[_STRUCTURAL_ROW],
@@ -130,8 +138,11 @@ def test_empty_structural_pool_falls_back_to_the_behavioural_flow(monkeypatch):
         },
     )
     df, flow_id, config_name = client.fetch_screenings_by_project(_PROJECT)
-    assert (flow_id, config_name) == ("0000coderflow0000", "Tier 2 Coders")
-    assert len(df) == 2
+    assert df.empty, "an off-requirement pool must not be substituted in"
+    assert flow_id == "6a69405b8a922f69582db8ea"
+    assert config_name == "Artifact Acquisition Screening"
+    # The coder pool must never have been fetched.
+    assert not any(c == "screenings-0000coderflow0000" for c in client._calls)
 
 
 def test_non_empty_structural_pool_is_kept(monkeypatch):

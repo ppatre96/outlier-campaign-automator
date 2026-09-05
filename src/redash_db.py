@@ -745,6 +745,22 @@ class RedashClient:
         wired to any flow, in which case the caller falls back to the
         behavioural lookup.
         """
+        # Memoised per client: callers ask again to check whether a flow they
+        # already hold is structurally linked to the project, and that question
+        # shouldn't cost a second round-trip.
+        cache = getattr(self, "_structural_flow_cache", None)
+        if cache is None:
+            cache = self._structural_flow_cache = {}
+        if project_id in cache:
+            return cache[project_id]
+        result = self._resolve_project_to_flow_structural_uncached(project_id)
+        cache[project_id] = result
+        return result
+
+    def _resolve_project_to_flow_structural_uncached(
+        self,
+        project_id: str,
+    ) -> tuple[str, str] | None:
         sql = PROJECT_FLOW_STRUCTURAL_SQL.format(project_id=_esc(project_id))
         try:
             df = self._run_query(sql, label=f"proj-struct-{project_id[:12]}")
@@ -861,29 +877,23 @@ class RedashClient:
             start_date=start_date,
             end_date=end_date,
         )
-        # The structural flow is the right ANSWER but may have no screening
-        # history yet (new project, or screening ran under a different config).
-        # Stage A needs a population to mine, so fall back to the behavioural
-        # flow rather than handing back an empty frame — loudly, because the
-        # pool is then off-JD and the JD anchors are doing all the work.
+        # A structural flow with no screening history means this project has no
+        # on-requirement behavioural data — NOT that we should go find some
+        # other population. Borrowing the behavioural flow's pool here is how
+        # GMR-0029's dry run still produced `api_design`, `design_patterns` and
+        # `ant_design` for a graphic-design ramp: those are software-engineering
+        # homonyms of "design", and they were the only "design" signals present
+        # in a coder pool. The caller treats an empty frame as the cold-start
+        # signal and derives the ICP from the job post instead, which is the
+        # right answer when there is nobody on-requirement to learn from.
         if df.empty:
-            behavioural = self.resolve_project_to_flow(
-                project_id, start_date=start_date, prefer_structural=False
+            log.warning(
+                "Structural flow %s/%r has no screening history for project_id=%s — "
+                "returning an empty frame so the caller cold-starts from the job post. "
+                "Not falling back to a behavioural pool: an off-requirement population "
+                "yields cohorts that merely share vocabulary with the requirement.",
+                signup_flow_id, config_name, project_id,
             )
-            if behavioural and behavioural != resolved:
-                log.warning(
-                    "Structural flow %s/%r returned 0 screening rows for project_id=%s — "
-                    "falling back to behavioural flow %s/%r. Stage A will mine an "
-                    "off-JD population; JD anchors must constrain it.",
-                    signup_flow_id, config_name, project_id, behavioural[0], behavioural[1],
-                )
-                signup_flow_id, config_name = behavioural
-                df = self.fetch_screenings(
-                    signup_flow_id=signup_flow_id,
-                    config_name=config_name,
-                    start_date=start_date,
-                    end_date=end_date,
-                )
         return df, signup_flow_id, config_name
 
     def fetch_audience_requirements(

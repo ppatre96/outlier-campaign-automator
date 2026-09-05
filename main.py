@@ -2737,16 +2737,27 @@ def _resolve_cohorts(
     job_post_meta: dict = {}
     project_meta: dict = {}
     try:
-        # Off-platform ramps have no Outlier job post (GMR-0029). The JOBPOSTS
-        # lookup is keyed on signup_flow_id only, so it happily returns an
-        # unrelated post that hangs off the same flow — that post then drives
+        # The job post IS the requirement — use it whenever we can prove it
+        # belongs to this project, i.e. the flow was resolved structurally
+        # (SIGNUPFLOWS.INTENDED_PROJECTS). Only suppress it for an off-platform
+        # ramp sitting on a flow we could NOT verify: JOBPOSTS is keyed on
+        # signup_flow_id alone, so an unverified flow can hand back a post from
+        # an unrelated project, and that post would then drive
         # derive_icp_from_job_post, the Stage 1 brief filter and base-role
-        # extraction, and the whole ramp mines the wrong audience. Skip it and
-        # let the Smart Ramp brief + project description define the ICP.
-        if flow_id and row.get("off_platform"):
+        # extraction (GMR-0029 → "Coding Expertise ... LATAM" for a
+        # graphic-design ramp).
+        _flow_verified = False
+        if flow_id and project_id and hasattr(snowflake, "resolve_project_to_flow_structural"):
+            try:
+                _structural = snowflake.resolve_project_to_flow_structural(project_id)
+                _flow_verified = bool(_structural and _structural[0] == flow_id)
+            except Exception as exc:
+                log.debug("_resolve_cohorts: structural verification failed: %s", exc)
+        if flow_id and row.get("off_platform") and not _flow_verified:
             log.info(
-                "_resolve_cohorts: off-platform ramp — skipping job-post ICP derivation "
-                "for flow=%s (ICP comes from the Smart Ramp brief + project)", flow_id,
+                "_resolve_cohorts: off-platform ramp on an unverified flow=%s — skipping "
+                "job-post ICP derivation (ICP comes from the Smart Ramp brief + project)",
+                flow_id,
             )
         elif flow_id:
             job_post_meta = snowflake.fetch_job_post_meta(flow_id) or {}
