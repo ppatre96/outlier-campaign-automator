@@ -34,6 +34,12 @@ log = logging.getLogger(__name__)
 # (`ImageAdResult(creative_urn=...)`, `result.creative_urn`).
 ImageAdResult = CreateAdResult
 
+# Sponsored-Messaging creative creation races LinkedIn's own propagation of the
+# adInMailContent it references — see the comment in create_inmail_ad. Six
+# attempts spanning ~30s; observed propagation on a live account was ~6s.
+_INMAIL_CREATIVE_BACKOFF = (2, 3, 5, 8, 12)
+_INMAIL_CREATIVE_ATTEMPTS = len(_INMAIL_CREATIVE_BACKOFF) + 1
+
 _LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
@@ -1102,7 +1108,45 @@ class LinkedInClient(AdPlatformClient):
         }
         creative_headers = self._default_headers()
         creative_headers["LinkedIn-Version"] = config.LINKEDIN_VERSION
-        resp = self._req("POST", f"https://api.linkedin.com/rest/adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/creatives", json=creative_payload, headers=creative_headers)
+        # `inMailContents` is NOT read-your-writes consistent: the content URN
+        # the POST just handed back takes a few seconds to become resolvable by
+        # /creatives, and a creative POST issued before then comes back
+        # 404 NOT_FOUND "Could not find entity" — which reads like a broken
+        # payload rather than a timing problem.
+        #
+        # Measured against the live account 2026-09-05 with a freshly created
+        # content urn: 404 at t+0.4s, 404 at t+2.8s, 201 at t+6.5s. The
+        # pipeline posts ~150ms after creating the content, so it lost the race
+        # every single time — all 76 InMail ads on GMR-0029 failed this way and
+        # the ramp shipped 15 campaigns with zero ads.
+        #
+        # Retry on 404 only. Any other status is a real error and raises on the
+        # first attempt, so a genuinely bad payload still fails fast.
+        resp = None
+        for attempt in range(1, _INMAIL_CREATIVE_ATTEMPTS + 1):
+            resp = self._req(
+                "POST",
+                self._url(f"adAccounts/{config.LINKEDIN_AD_ACCOUNT_ID}/creatives"),
+                json=creative_payload,
+                headers=creative_headers,
+            )
+            if resp.status_code != 404:
+                break
+            if attempt < _INMAIL_CREATIVE_ATTEMPTS:
+                delay = _INMAIL_CREATIVE_BACKOFF[attempt - 1]
+                log.info(
+                    "createInMailCreative: content %s not resolvable yet "
+                    "(404, attempt %d/%d) — waiting %ss",
+                    content_urn, attempt, _INMAIL_CREATIVE_ATTEMPTS, delay,
+                )
+                time.sleep(delay)
+        else:
+            log.error(
+                "createInMailCreative: content %s never became resolvable after "
+                "%d attempts (~%ds). LinkedIn propagation is slower than the "
+                "budget — raise _INMAIL_CREATIVE_BACKOFF.",
+                content_urn, _INMAIL_CREATIVE_ATTEMPTS, sum(_INMAIL_CREATIVE_BACKOFF),
+            )
         self._raise_for_status(resp, "createInMailCreative")
         # Same normalisation as for adInMailContent: x-restli-id may be a bare
         # numeric id or a full URN — return a full URN either way.
