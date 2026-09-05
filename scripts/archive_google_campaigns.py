@@ -105,10 +105,11 @@ def main() -> int:
     campaign_service = client.get_service("CampaignService")
     ops = []
     for c in targets:
+        # REMOVED is not a writable status — an update carrying it comes back
+        # `Enum value 'REMOVED' cannot be used.` Removal is its own operation
+        # on CampaignOperation, which is what the Ads UI's "Remove" does.
         op = client.get_type("CampaignOperation")
-        op.update.resource_name = f"customers/{customer_id}/campaigns/{c}"
-        op.update.status = client.enums.CampaignStatusEnum.REMOVED
-        client.copy_from(op.update_mask, client.get_type("FieldMask")(paths=["status"]))
+        op.remove = f"customers/{customer_id}/campaigns/{c}"
         ops.append(op)
 
     resp = campaign_service.mutate_campaigns(customer_id=customer_id, operations=ops)
