@@ -1,0 +1,92 @@
+name: Backfill URN Cache
+
+# One-shot migration: copies the legacy URN mapping Google Sheet into the
+# Postgres `linkedin_urn_cache` table. After it runs, UrnResolver reads URNs
+# from Postgres and only touches the sheet when a facet is missing.
+#
+# Why: on 2026-09-04 GMR-0029's LinkedIn launch died in SheetsClient.__init__
+# on `open_by_key(URN_SHEET_ID)` with `APIError: [503]: The service is
+# currently unavailable.` — before a single campaign was created. Reference
+# data that a launch depends on shouldn't live behind a spreadsheet API.
+#
+# No cron. Re-runnable and idempotent (upsert on (facet, name_lower)) — run it
+# again whenever the sheet gains rows that typeahead hasn't already learned.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Read the sheet and report counts without writing to Postgres"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      tabs:
+        description: "Comma-separated tab subset (e.g. Skills,Titles). Blank = every mapped tab."
+        required: false
+        default: ""
+
+jobs:
+  backfill:
+    name: Seed linkedin_urn_cache from the URN Sheet
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Echo inputs (for run log)
+        run: |
+          echo "dry_run: ${{ github.event.inputs.dry_run }}"
+          echo "tabs: ${{ github.event.inputs.tabs }}"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v4
+
+      # The source of truth for this migration is still the Sheet, so the
+      # service account has to be present — without it SheetsClient degrades to
+      # NullSheetsClient and every tab reads as empty (a silent no-op backfill).
+      - name: Write Google credentials
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: doppler run -- bash -c 'echo "$GOOGLE_CREDENTIALS_JSON" > credentials.json'
+
+      - name: Fail closed on missing Google credentials
+        run: |
+          if [ ! -s credentials.json ]; then
+            echo "::error::credentials.json is empty — GOOGLE_CREDENTIALS_JSON is unset in Doppler."
+            echo "::error::Backfill would read 0 rows from every tab and report success. Aborting."
+            exit 1
+          fi
+
+      - name: Run backfill
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          if [ -n "${{ github.event.inputs.tabs }}" ]; then
+            ARGS="$ARGS --tabs ${{ github.event.inputs.tabs }}"
+          fi
+          echo "Running: doppler run -- python3 scripts/backfill_urn_cache.py $ARGS"
+          doppler run -- python3 scripts/backfill_urn_cache.py $ARGS

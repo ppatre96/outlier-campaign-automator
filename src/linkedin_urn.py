@@ -82,6 +82,31 @@ class UrnResolver(TargetingResolver):
         rules = getattr(cohort, "rules", None) or []
         return self.resolve_cohort_rules(rules)
 
+    def _read_rows(self, tab_name: str) -> list[dict]:
+        """`{name, urn}` rows for a facet — Postgres first, URN Sheet second.
+
+        The sheet was the original store and is still the seed source, but
+        reading it on the launch path meant a Google Sheets 503 could kill a
+        run before it reached LinkedIn (GMR-0029, 2026-09-04). Postgres is the
+        primary now; the sheet stays as a fallback until every environment has
+        been backfilled (scripts/backfill_urn_cache.py).
+        """
+        try:
+            from src.urn_store import read_facet
+            rows = read_facet(tab_name)
+            if rows:
+                return rows
+            log.info(
+                "URN tab %r not in the Postgres cache yet — reading the sheet "
+                "(run scripts/backfill_urn_cache.py to seed it)", tab_name,
+            )
+        except Exception as exc:
+            log.warning(
+                "URN cache read failed for %r (%s) — falling back to the URN Sheet",
+                tab_name, exc,
+            )
+        return self._sheets.read_urn_tab(tab_name)
+
     def _load_tab(self, tab_name: str) -> list[tuple[str, str]]:
         # Fast path: cache hit. Reads of a fully-populated dict slot are
         # safe in CPython under the GIL — only the load+populate path needs
@@ -94,7 +119,7 @@ class UrnResolver(TargetingResolver):
             if tab_name in self._cache:
                 return self._cache[tab_name]
             try:
-                rows = self._sheets.read_urn_tab(tab_name)
+                rows = self._read_rows(tab_name)
                 # Each row is a dict; expect keys 'name' and 'urn' (case-insensitive)
                 entries = []
                 for row in rows:
@@ -175,12 +200,15 @@ class UrnResolver(TargetingResolver):
             )
             return None
         urn = candidates[idx]["urn"]
-        # Self-heal: append to in-memory cache so the next resolve() in this
-        # session hits the fast path. (Not persisted to the Google Sheet —
-        # if needed, a separate warm-cache script can write these back.)
+        # Self-heal: append to the in-memory cache so the next resolve() in
+        # this session hits the fast path, and persist to the Postgres URN
+        # cache so every LATER run does too. (The Google Sheet was read-only
+        # on this path — typeahead resolutions were relearned every run.)
         with self._cache_lock:
             if tab_name in self._cache:
                 self._cache[tab_name].append((candidates[idx]["name"].lower(), urn))
+        from src.urn_store import remember
+        remember(tab_name, candidates[idx]["name"], urn)
         log.info("Resolved '%s' → '%s' (typeahead, score=%d)", value, urn, score)
         return urn
 
