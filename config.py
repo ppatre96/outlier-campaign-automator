@@ -650,6 +650,31 @@ GENERALIST_LOCALE_TARGETING  = os.getenv("GENERALIST_LOCALE_TARGETING", "true").
 # python off a coder-heavy pool. Set False to restore unconstrained mining.
 JD_ANCHORED_MINING = os.getenv("JD_ANCHORED_MINING", "true").lower() in ("1", "true", "yes")
 
+# ── project → signup-flow resolution (2026-09-07) ─────────────────────────────
+# Minimum project-attributed screening PASSes before the behavioural fallback
+# (PROJECT_FLOW_LOOKUP_SQL) is allowed to name a flow. That query ranks flows by
+# how many of THIS project's people passed screening under them, and takes the
+# top row with no floor — so a flow backed by 2 rows of evidence was accepted as
+# confidently as one backed by 36,000, then handed back a 72,524-row pool that
+# looked perfectly healthy downstream. The audit across 20 ramps found a clean
+# cliff: winners at 0, 2, 8, 8 passes, then nothing until 27.
+#
+# Below the floor we decline to resolve. That yields an empty frame, which
+# _resolve_cohorts already routes to a job-post cold start — the right answer
+# when we cannot say whose funnel this is.
+PROJECT_FLOW_MIN_PASSES = int(os.getenv("PROJECT_FLOW_MIN_PASSES", "25"))
+
+# Explicit project_id → (signup_flow_id, config_name) escapes for projects that
+# NO flow declares in SIGNUPFLOWS.INTENDED_PROJECTS / JOB_POST_IDS. Four exist
+# as of the 2026-09-07 audit — Coding QA Technical Assessment V1, EKG Multiple
+# Choice V11, IaC, SWE Pilot 1 — and for three of them the flow the pipeline
+# picks structurally belongs to a DIFFERENT project (mostly OpenClaw), so this
+# is an active wrong answer rather than missing data. Code cannot infer a link
+# that isn't in the data; populating INTENDED_PROJECTS on the real flows is the
+# proper fix and belongs to whoever owns signup flows. This dict is the stopgap.
+# Format: {"<project_id>": ("<signup_flow_id>", "<resume_screening_config_name>")}
+PROJECT_FLOW_OVERRIDES: dict[str, tuple[str, str]] = {}
+
 # ── Copy localization (2026-06-17) ─────────────────────────────────────────────
 # Write ad copy in the target locale's language for locale-defined cohorts
 # (generalist_locale facet / ICP language_pref / known LOCALES tag). Scoped to

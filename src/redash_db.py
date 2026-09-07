@@ -826,6 +826,17 @@ class RedashClient:
 
         Returns None if no data found either way.
         """
+        override = (getattr(config, "PROJECT_FLOW_OVERRIDES", None) or {}).get(project_id)
+        if override:
+            log.warning(
+                "Resolved project → signup_flow_id=%s config='%s' from "
+                "PROJECT_FLOW_OVERRIDES — no flow declares this project in "
+                "SIGNUPFLOWS, so the mapping is pinned by hand. Remove this entry "
+                "once INTENDED_PROJECTS is populated upstream.",
+                override[0], override[1],
+            )
+            return str(override[0]), str(override[1])
+
         if prefer_structural:
             structural = self.resolve_project_to_flow_structural(project_id)
             if structural:
@@ -842,6 +853,29 @@ class RedashClient:
         row = df.iloc[0]
         signup_flow_id = row.get("signup_flow_id") or row.get("SIGNUP_FLOW_ID")
         config_name    = row.get("config_name")    or row.get("CONFIG_NAME")
+
+        # Confidence floor. `passes` is the EVIDENCE for this pick, not the size
+        # of the pool it yields — GMR-0029 picked a flow on passes=2 and got a
+        # 72,524-row pool, so every downstream size guard (df_raw.empty,
+        # n_icp < 30) saw a healthy frame and the cold start never fired.
+        # Re-running the same query days later returned a different winner
+        # (passes=5): at these counts the ranking is noise, not a lookup.
+        try:
+            passes = int(row.get("passes") or 0)
+        except (TypeError, ValueError):
+            passes = 0
+        floor = int(getattr(config, "PROJECT_FLOW_MIN_PASSES", 0) or 0)
+        if passes < floor:
+            log.warning(
+                "Behavioural project→flow resolution for project_id=%s is too weak to "
+                "trust: best flow %s (config=%r) has only %d project-attributed "
+                "screening pass(es), below PROJECT_FLOW_MIN_PASSES=%d. Declining to "
+                "resolve — the caller will cold-start from the job post rather than "
+                "mine a population we cannot attribute to this project.",
+                project_id, signup_flow_id, config_name, passes, floor,
+            )
+            return None
+
         log.info(
             "Resolved project → signup_flow_id=%s config='%s' BEHAVIOURALLY (passes=%s) "
             "— this is where the project's contributors originally screened in, which "
@@ -871,6 +905,27 @@ class RedashClient:
             return pd.DataFrame(), "", ""
 
         signup_flow_id, config_name = resolved
+
+        # Reconciliation: does the flow we're about to mine actually belong to
+        # this project? Nothing ever asked this, and the answer was NO for 9 of
+        # 20 ramps audited on 2026-09-07 — a US short-form-video ramp
+        # (GMR-0021) mined an Italian pool, Blind Evals (GMR-0024) mined Gulf
+        # Arabic, going back to GMR-0004 in March. Every one produced
+        # plausible-looking cohorts, so nobody looked. This warning is the
+        # cheapest possible tripwire; it does not change behaviour.
+        try:
+            structural = self.resolve_project_to_flow_structural(project_id)
+        except Exception:
+            structural = None
+        if structural and structural[0] != signup_flow_id:
+            log.warning(
+                "FLOW MISMATCH project_id=%s: mining flow %s (config=%r) but the "
+                "project structurally declares flow %s (config=%r). The population "
+                "Stage A learns from may be unrelated to what this ramp asked for — "
+                "check the cohorts this run produces before trusting them.",
+                project_id, signup_flow_id, config_name, structural[0], structural[1],
+            )
+
         df = self.fetch_screenings(
             signup_flow_id=signup_flow_id,
             config_name=config_name,

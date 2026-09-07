@@ -168,3 +168,118 @@ def test_blank_structural_flow_id_is_rejected(monkeypatch, value):
     row = {**_STRUCTURAL_ROW, "signup_flow_id": value}
     client = _client(monkeypatch, structural_rows=[row], behavioural_rows=[_BEHAVIOURAL_ROW])
     assert client.resolve_project_to_flow(_PROJECT) == ("0000coderflow0000", "Tier 2 Coders")
+
+
+# ── confidence floor on the behavioural fallback ────────────────────────────
+
+
+def test_weak_behavioural_evidence_declines_to_resolve(monkeypatch):
+    """`passes` is the evidence for the pick, not the size of the pool it yields.
+
+    GMR-0029 chose a flow on passes=2 and got a 72,524-row pool, so every
+    downstream size guard (df_raw.empty, n_icp < 30) saw a healthy frame and the
+    cold start never fired. Re-running the query days later returned a different
+    winner (passes=5) — at those counts the ranking is noise, not a lookup.
+    """
+    weak = {**_BEHAVIOURAL_ROW, "passes": 2}
+    client = _client(monkeypatch, structural_rows=[], behavioural_rows=[weak])
+    monkeypatch.setattr("config.PROJECT_FLOW_MIN_PASSES", 25, raising=False)
+    assert client.resolve_project_to_flow(_PROJECT) is None
+
+
+def test_strong_behavioural_evidence_still_resolves(monkeypatch):
+    strong = {**_BEHAVIOURAL_ROW, "passes": 264}
+    client = _client(monkeypatch, structural_rows=[], behavioural_rows=[strong])
+    monkeypatch.setattr("config.PROJECT_FLOW_MIN_PASSES", 25, raising=False)
+    assert client.resolve_project_to_flow(_PROJECT) == ("0000coderflow0000", "Tier 2 Coders")
+
+
+@pytest.mark.parametrize("passes", [0, 2, 8, 24])
+def test_the_audited_weak_winners_all_decline(monkeypatch, passes):
+    """The real winners below the cliff: GMR-0028 (0), 0029 (2), 0016/0013 (8)."""
+    client = _client(monkeypatch, structural_rows=[],
+                     behavioural_rows=[{**_BEHAVIOURAL_ROW, "passes": passes}])
+    monkeypatch.setattr("config.PROJECT_FLOW_MIN_PASSES", 25, raising=False)
+    assert client.resolve_project_to_flow(_PROJECT) is None
+
+
+def test_floor_of_zero_disables_the_check(monkeypatch):
+    """Escape hatch — PROJECT_FLOW_MIN_PASSES=0 restores the old behaviour."""
+    client = _client(monkeypatch, structural_rows=[],
+                     behavioural_rows=[{**_BEHAVIOURAL_ROW, "passes": 1}])
+    monkeypatch.setattr("config.PROJECT_FLOW_MIN_PASSES", 0, raising=False)
+    assert client.resolve_project_to_flow(_PROJECT) == ("0000coderflow0000", "Tier 2 Coders")
+
+
+def test_structural_is_not_subject_to_the_passes_floor(monkeypatch):
+    """A structural declaration is an assertion, not a vote — it needs no passes."""
+    client = _client(monkeypatch, structural_rows=[_STRUCTURAL_ROW],
+                     behavioural_rows=[{**_BEHAVIOURAL_ROW, "passes": 1}])
+    monkeypatch.setattr("config.PROJECT_FLOW_MIN_PASSES", 25, raising=False)
+    assert client.resolve_project_to_flow(_PROJECT)[0] == "6a69405b8a922f69582db8ea"
+
+
+# ── explicit overrides for structurally orphaned projects ──────────────────
+
+
+def test_override_wins_over_everything(monkeypatch):
+    """The 4 projects no flow declares (GMR-0017/0016/0013/0009) need a pin."""
+    client = _client(monkeypatch, structural_rows=[_STRUCTURAL_ROW],
+                     behavioural_rows=[_BEHAVIOURAL_ROW])
+    monkeypatch.setattr(
+        "config.PROJECT_FLOW_OVERRIDES",
+        {_PROJECT: ("pinned_flow", "Pinned Config")}, raising=False,
+    )
+    assert client.resolve_project_to_flow(_PROJECT) == ("pinned_flow", "Pinned Config")
+
+
+def test_override_for_another_project_is_ignored(monkeypatch):
+    client = _client(monkeypatch, structural_rows=[_STRUCTURAL_ROW],
+                     behavioural_rows=[_BEHAVIOURAL_ROW])
+    monkeypatch.setattr(
+        "config.PROJECT_FLOW_OVERRIDES",
+        {"some_other_project": ("pinned_flow", "Pinned Config")}, raising=False,
+    )
+    assert client.resolve_project_to_flow(_PROJECT)[0] == "6a69405b8a922f69582db8ea"
+
+
+# ── the reconciliation tripwire ─────────────────────────────────────────────
+
+
+def test_flow_mismatch_is_logged(monkeypatch, caplog):
+    """The one check nobody had: is the flow we're mining this project's flow?
+
+    NO for 9 of 20 ramps audited 2026-09-07 — GMR-0021 (US short-form video)
+    mined an Italian pool, GMR-0024 (Blind Evals) mined Gulf Arabic. All
+    produced plausible cohorts, so nobody looked.
+    """
+    import logging
+
+    client = _client(
+        monkeypatch,
+        structural_rows=[_STRUCTURAL_ROW],
+        behavioural_rows=[{**_BEHAVIOURAL_ROW, "passes": 36219}],
+        screenings={"0000coderflow0000": [{"cb_id": "u1"}]},
+    )
+    # Force the behavioural path so the resolved flow differs from structural.
+    monkeypatch.setattr(client, "resolve_project_to_flow",
+                        lambda pid, **kw: ("0000coderflow0000", "Tier 2 Coders"),
+                        raising=False)
+    with caplog.at_level(logging.WARNING):
+        client.fetch_screenings_by_project(_PROJECT)
+    assert any("FLOW MISMATCH" in r.getMessage() for r in caplog.records), \
+        "the mismatch must be surfaced"
+
+
+def test_no_warning_when_flows_agree(monkeypatch, caplog):
+    import logging
+
+    client = _client(
+        monkeypatch,
+        structural_rows=[_STRUCTURAL_ROW],
+        behavioural_rows=[_BEHAVIOURAL_ROW],
+        screenings={"6a69405b8a922f69582db8ea": [{"cb_id": "designer1"}]},
+    )
+    with caplog.at_level(logging.WARNING):
+        client.fetch_screenings_by_project(_PROJECT)
+    assert not any("FLOW MISMATCH" in r.getMessage() for r in caplog.records)
