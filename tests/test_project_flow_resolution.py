@@ -283,3 +283,22 @@ def test_no_warning_when_flows_agree(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING):
         client.fetch_screenings_by_project(_PROJECT)
     assert not any("FLOW MISMATCH" in r.getMessage() for r in caplog.records)
+
+
+def test_iac_is_the_only_pinned_orphan():
+    """Of the 4 structurally orphaned projects, only IaC had evidence good
+    enough to pin (job-post -> screening-config FK). The other three cold-start
+    on purpose — a wrong pin trains a ramp on the wrong people, a cold start
+    just targets more loosely. Guards against someone filling the gaps in with
+    plausible-looking guesses."""
+    import config as cfg
+
+    assert cfg.PROJECT_FLOW_OVERRIDES == {
+        "69cd7cbcbd5961a5dd02ebb1": ("69d7e8acc08f56f2b9a712e2", "IaC Experience Screening"),
+    }
+    for orphan in (
+        "674521bd75e0c6357207f93d",   # Coding QA Technical Assessment V1 — inactive
+        "697b72cae052640b8db3e22d",   # SWE Pilot 1 — disabled
+        "69cf1a039ed66cc82e0fa8f3",   # EKG Multiple Choice V11 — sibling flow only
+    ):
+        assert orphan not in cfg.PROJECT_FLOW_OVERRIDES

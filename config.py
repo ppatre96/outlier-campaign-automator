@@ -662,6 +662,16 @@ JD_ANCHORED_MINING = os.getenv("JD_ANCHORED_MINING", "true").lower() in ("1", "t
 # Below the floor we decline to resolve. That yields an empty frame, which
 # _resolve_cohorts already routes to a job-post cold start — the right answer
 # when we cannot say whose funnel this is.
+#
+# IMPORTANT — this floor filters the LOW end only; a high `passes` count is NOT
+# evidence of a good pick. PROJECT_FLOW_LOOKUP_SQL joins screening results to
+# APPLICATION_CONVERSION on email without constraining to the config the flow's
+# own job post declares, so candidates fan out across 25-130+ unrelated configs
+# at similar row counts. GMR-0017's "passes=940" is entirely that artefact — it
+# clears any sane floor while pointing at a flow that belongs to another
+# project. Don't raise this number expecting it to buy accuracy; the trustworthy
+# signal is the job-post -> RESUME_SCREENING_CONFIG_ID FK chain, which is what
+# PROJECT_FLOW_STRUCTURAL_SQL already follows.
 PROJECT_FLOW_MIN_PASSES = int(os.getenv("PROJECT_FLOW_MIN_PASSES", "25"))
 
 # Explicit project_id → (signup_flow_id, config_name) escapes for projects that
@@ -673,7 +683,35 @@ PROJECT_FLOW_MIN_PASSES = int(os.getenv("PROJECT_FLOW_MIN_PASSES", "25"))
 # that isn't in the data; populating INTENDED_PROJECTS on the real flows is the
 # proper fix and belongs to whoever owns signup flows. This dict is the stopgap.
 # Format: {"<project_id>": ("<signup_flow_id>", "<resume_screening_config_name>")}
-PROJECT_FLOW_OVERRIDES: dict[str, tuple[str, str]] = {}
+#
+# Only entries backed by the job-post -> screening-config FK chain belong here.
+# Of the four orphans, exactly one cleared that bar (2026-09-07 audit); the
+# other three are deliberately absent and will cold-start from their job post,
+# because a wrong pin silently trains a ramp on the wrong people whereas a cold
+# start merely targets more loosely:
+#   - Coding QA Technical Assessment V1 (674521bd75e0c6357207f93d): no job post
+#     or screening config anywhere in the warehouse mentions it. Project is
+#     inactive since 2025-06-13.
+#   - SWE Pilot 1 (697b72cae052640b8db3e22d): only candidate flow belongs to
+#     OpenClaw, job posts generic + inactive. Project is disabled.
+#   - EKG Multiple Choice V11 (69cf1a039ed66cc82e0fa8f3): candidate flows
+#     declare a SIBLING project (Experts Health EKG) — same customer and pod
+#     family, but zero course overlap in DIM_PROJECT_COURSES. Related in name,
+#     administratively disjoint; borrowing the sibling's funnel is a guess.
+PROJECT_FLOW_OVERRIDES: dict[str, tuple[str, str]] = {
+    # IaC (GMR-0013). Two independent lines of evidence beat one stale field:
+    # JOBPOSTS 69d7eb0f7747447b36d6f15e sits on this flow with
+    # JOB_NAME='IaC Coder' / JOB_POST_NAME='AI Infrastructure as Code (IaC)
+    # Expert', and carries RESUME_SCREENING_CONFIG_ID 69ef8476a780180e6a8f9747
+    # -> 'IaC Experience Screening' by direct FK. Pool: 3,045 screening rows /
+    # 1,155 passes / 2,626 distinct candidates.
+    # The flow's own INTENDED_PROJECTS says OpenClaw, which is why structural
+    # resolution misses IaC — ruled a stale copy-paste (different customers,
+    # zero course overlap, and OpenClaw has its own distinctly-branded flow
+    # 69d000e391c0bb22db47302e with "Openclaw Architect" job posts).
+    # Remove once INTENDED_PROJECTS on 69d7e8ac… is corrected upstream.
+    "69cd7cbcbd5961a5dd02ebb1": ("69d7e8acc08f56f2b9a712e2", "IaC Experience Screening"),
+}
 
 # ── Copy localization (2026-06-17) ─────────────────────────────────────────────
 # Write ad copy in the target locale's language for locale-defined cohorts
