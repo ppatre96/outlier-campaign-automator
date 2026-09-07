@@ -268,12 +268,30 @@ CRITICAL OUTPUT CONSTRAINTS:
   very objects the no-text rule then rejected.)
 - DO NOT add any Outlier branding — logo, earnings strip, and gradient overlays are \
   composited separately in post-processing.
+- THE ATTACHED IMAGE IS A COMPOSITION REFERENCE ONLY. Copy its framing, subject \
+  placement, lighting and colour grade. DO NOT copy anything written in it. It is a \
+  finished ad and still carries its own headline, subheadline and branding — that \
+  wording belongs to a different campaign and must not appear in your output in any \
+  form, verbatim or paraphrased. Reproduce the LAYOUT, never the LANGUAGE. \
+  (Added 2026-09-07: the reference is a finance ad reading "Futureproof your finance \
+  career with part-time AI." / "Earn a side income, from home." Gemini reproduced \
+  that text onto GMR-0029's graphic-design and audio creatives, and design QC \
+  correctly rejected 7 of them after 6 regenerations each — the no-text rule above \
+  never told the model that the picture it was being shown was itself the source of \
+  the text it kept painting in.)
 - OUTPUT ONLY THE CLEAN PHOTOGRAPH — no text overlays, no graphic elements, no \
   solid-color borders.\
 """
 
 # Reference image URL (Google Drive folder with reference PNG + logo SVG)
 _REFERENCE_IMAGE_URL = "https://drive.google.com/drive/folders/1EYVpR40lXOiZFPBV-HkZ3Jx0CImjsHvV?usp=drive_link"
+
+# Re-checks of the SAME image when the QC vision model is unreachable. A dropped
+# connection is not a verdict on the creative, so it must not spend one of the
+# regeneration attempts — see the retry block in
+# generate_imagen_creative_with_qc.
+_QC_INFRA_RETRIES = 2
+_QC_INFRA_BACKOFF = 5
 
 
 # Aspect-specific prompt overrides. The base template assumes 1:1 with subject
@@ -1685,6 +1703,11 @@ def generate_imagen_creative_with_qc(
     best_violations = float("inf")
     best_path = path
     best_report = last_report
+    # Set when an attempt ended without QC ever reaching the vision model. If
+    # that is ALL we ever got, the creative is unjudged rather than bad — ship
+    # it with verdict="UNKNOWN", matching what this function already does when
+    # qc_creative raises outright ("accepting creative without QC").
+    unjudged_path: Path | None = None
     # QC-feedback failure-region crops attached on the NEXT call (Pranav rule
     # 2026-04-29: Gemini ignores text hints, so we also attach a visual
     # example of the defect from the previous attempt's PNG).
@@ -1730,25 +1753,62 @@ def generate_imagen_creative_with_qc(
                 best_report = last_report
             continue
 
-        try:
-            report = qc_creative(
-                creative_path=path,
-                reference_path=reference_image_path,
-                headline=variant.get("headline", ""),
-                subheadline=variant.get("subheadline", ""),
-                intro_text=variant.get("intro_text", ""),
-                ad_headline=variant.get("ad_headline", ""),
-                ad_description=variant.get("ad_description", ""),
-                cta_button=variant.get("cta_button", ""),
-                attempt_index=attempt,
-            )
-        except Exception as exc:
-            log.warning("QC could not run on attempt %d: %s — accepting creative without QC", attempt + 1, exc)
-            return path, {"verdict": "UNKNOWN", "error": str(exc)}
+        # A QC infrastructure failure says nothing about the creative, so it must
+        # not consume a regeneration attempt. qc_creative swallows its own vision
+        # exception and returns a FAIL carrying checks={"qc_infrastructure":
+        # False}, which is indistinguishable from a real design violation to the
+        # code below — a dropped connection to the vision model therefore burned
+        # an attempt and could become the best-so-far report the creative is then
+        # rejected on. Observed 5× on GMR-0029 (2026-09-05): `QC vision call
+        # failed: ('Connection aborted.', ConnectionResetError(104, 'Connection
+        # reset by peer'))`.
+        #
+        # Re-check the SAME image instead: the picture is very likely fine and
+        # regenerating it would throw away a good creative.
+        report = None
+        for qc_try in range(1, _QC_INFRA_RETRIES + 2):
+            try:
+                report = qc_creative(
+                    creative_path=path,
+                    reference_path=reference_image_path,
+                    headline=variant.get("headline", ""),
+                    subheadline=variant.get("subheadline", ""),
+                    intro_text=variant.get("intro_text", ""),
+                    ad_headline=variant.get("ad_headline", ""),
+                    ad_description=variant.get("ad_description", ""),
+                    cta_button=variant.get("cta_button", ""),
+                    attempt_index=attempt,
+                )
+            except Exception as exc:
+                log.warning("QC could not run on attempt %d: %s — accepting creative without QC", attempt + 1, exc)
+                return path, {"verdict": "UNKNOWN", "error": str(exc)}
+            if report.checks.get("qc_infrastructure") is not False:
+                break
+            if qc_try <= _QC_INFRA_RETRIES:
+                log.warning(
+                    "QC vision unreachable on attempt %d (try %d/%d): %s — re-checking "
+                    "the same image in %ss",
+                    attempt + 1, qc_try, _QC_INFRA_RETRIES + 1,
+                    (report.violations or ["unknown"])[0][:120], _QC_INFRA_BACKOFF,
+                )
+                time.sleep(_QC_INFRA_BACKOFF)
+            else:
+                log.error(
+                    "QC vision unreachable %d× on attempt %d — the creative is "
+                    "unjudged, not rejected; treating this attempt as inconclusive",
+                    _QC_INFRA_RETRIES + 1, attempt + 1,
+                )
 
         last_report = report.to_dict()
         log.info("QC attempt %d: %s (target=%s, %d violations)",
                  attempt + 1, report.verdict, report.retry_target, len(report.violations))
+
+        # Still unreachable after the inner retries — the creative is unjudged.
+        # Don't let an inconclusive verdict into the best-so-far bookkeeping; a
+        # creative must never be rejected because we couldn't look at it.
+        if report.checks.get("qc_infrastructure") is False:
+            unjudged_path = path
+            continue
 
         # Skip-rule overrides (set by the regen path via console qc_rule_overrides).
         # Filter the violation list to drop any whose classification is in
@@ -1853,6 +1913,22 @@ def generate_imagen_creative_with_qc(
         ):
             attach_ref = False
             log.info("QC flagged reference-image mimicry — dropping reference image for next retry")
+
+    # Never got a real verdict — every attempt lost the vision model. Ship the
+    # creative unjudged instead of rejecting it for something that was never
+    # about the creative.
+    if best_violations == float("inf") and unjudged_path is not None:
+        log.error(
+            "QC vision was unreachable on all %d attempts — shipping the creative "
+            "UNJUDGED. Nothing is known about its design; check the vision "
+            "provider before trusting this ramp's creatives.",
+            max_retries + 1,
+        )
+        return unjudged_path, {
+            "verdict": "UNKNOWN",
+            "error": "qc vision unreachable on every attempt",
+            "attempts": max_retries + 1,
+        }
 
     log.warning(
         "Creative still failing QC after %d attempts — returning best-so-far attempt with %d violations (last had %d)",
