@@ -976,6 +976,17 @@ COPY_GEN_CONCURRENCY        = int(os.getenv("COPY_GEN_CONCURRENCY", IMAGE_GEN_CO
 # Practical cap is ~3 — beyond that LinkedIn/Snowflake rate limits dominate.
 RAMP_CONCURRENCY            = int(os.getenv("RAMP_CONCURRENCY", 1))
 AUDIENCE_SIZE_MIN           = int(os.getenv("AUDIENCE_SIZE_MIN", 50_000))
+
+# Per-geo-cluster audience floor. AUDIENCE_SIZE_MIN above is a COHORT-level
+# gate applied in Stage C against the cohort's whole-geo audience; this one is
+# per (cohort × geo cluster) and decides whether a cluster deserves its own
+# campaign. Below it the cluster is merged into a similar one to widen the net
+# rather than running a campaign too small to deliver — see
+# geo_tiers.merge_small_geo_groups. Requires an audience_fn to be supplied at
+# the call site (audience depends on the cohort's targeting, not the country
+# list alone); without one the floor is skipped and only MAX_GEO_CLUSTERS
+# applies. Set 0 to disable.
+GEO_AUDIENCE_FLOOR          = int(os.getenv("GEO_AUDIENCE_FLOOR", 50_000))
 MIN_UNIQUE_AUDIENCE_PCT     = float(os.getenv("MIN_UNIQUE_AUDIENCE_PCT", 80.0))
 URN_FUZZY_MATCH_THRESHOLD   = float(os.getenv("URN_FUZZY_MATCH_THRESHOLD", 0.85))
 

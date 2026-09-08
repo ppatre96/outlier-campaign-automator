@@ -21,6 +21,7 @@ Surfaced 2026-05-04 when user requested per-geo customized campaigns.
 """
 from __future__ import annotations
 
+import re
 import logging
 import math
 from dataclasses import dataclass, field
@@ -511,6 +512,200 @@ class GeoCampaignGroup:
     icp_hint:          str = ""   # pre-built geo ICP prompt block for LLM injection
 
 
+# Which clusters are acceptable merge partners for each other, in preference
+# order. Used when a cluster is too small to deserve its own campaign — we fold
+# it into a neighbour rather than dropping it. "global_mix" is everyone's last
+# resort because it is already the long-tail bucket.
+_CLUSTER_AFFINITY: dict[str, tuple[str, ...]] = {
+    "anglo":             ("northern_european", "southern_european", "eastern_european"),
+    "northern_european": ("anglo", "southern_european", "eastern_european"),
+    "southern_european": ("northern_european", "eastern_european", "anglo"),
+    "eastern_european":  ("southern_european", "northern_european"),
+    "south_asian":       ("southeast_asian", "east_asian"),
+    "southeast_asian":   ("south_asian", "east_asian"),
+    "east_asian":        ("southeast_asian", "south_asian"),
+    "latin_american":    ("brazilian", "southern_european"),
+    "brazilian":         ("latin_american", "southern_european"),
+    # No affinity pair for african / middle_eastern: they are not
+    # interchangeable as a creative photo subject, and pairing them put Nigeria
+    # in a cluster labelled "Middle Eastern". Both fall through to global_mix,
+    # whose "Global" label and multi-ethnic icp_hint are honest for either.
+    "middle_eastern":    (),
+    "african":           (),
+}
+
+
+def _merge_two(a: "GeoCampaignGroup", b: "GeoCampaignGroup") -> "GeoCampaignGroup":
+    """Fold `b` into `a`, keeping `a`'s identity and re-deriving the rate.
+
+    The rate is the MAX pay multiplier across the union, matching how a cluster
+    rate is computed in the first place (2026-05-20 direction). That can raise
+    the advertised rate for the absorbed countries, so the caller logs it — see
+    the note in merge_small_geo_groups.
+    """
+    geos = list(dict.fromkeys(list(a.geos) + list(b.geos)))
+    # The rate is a monotonic function of the cluster's MAX multiplier, so the
+    # higher of the two already-formatted rates equals what recomputing from
+    # the union would give — and this needs no access to base_rate_usd, which
+    # isn't in scope here. An empty rate on either side means the base rate was
+    # unresolved and copy ships rate-free; keep it empty rather than inventing
+    # one from the other side.
+    if a.advertised_rate and b.advertised_rate:
+        rate = max(a.advertised_rate, b.advertised_rate, key=_rate_to_number)
+    else:
+        rate = ""
+    return GeoCampaignGroup(
+        cluster=a.cluster,
+        cluster_label=a.cluster_label,
+        geos=geos,
+        median_multiplier=round(max(a.median_multiplier, b.median_multiplier), 3),
+        advertised_rate=rate,
+        campaign_suffix=a.campaign_suffix,
+        icp_hint=get_geo_icp_prompt_hint(a.cluster, geos),
+    )
+
+
+def _rate_to_number(rate: str) -> float:
+    """"$35/hr" → 35.0. Unparseable / empty → 0.0."""
+    m = re.search(r"([0-9]+(?:\.[0-9]+)?)", str(rate or ""))
+    return float(m.group(1)) if m else 0.0
+
+
+def _merge_target(
+    small: "GeoCampaignGroup", candidates: list["GeoCampaignGroup"],
+) -> "GeoCampaignGroup | None":
+    """Pick the best group to absorb `small`.
+
+    Preference order, and the order matters:
+      1. Culturally adjacent cluster (_CLUSTER_AFFINITY). The cluster drives the
+         creative's photo-subject ethnicity via icp_hint, so this is the axis a
+         viewer actually sees.
+      2. global_mix — explicitly the multi-ethnic long-tail bucket, labelled
+         "Global". Honest for any country.
+      3. Same advertised rate, any cluster.
+      4. Largest remaining group.
+
+    Rate is deliberately NOT the first key. Ranking it first put India and
+    Nigeria inside a cluster labelled "Eastern European" on GMR-0029, purely
+    because south_asian and eastern_european both advertise $30/hr — those
+    audiences would have been shown Eastern European faces. Merging into
+    global_mix instead keeps the creative honest; the rate mismatch it can
+    introduce is logged by the caller.
+    """
+    if not candidates:
+        return None
+    by_cluster = {c.cluster: c for c in candidates}
+    for pref in _CLUSTER_AFFINITY.get(small.cluster, ()):
+        if pref in by_cluster:
+            return by_cluster[pref]
+    if "global_mix" in by_cluster:
+        return by_cluster["global_mix"]
+    same_rate = [c for c in candidates if small.advertised_rate
+                 and c.advertised_rate == small.advertised_rate]
+    if same_rate:
+        return max(same_rate, key=lambda c: len(c.geos))
+    return max(candidates, key=lambda c: len(c.geos))
+
+
+def merge_small_geo_groups(
+    groups: list["GeoCampaignGroup"],
+    *,
+    max_clusters: int = 0,
+    audience_floor: int = 0,
+    audience_fn=None,
+) -> list["GeoCampaignGroup"]:
+    """Fold undersized geo clusters into similar ones. Never drops a geo.
+
+    Two independent reasons a cluster shouldn't get its own campaign:
+
+    `audience_floor` — the cluster's targetable audience is too small for a
+    campaign to be worth running. Requires `audience_fn(geos) -> int | None`,
+    since audience is a function of the COHORT's targeting, not of the country
+    list alone. When `audience_fn` is absent or returns None the floor is
+    skipped (we don't guess).
+
+    `max_clusters` — the experimentation cap (config.MAX_GEO_CLUSTERS).
+    This used to be `groups[:cap]`, which discarded the surplus clusters AND
+    every country in them. On GMR-0029 that silently dropped 65 of 194
+    countries — including the US, GB, CA, AU, DE, FR, IN and PH — because the
+    trim ranks clusters by country COUNT, so a 95-country long-tail bucket
+    outranks the 7-country anglo cluster holding the highest-value markets.
+    Merging keeps every geo in the net.
+    """
+    groups = [g for g in groups if g.geos]
+    if len(groups) <= 1:
+        return groups
+
+    # Pass 1 — audience floor.
+    if audience_floor > 0 and audience_fn is not None:
+        measured: dict[str, int | None] = {}
+        for g in groups:
+            try:
+                measured[g.cluster] = audience_fn(g.geos)
+            except Exception as exc:
+                log.warning("geo audience probe failed for %s (%s) — skipping floor", g.cluster, exc)
+                measured[g.cluster] = None
+        while len(groups) > 1:
+            below = [g for g in groups
+                     if measured.get(g.cluster) is not None
+                     and measured[g.cluster] < audience_floor]
+            if not below:
+                break
+            small = min(below, key=lambda g: measured[g.cluster])
+            target = _merge_target(small, [g for g in groups if g is not small])
+            if target is None:
+                break
+            log.info(
+                "geo_tiers: cluster %r audience %s < floor %d — merging into %r "
+                "(rate %s → %s) rather than running a campaign too small to matter",
+                small.cluster, f"{measured[small.cluster]:,}", audience_floor,
+                target.cluster, small.advertised_rate or "(none)",
+                target.advertised_rate or "(none)",
+            )
+            if (small.advertised_rate and target.advertised_rate
+                    and small.advertised_rate != target.advertised_rate):
+                log.warning(
+                    "geo_tiers: merge crosses a rate band — %s geos %s were advertised "
+                    "%s and will now sit in a campaign advertising %s. Verify this is "
+                    "acceptable for those countries.",
+                    small.cluster, small.geos, small.advertised_rate, target.advertised_rate,
+                )
+            merged = _merge_two(target, small)
+            groups = [merged if g is target else g for g in groups if g is not small]
+            measured.pop(small.cluster, None)
+            try:
+                measured[merged.cluster] = audience_fn(merged.geos)
+            except Exception:
+                measured[merged.cluster] = None
+    elif audience_floor > 0:
+        log.info(
+            "geo_tiers: audience_floor=%d requested but no audience_fn supplied — "
+            "cluster sizes not checked", audience_floor,
+        )
+
+    # Pass 2 — experimentation cap, by merging rather than trimming.
+    cap = int(max_clusters or 0)
+    if 0 < cap < len(groups):
+        log.info(
+            "geo_tiers: %d clusters > MAX_GEO_CLUSTERS=%d — merging the %d smallest "
+            "into similar clusters (previously these were dropped along with their geos)",
+            len(groups), cap, len(groups) - cap,
+        )
+        while len(groups) > cap:
+            groups.sort(key=lambda g: len(g.geos))
+            small = groups[0]
+            target = _merge_target(small, groups[1:])
+            if target is None:
+                break
+            log.info("geo_tiers: merging %r (%d geos) into %r",
+                     small.cluster, len(small.geos), target.cluster)
+            merged = _merge_two(target, small)
+            groups = [merged if g is target else g for g in groups[1:]]
+
+    groups.sort(key=lambda g: len(g.geos), reverse=True)
+    return groups
+
+
 def filter_blocked_geos(included_geos: list[str]) -> tuple[list[str], list[str]]:
     """
     Remove G4 blocked countries from the list.
@@ -544,6 +739,8 @@ def group_geos_for_campaigns(
     base_rate_usd: float | None = None,
     *,
     apply_geo_multiplier: bool = True,
+    audience_floor: int | None = None,
+    audience_fn=None,
 ) -> list[GeoCampaignGroup]:
     """
     Split included_geos into per-campaign geo groups.
@@ -660,20 +857,27 @@ def group_geos_for_campaigns(
     # because 12 natural clusters survived. Default is now 3 so the
     # experimentation cap is enforced automatically (3 cohorts × 3 angles
     # × 3 geo clusters = 27 per channel). Set MAX_GEO_CLUSTERS=0 to disable.
+    #
+    # 2026-09-08: the cap used to `groups[:cap]`, which dropped the surplus
+    # clusters AND every country in them — on GMR-0029 that was 65 of 194
+    # geos, including US/GB/CA/AU/DE/FR/IN/PH, because ranking by country
+    # COUNT puts a 95-country long-tail bucket above the 7-country anglo
+    # cluster holding the highest-value markets. Now the surplus is MERGED
+    # into similar clusters, so no geo leaves the net.
     import config as _config
     _cap = int(getattr(_config, "MAX_GEO_CLUSTERS", 0) or 0)
-    if 0 < _cap < len(groups):
-        log.warning(
-            "MAX_GEO_CLUSTERS=%d → trimming %d clusters down to top %d "
-            "(by geo count): %s",
-            _cap, len(groups), _cap,
-            [g.cluster for g in groups[:_cap]],
-        )
-        groups = groups[:_cap]
+    _floor = (audience_floor if audience_floor is not None
+              else int(getattr(_config, "GEO_AUDIENCE_FLOOR", 0) or 0))
+    groups = merge_small_geo_groups(
+        groups,
+        max_clusters=_cap,
+        audience_floor=_floor,
+        audience_fn=audience_fn,
+    )
 
     log.info(
-        "geo_tiers: %d allowed geos → %d campaign groups (%d G4 skipped)",
-        len(allowed), len(groups), len(skipped),
+        "geo_tiers: %d allowed geos → %d campaign groups covering %d geos (%d G4 skipped)",
+        len(allowed), len(groups), sum(len(g.geos) for g in groups), len(skipped),
     )
     return groups
 
