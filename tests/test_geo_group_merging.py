@@ -259,3 +259,57 @@ def test_merge_dedupes_overlapping_geos():
     groups = [_g("a", ["A", "B"]), _g("b", ["B", "C"])]
     out = merge_small_geo_groups(groups, max_clusters=1)
     assert sorted(out[0].geos) == ["A", "B", "C"]
+
+
+# ── "up to $X/hr" ceiling wording ──────────────────────────────────────────
+
+
+def test_multi_country_cluster_rate_is_phrased_as_a_ceiling():
+    """A cluster's rate is its MAX country multiplier, so most countries in it
+    pay less — global_mix spans $10-$50 and quotes $50 across 152 countries."""
+    from src.geo_tiers import group_geos_for_campaigns
+
+    groups = group_geos_for_campaigns(["US", "CA", "GB"], base_rate_usd=50.0)
+    assert groups[0].advertised_rate.startswith("up to $")
+
+
+def test_single_country_rate_is_exact_not_a_ceiling():
+    """One country means max == min — hedging it would be misleading."""
+    from src.geo_tiers import group_geos_for_campaigns
+
+    groups = group_geos_for_campaigns(["US"], base_rate_usd=50.0)
+    assert groups[0].advertised_rate == "$50/hr"
+    assert "up to" not in groups[0].advertised_rate
+
+
+def test_uniform_multiplier_cluster_is_exact():
+    """AU and BM are both 1.00 — no spread, so no 'up to'."""
+    from src.geo_tiers import group_geos_for_campaigns
+
+    groups = group_geos_for_campaigns(["AU", "BM"], base_rate_usd=50.0)
+    assert groups[0].advertised_rate == "$50/hr"
+
+
+def test_verbatim_smart_ramp_rate_is_never_hedged():
+    """apply_geo_multiplier=False means the rate is the authoritative
+    locale-specific figure, exact — not a ceiling."""
+    from src.geo_tiers import group_geos_for_campaigns
+
+    groups = group_geos_for_campaigns(
+        ["IL", "US"], base_rate_usd=22.50, apply_geo_multiplier=False,
+    )
+    assert all("up to" not in g.advertised_rate for g in groups)
+    assert all("22.50" in g.advertised_rate for g in groups)
+
+
+def test_inmail_prompt_keeps_the_ceiling_wording():
+    """inmail_copy_writer used to lstrip('$') and rebuild as f'${rate}/hr',
+    turning 'up to $50/hr' into '$up to $50/hr/hr' while also instructing the
+    model never to say 'up to'."""
+    import inspect
+    from src import inmail_copy_writer as icw
+
+    src = inspect.getsource(icw)
+    assert 'is_ceiling' in src or '_is_ceiling' in src
+    # The blanket prohibition must not apply to a genuine ceiling.
+    assert 'reproduce it EXACTLY as written' in src

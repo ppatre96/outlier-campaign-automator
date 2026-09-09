@@ -351,12 +351,32 @@ def _build_prompt(
     # The rate is authoritative (Smart Ramp). NEVER invent or default one: if no
     # rate resolved, the copy must be rate-free rather than hallucinating a figure
     # (that is how wrong rates like a stray "$20" or "$50" reach a live ad).
-    rate = (hourly_rate or "").strip().lstrip("$").strip()
+    # The incoming string is either an exact locale rate ("$22.50/hr") or a geo
+    # cluster CEILING ("up to $50/hr" — the cluster's highest-paying country;
+    # see geo_tiers._format_rate). Both must be reproduced verbatim, but the
+    # ceiling has to keep its "up to", so don't strip the phrasing off and don't
+    # tell the model to drop it. Previously this did `.lstrip("$")` and rebuilt
+    # the line as f"${rate}/hr", which turned "up to $50/hr" into
+    # "$up to $50/hr/hr" while also instructing the model never to say "up to".
+    _raw_rate = (hourly_rate or "").strip()
+    _is_ceiling = "up to" in _raw_rate.lower()
+    rate = _raw_rate if _raw_rate.lower().startswith("up to") else _raw_rate.lstrip("$").strip()
     if rate:
-        rate_line = (
-            f'Hourly rate for this TG: ${rate}/hr. Use this EXACT figure verbatim, '
-            f'including any cents. Never round it, never change it, never say "up to $X".'
-        )
+        _display = rate if _is_ceiling else f"${rate}"
+        if not _display.endswith("/hr"):
+            _display = f"{_display}/hr"
+        if _is_ceiling:
+            rate_line = (
+                f'Hourly rate for this TG: {_display}. This is a CEILING across the '
+                f'countries in this geo group — reproduce it EXACTLY as written, '
+                f'including the words "up to". Never drop "up to", never round the '
+                f'figure, never state it as a flat guaranteed rate.'
+            )
+        else:
+            rate_line = (
+                f'Hourly rate for this TG: {_display}. Use this EXACT figure verbatim, '
+                f'including any cents. Never round it, never change it, never say "up to $X".'
+            )
     else:
         rate_line = (
             "No hourly rate is available for this audience. Do NOT mention any specific "

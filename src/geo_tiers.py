@@ -781,7 +781,7 @@ def group_geos_for_campaigns(
             "advertised_rate will be empty. Copy gen must drop rate mentions."
         )
 
-    def _rate_str(multiplier: float) -> str:
+    def _rate_str(multiplier: float, *, is_ceiling: bool = False) -> str:
         """Return formatted rate or '' if base rate is unresolved.
 
         When apply_geo_multiplier is False the rate is the Smart Ramp
@@ -794,7 +794,7 @@ def group_geos_for_campaigns(
             return ""
         if not apply_geo_multiplier:
             return f"${base_rate_usd:.2f}/hr" if base_rate_usd % 1 else f"${int(base_rate_usd)}/hr"
-        return _format_rate(base_rate_usd * multiplier)
+        return _format_rate(base_rate_usd * multiplier, is_ceiling=is_ceiling)
 
     # If single geo: simple single-group result.
     # Override cluster_label with the country-specific nationality so the
@@ -833,7 +833,9 @@ def group_geos_for_campaigns(
         # ops can sanity-check which country drives the advertised rate.
         max_mult = max(multipliers)
         top_country = next((g for g in geos if COUNTRY_PAY_MULTIPLIER.get(g, 0.65) == max_mult), geos[0])
-        rate_str = _rate_str(max_mult)
+        # "up to $X" only when the cluster's countries don't all share one
+        # multiplier — otherwise the figure is exact and shouldn't be hedged.
+        rate_str = _rate_str(max_mult, is_ceiling=(min(multipliers) != max_mult))
         groups.append(GeoCampaignGroup(
             cluster=cluster,
             cluster_label=CLUSTER_LABELS.get(cluster, cluster),
@@ -892,7 +894,19 @@ def _median(values: list[float]) -> float:
     return sorted_v[mid]
 
 
-def _format_rate(raw_usd: float) -> str:
-    """Round to nearest $5, minimum $5, return formatted string."""
+def _format_rate(raw_usd: float, *, is_ceiling: bool = False) -> str:
+    """Round to nearest $5, minimum $5, return formatted string.
+
+    `is_ceiling` phrases it as "up to $50/hr". Set it when the figure is a
+    cluster's MAX pay multiplier over countries that don't all share it
+    (2026-05-20 direction), because then most countries in the cluster pay
+    less: global_mix spans $10-$50 and quotes $50, and the flat "$50/hr" it
+    used to emit read as a promise to all 152 of them.
+
+    Left False when the figure is exact — a single-country group, or a cluster
+    whose countries share one multiplier. A verbatim Smart Ramp
+    `job_post_pay_rates` value is likewise exact for its locale and is
+    formatted by _rate_str / _fmt_advertised_rate without this wording.
+    """
     rounded = max(5, round(raw_usd / 5) * 5)
-    return f"${int(rounded)}/hr"
+    return f"up to ${int(rounded)}/hr" if is_ceiling else f"${int(rounded)}/hr"

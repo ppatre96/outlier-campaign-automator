@@ -137,10 +137,12 @@ def test_per_geo_rates_differ():
     groups = group_geos_for_campaigns(["US", "CA", "IN", "PH"], base_rate_usd=50.0)
     rates = {g.cluster: g.advertised_rate for g in groups}
     assert rates["anglo"] != rates["south_asian"]
-    # Anglo (US=1.0, CA=0.91) median ~0.955 → $50 → "$50/hr"
-    # South Asian (IN=0.55, PH=0.47) median ~0.51 → $25 or $30
-    assert int(rates["anglo"].replace("$", "").replace("/hr", "")) > \
-           int(rates["south_asian"].replace("$", "").replace("/hr", ""))
+    # Anglo (US=1.0, CA=0.91) max 1.0 → $50; South Asian (IN=0.55, PH=0.47)
+    # max 0.55 → $30. Both clusters have a spread, so both are phrased as a
+    # ceiling ("up to $50/hr") — see geo_tiers._format_rate.
+    from src.geo_tiers import _rate_to_number
+    assert rates["anglo"].startswith("up to $")
+    assert _rate_to_number(rates["anglo"]) > _rate_to_number(rates["south_asian"])
 
 
 def test_all_g4_geos_returns_empty():
