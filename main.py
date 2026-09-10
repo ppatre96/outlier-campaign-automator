@@ -3468,6 +3468,57 @@ def _persist_cohort_rationales(
             )
 
 
+def _cohort_geo_audience_fn(cohort, *, li_client, urn_res):
+    """Return `fn(geos) -> int | None` measuring THIS cohort's LinkedIn reach in
+    those countries, for geo_tiers' GEO_AUDIENCE_FLOOR.
+
+    A geo cluster's audience is a function of the cohort's targeting, not of the
+    country list — "how many LinkedIn members live in these 7 countries" is
+    always in the millions and would never trip a floor. So the probe resolves
+    the cohort's own facets and pins profileLocations to the cluster.
+
+    Returns None (= unknown, not zero) whenever it can't measure, so
+    merge_small_geo_groups leaves that cluster alone rather than merging on a
+    guess. Mirrors the estimate prep_audience builds.
+    """
+    if li_client is None or urn_res is None:
+        return None
+
+    _cache: dict[tuple[str, ...], int | None] = {}
+
+    def _measure(geos: list[str]) -> int | None:
+        key = tuple(sorted(geos or []))
+        if key in _cache:
+            return _cache[key]
+        result: int | None = None
+        try:
+            geo_urns = [u for u in (urn_res.resolve("profileLocations", c) for c in (geos or [])) if u]
+            if geo_urns:
+                facets = dict(urn_res.resolve_cohort_rules(getattr(cohort, "rules", None) or []))
+                facets["profileLocations"] = geo_urns
+                excl: dict = {}
+                if getattr(cohort, "exclude_add", None):
+                    try:
+                        excl = urn_res.resolve_facet_pairs(cohort.exclude_add)
+                    except Exception:
+                        excl = {}
+                count = li_client.get_audience_count(facets, excl or None)
+                # get_audience_count returns 0 on error as well as for a genuinely
+                # empty audience; treat 0 as unknown so a transient API failure
+                # can't collapse every cluster into one.
+                result = int(count) if count and count > 0 else None
+        except Exception as exc:
+            log.warning(
+                "geo audience probe failed for cohort=%r geos=%s: %s — cluster left as-is",
+                getattr(cohort, "name", "?"), (geos or [])[:5], exc,
+            )
+            result = None
+        _cache[key] = result
+        return result
+
+    return _measure
+
+
 def _process_static_campaigns(
     selected,
     *,
@@ -3601,7 +3652,36 @@ def _process_static_campaigns(
     # caller passes seen_keys=None → no-op.
     copy_jobs: list[dict] = []
     for cohort in capped_cohorts:
-        for geo_group in geo_groups:
+        # Re-cluster per cohort when the audience floor is on. Grouping above is
+        # cohort-independent (it only sees the country list), but whether a
+        # cluster clears GEO_AUDIENCE_FLOOR depends entirely on the cohort's
+        # targeting — so the floor can only be applied here. Falls back to the
+        # shared groups when the floor is off or LinkedIn isn't reachable.
+        cohort_geo_groups = geo_groups
+        if int(getattr(config, "GEO_AUDIENCE_FLOOR", 0) or 0) > 0 and raw_geos:
+            _fn = _cohort_geo_audience_fn(cohort, li_client=li_client, urn_res=urn_res)
+            if _fn is not None:
+                try:
+                    cohort_geo_groups = group_geos_for_campaigns(
+                        raw_geos, base_rate_usd,
+                        apply_geo_multiplier=not rate_geo_specific,
+                        audience_fn=_fn,
+                    ) or geo_groups
+                except Exception as exc:
+                    log.warning(
+                        "_process_static_campaigns: per-cohort geo re-clustering failed "
+                        "for %r (%s) — using the ramp-level groups", cohort.name, exc,
+                    )
+                    cohort_geo_groups = geo_groups
+                if [g.cluster for g in cohort_geo_groups] != [g.cluster for g in geo_groups]:
+                    log.info(
+                        "_process_static_campaigns: cohort %r re-clustered on audience "
+                        "floor → %s (ramp-level was %s)",
+                        cohort.name,
+                        [f"{g.cluster}:{len(g.geos)}" for g in cohort_geo_groups],
+                        [f"{g.cluster}:{len(g.geos)}" for g in geo_groups],
+                    )
+        for geo_group in cohort_geo_groups:
             if seen_keys is not None:
                 _dedup_key = _cohort_geo_dedup_key(cohort.name, geo_group.cluster)
                 if _dedup_key in seen_keys:
