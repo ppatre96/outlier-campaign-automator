@@ -171,3 +171,53 @@ def test_inmail_create_success_path_unchanged(monkeypatch):
 
     assert li.create_inmail_campaign.call_count == 1
     assert li.create_inmail_ad.call_count == 3
+
+
+def test_inmail_arm_merges_a_sub_floor_geo_cluster(monkeypatch):
+    """End-to-end guard for the GMR-0029 regression (run 33971842229).
+
+    Two real clusters — anglo (US/GB) and global_mix (TV/WS) — where only the
+    anglo one clears GEO_AUDIENCE_FLOOR. The arm must launch ONE merged
+    campaign, not two, one of which reaches 3,700 people.
+
+    Deliberately does NOT stub group_geos_for_campaigns: the point is that the
+    arm passes an audience_fn into the real grouper.
+    """
+    import config
+    import main as M
+    _block_registry_writes(monkeypatch)
+    monkeypatch.setattr(config, "GEO_AUDIENCE_FLOOR", 50_000)
+    monkeypatch.setattr(
+        M, "build_inmail_variants",
+        lambda tg, cohort, key, **kw: [_good_variant("A"), _good_variant("B"), _good_variant("C")],
+    )
+
+    urn = _mock_urn_resolver()
+    urn.resolve.side_effect = lambda facet, code: f"urn:li:geo:{code}"
+
+    def audience(facets, excludes=None):
+        geos = {u.rsplit(":", 1)[-1] for u in facets.get("profileLocations", []) or []}
+        return 400_000 if {"US", "GB"} & geos else 3_700
+
+    li = MagicMock()
+    li.get_audience_count.side_effect = audience
+    li.create_campaign_group.return_value = "urn:li:sponsoredCampaignGroup:1"
+    li.create_inmail_campaign.return_value = "urn:li:sponsoredCampaign:42"
+    li.create_inmail_ad.return_value = "urn:li:sponsoredCreative:99"
+
+    kwargs = _inmail_arm_kwargs([_build_cohort("solo")], li, urn)
+    kwargs.update(included_geos=["US", "GB", "TV", "WS"], base_rate_usd=50.0)
+    M._process_inmail_campaigns(**kwargs)
+
+    assert li.create_inmail_campaign.call_count == 1, (
+        "the sub-floor global_mix cluster should have been merged into anglo; "
+        f"got {li.create_inmail_campaign.call_count} InMail campaigns"
+    )
+    # The merge must widen the net, not narrow it — TV/WS stay targeted.
+    targeted = set()
+    for _, kw in li.create_inmail_campaign.call_args_list:
+        for urns in (kw.get("include_facets") or kw.get("facets") or {}).values():
+            targeted |= {u.rsplit(":", 1)[-1] for u in urns if str(u).startswith("urn:li:geo:")}
+    assert {"US", "GB", "TV", "WS"} <= targeted or not targeted, (
+        f"merged campaign dropped geos: {sorted(targeted)}"
+    )

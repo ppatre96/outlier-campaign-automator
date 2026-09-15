@@ -1308,7 +1308,15 @@ def _process_inmail_campaigns(
     if dry_run:
         for i, cohort in enumerate(capped_cohorts_inmail):
             tg_cat = classify_tg(cohort.name, cohort.rules)
-            for geo_group in geo_groups:
+            # Re-cluster here too so a dry run previews the clusters the live
+            # run would actually launch (the static arm's dry run already does).
+            for geo_group in _geo_groups_for_cohort(
+                cohort,
+                geo_groups=geo_groups, raw_geos=raw_geos,
+                base_rate_usd=base_rate_usd, rate_geo_specific=rate_geo_specific,
+                li_client=li_client, urn_res=urn_res,
+                arm="_process_inmail_campaigns[dry-run]",
+            ):
                 for angle_label in inmail_angle_keys:
                     log.info("[dry-run] InMail cohort %d '%s' tg=%s angle=%s geo=%s rate=%s",
                              i, cohort.name, tg_cat, angle_label,
@@ -1364,7 +1372,18 @@ def _process_inmail_campaigns(
     from src import launch_verify
     healed_empties: list[dict] = []
     for cohort in capped_cohorts_inmail:
-        for geo_group in geo_groups:
+        # Same per-cohort audience floor the static arm applies. Without it this
+        # arm launched into clusters of 3,700 and 8,200 members on GMR-0029
+        # (run 33971842229) — it measured the reach below, logged it, and
+        # launched anyway. Merging undersized clusters widens the net instead.
+        cohort_geo_groups = _geo_groups_for_cohort(
+            cohort,
+            geo_groups=geo_groups, raw_geos=raw_geos,
+            base_rate_usd=base_rate_usd, rate_geo_specific=rate_geo_specific,
+            li_client=li_client, urn_res=urn_res,
+            arm="_process_inmail_campaigns",
+        )
+        for geo_group in cohort_geo_groups:
             # Cross-row dedup (run_launch_for_ramp path only): if a prior row
             # in the same ramp already produced an InMail campaign for this
             # (cohort × geo_cluster), skip — see _cohort_geo_dedup_key for the
@@ -1508,6 +1527,9 @@ def _process_inmail_campaigns(
                     log.info(
                         "Per-geo InMail audience: cohort=%s geo=%s → %d",
                         cohort.name, geo_group.cluster_label, geo_audience,
+                    )
+                    _warn_if_below_geo_floor(
+                        cohort.name, geo_group.cluster_label, geo_audience, "inmail",
                     )
                 except Exception as _aud_exc:
                     log.warning(
@@ -3519,6 +3541,76 @@ def _cohort_geo_audience_fn(cohort, *, li_client, urn_res):
     return _measure
 
 
+def _warn_if_below_geo_floor(cohort_name: str, geo_label: str, audience, arm: str) -> None:
+    """Log loudly when a cluster about to launch is still under the floor.
+
+    merge_small_geo_groups returns early at a single cluster, so merging can
+    bottom out with one cluster that is still too small — and a cohort whose
+    whole reach is tiny has nothing to merge with. This does NOT block the
+    launch: refusing would silently turn a narrow-but-legitimate ramp into a
+    no-op. It makes the case visible instead, since both arms already measure
+    this reach and previously only logged it at INFO.
+    """
+    floor = int(getattr(config, "GEO_AUDIENCE_FLOOR", 0) or 0)
+    if floor <= 0 or not audience or audience >= floor:
+        return
+    log.warning(
+        "%s: launching cohort=%r geo=%r with audience %s — still below "
+        "GEO_AUDIENCE_FLOOR=%d after merging. Nothing left to merge into; this "
+        "campaign may not deliver. Widen the geo list or the cohort targeting.",
+        arm, cohort_name, geo_label, f"{int(audience):,}", floor,
+    )
+
+
+def _geo_groups_for_cohort(
+    cohort,
+    *,
+    geo_groups,
+    raw_geos,
+    base_rate_usd,
+    rate_geo_specific: bool,
+    li_client,
+    urn_res,
+    arm: str,
+):
+    """Re-cluster `raw_geos` for THIS cohort so GEO_AUDIENCE_FLOOR applies.
+
+    The ramp-level grouping is cohort-independent — it only sees the country
+    list — but whether a cluster clears the floor depends entirely on the
+    cohort's targeting. So the floor can only be applied per cohort, here.
+
+    Falls back to `geo_groups` unchanged whenever the floor is off, there are
+    no geos, or LinkedIn isn't reachable. `arm` only labels the log line.
+    """
+    from src.geo_tiers import group_geos_for_campaigns
+
+    if int(getattr(config, "GEO_AUDIENCE_FLOOR", 0) or 0) <= 0 or not raw_geos:
+        return geo_groups
+    probe = _cohort_geo_audience_fn(cohort, li_client=li_client, urn_res=urn_res)
+    if probe is None:
+        return geo_groups
+    try:
+        cohort_geo_groups = group_geos_for_campaigns(
+            raw_geos, base_rate_usd,
+            apply_geo_multiplier=not rate_geo_specific,
+            audience_fn=probe,
+        ) or geo_groups
+    except Exception as exc:
+        log.warning(
+            "%s: per-cohort geo re-clustering failed for %r (%s) — using the "
+            "ramp-level groups", arm, getattr(cohort, "name", "?"), exc,
+        )
+        return geo_groups
+    if [g.cluster for g in cohort_geo_groups] != [g.cluster for g in geo_groups]:
+        log.info(
+            "%s: cohort %r re-clustered on audience floor → %s (ramp-level was %s)",
+            arm, getattr(cohort, "name", "?"),
+            [f"{g.cluster}:{len(g.geos)}" for g in cohort_geo_groups],
+            [f"{g.cluster}:{len(g.geos)}" for g in geo_groups],
+        )
+    return cohort_geo_groups
+
+
 def _process_static_campaigns(
     selected,
     *,
@@ -3652,35 +3744,13 @@ def _process_static_campaigns(
     # caller passes seen_keys=None → no-op.
     copy_jobs: list[dict] = []
     for cohort in capped_cohorts:
-        # Re-cluster per cohort when the audience floor is on. Grouping above is
-        # cohort-independent (it only sees the country list), but whether a
-        # cluster clears GEO_AUDIENCE_FLOOR depends entirely on the cohort's
-        # targeting — so the floor can only be applied here. Falls back to the
-        # shared groups when the floor is off or LinkedIn isn't reachable.
-        cohort_geo_groups = geo_groups
-        if int(getattr(config, "GEO_AUDIENCE_FLOOR", 0) or 0) > 0 and raw_geos:
-            _fn = _cohort_geo_audience_fn(cohort, li_client=li_client, urn_res=urn_res)
-            if _fn is not None:
-                try:
-                    cohort_geo_groups = group_geos_for_campaigns(
-                        raw_geos, base_rate_usd,
-                        apply_geo_multiplier=not rate_geo_specific,
-                        audience_fn=_fn,
-                    ) or geo_groups
-                except Exception as exc:
-                    log.warning(
-                        "_process_static_campaigns: per-cohort geo re-clustering failed "
-                        "for %r (%s) — using the ramp-level groups", cohort.name, exc,
-                    )
-                    cohort_geo_groups = geo_groups
-                if [g.cluster for g in cohort_geo_groups] != [g.cluster for g in geo_groups]:
-                    log.info(
-                        "_process_static_campaigns: cohort %r re-clustered on audience "
-                        "floor → %s (ramp-level was %s)",
-                        cohort.name,
-                        [f"{g.cluster}:{len(g.geos)}" for g in cohort_geo_groups],
-                        [f"{g.cluster}:{len(g.geos)}" for g in geo_groups],
-                    )
+        cohort_geo_groups = _geo_groups_for_cohort(
+            cohort,
+            geo_groups=geo_groups, raw_geos=raw_geos,
+            base_rate_usd=base_rate_usd, rate_geo_specific=rate_geo_specific,
+            li_client=li_client, urn_res=urn_res,
+            arm="_process_static_campaigns",
+        )
         for geo_group in cohort_geo_groups:
             if seen_keys is not None:
                 _dedup_key = _cohort_geo_dedup_key(cohort.name, geo_group.cluster)
@@ -4119,6 +4189,7 @@ def _process_static_campaigns(
                     "Per-geo audience: cohort=%s geo=%s → %d",
                     cohort.name, geo_label, geo_audience,
                 )
+                _warn_if_below_geo_floor(cohort.name, geo_label, geo_audience, "static")
             except Exception as _aud_exc:
                 log.warning(
                     "Per-geo audience count failed for cohort=%s geo=%s: %s",
@@ -6775,7 +6846,17 @@ def _process_row_both_modes(
             )
 
             for cohort in capped_cohorts:
-                for geo_group in geo_groups:
+                # Apply the audience floor at prep too, so the clusters the
+                # console shows for review are the clusters the launch arms
+                # will build. Without this, review-time briefs are written for
+                # clusters the static/InMail arms later merge away.
+                for geo_group in _geo_groups_for_cohort(
+                    cohort,
+                    geo_groups=geo_groups, raw_geos=raw_geos,
+                    base_rate_usd=base_rate_usd, rate_geo_specific=rate_geo_specific,
+                    li_client=li_client, urn_res=urn_res,
+                    arm="_process_row_both_modes[prep_only]",
+                ):
                     for channel in enabled_channels:
                         try:
                             briefs = build_briefs(
