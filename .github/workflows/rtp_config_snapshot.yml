@@ -1,0 +1,51 @@
+name: RTP Config Snapshot → Google Sheet
+
+# Once per day, snapshot SCALE_PROD.PUBLIC.REFERTOPROJECTCONFIGS (per-project Refer-to-Project
+# config, overwritten in place upstream with no history) into the "RTP Config Snapshots" sheet,
+# and log every field change vs the previous snapshot — the only record of when RTP / Global RTP
+# was switched on or off for a project. Idempotent per UTC date: a second run the same day is a
+# no-op. See scripts/rtp_config_snapshot.py.
+#
+# GitHub runs schedules from the default branch only, and often hours late; snapshot_date is the
+# UTC date the run actually happened.
+
+on:
+  schedule:
+    - cron: "0 3 * * *"  # 03:00 UTC daily
+  workflow_dispatch: {}
+
+jobs:
+  snapshot:
+    name: Snapshot RTP config
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install "gspread>=6.0.0" "requests>=2.31"
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v4
+
+      - name: Write Google credentials
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: doppler run -- bash -c 'echo "$GOOGLE_CREDENTIALS_JSON" > credentials.json'
+
+      - name: Snapshot RTP config
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: doppler run -- python3 scripts/rtp_config_snapshot.py
